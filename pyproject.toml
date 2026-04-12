@@ -20,6 +20,7 @@ dev-dependencies = [
     "agentstack-provider-docker",
     "agentstack-channel-api",
     "agentstack-gateway",
+    "agentstack-chat",
 ]
 
 [tool.uv.sources]
@@ -30,6 +31,7 @@ agentstack-adapter-langchain = { workspace = true }
 agentstack-provider-docker = { workspace = true }
 agentstack-channel-api = { workspace = true }
 agentstack-gateway = { workspace = true }
+agentstack-chat = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
