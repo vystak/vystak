@@ -1,7 +1,6 @@
 """Docker platform provider — builds and runs agents as Docker containers."""
 
 import os
-import tempfile
 from pathlib import Path
 
 import docker
@@ -16,6 +15,12 @@ from agentstack.providers.base import (
     PlatformProvider,
 )
 from agentstack.schema.agent import Agent
+from agentstack.schema.resource import SessionStore
+from agentstack_provider_docker.network import ensure_network
+from agentstack_provider_docker.resources import (
+    destroy_resource,
+    provision_resource,
+)
 
 
 DOCKERFILE_TEMPLATE = """\
@@ -27,6 +32,8 @@ COPY . .
 CMD ["python", "{entrypoint}"]
 """
 
+SECRETS_PATH = Path(".agentstack") / "secrets.json"
+
 
 class DockerProvider(PlatformProvider):
     """Deploys and manages agents as Docker containers."""
@@ -35,14 +42,13 @@ class DockerProvider(PlatformProvider):
         self._client = self._create_client()
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
+        self._resource_info: list[dict] = []
 
     @staticmethod
     def _create_client():
-        """Create Docker client, trying Docker Desktop socket if default fails."""
         try:
             return docker.from_env()
         except docker.errors.DockerException:
-            # Docker Desktop on macOS uses a non-default socket
             desktop_socket = Path.home() / ".docker" / "run" / "docker.sock"
             if desktop_socket.exists():
                 return docker.DockerClient(base_url=f"unix://{desktop_socket}")
@@ -54,16 +60,6 @@ class DockerProvider(PlatformProvider):
     def set_agent(self, agent: Agent) -> None:
         self._agent = agent
 
-    def _build_env(self) -> dict[str, str]:
-        """Build environment variables for the container from agent secrets."""
-        env = {}
-        if self._agent:
-            for secret in self._agent.secrets:
-                value = os.environ.get(secret.name)
-                if value:
-                    env[secret.name] = value
-        return env
-
     def _container_name(self, agent_name: str) -> str:
         return f"agentstack-{agent_name}"
 
@@ -72,6 +68,25 @@ class DockerProvider(PlatformProvider):
             return self._client.containers.get(self._container_name(agent_name))
         except docker.errors.NotFound:
             return None
+
+    def _build_env(self) -> dict[str, str]:
+        env = {}
+        if self._agent:
+            for secret in self._agent.secrets:
+                value = os.environ.get(secret.name)
+                if value:
+                    env[secret.name] = value
+            for info in self._resource_info:
+                if info["engine"] in ("postgres", "sqlite"):
+                    env["SESSION_STORE_URL"] = info["connection_string"]
+        return env
+
+    def _build_volumes(self) -> dict:
+        volumes = {}
+        for info in self._resource_info:
+            if info["engine"] == "sqlite":
+                volumes[info["volume_name"]] = {"bind": "/data", "mode": "rw"}
+        return volumes
 
     def get_hash(self, agent_name: str) -> str | None:
         container = self._get_container(agent_name)
@@ -121,12 +136,26 @@ class DockerProvider(PlatformProvider):
             )
 
         try:
+            # 1. Ensure network
+            network = ensure_network(self._client)
+
+            # 2. Provision resources
+            self._resource_info = []
+            if self._agent:
+                for resource in self._agent.resources:
+                    if isinstance(resource, SessionStore):
+                        info = provision_resource(
+                            self._client, resource, network, SECRETS_PATH
+                        )
+                        self._resource_info.append(info)
+
+            # 3. Stop existing agent container
             existing = self._get_container(plan.agent_name)
             if existing is not None:
                 existing.stop()
                 existing.remove()
 
-            # Write generated files to .agentstack/<agent-name>/
+            # 4. Build image
             build_dir = Path(".agentstack") / plan.agent_name
             build_dir.mkdir(parents=True, exist_ok=True)
             for filename, content in self._generated_code.files.items():
@@ -138,6 +167,7 @@ class DockerProvider(PlatformProvider):
             image_tag = f"{self._container_name(plan.agent_name)}:latest"
             self._client.images.build(path=str(build_dir), tag=image_tag)
 
+            # 5. Run agent container on network
             container_name = self._container_name(plan.agent_name)
             self._client.containers.run(
                 image_tag,
@@ -145,6 +175,8 @@ class DockerProvider(PlatformProvider):
                 detach=True,
                 ports={"8000/tcp": None},
                 environment=self._build_env(),
+                volumes=self._build_volumes(),
+                network=network.name,
                 labels={
                     "agentstack.hash": plan.target_hash,
                     "agentstack.agent": plan.agent_name,
@@ -165,12 +197,15 @@ class DockerProvider(PlatformProvider):
                 message=f"Deployment failed: {e}",
             )
 
-    def destroy(self, agent_name: str) -> None:
+    def destroy(self, agent_name: str, include_resources: bool = False) -> None:
         container = self._get_container(agent_name)
-        if container is None:
-            return
-        container.stop()
-        container.remove()
+        if container is not None:
+            container.stop()
+            container.remove()
+
+        if include_resources and self._agent:
+            for resource in self._agent.resources:
+                destroy_resource(self._client, resource.name)
 
     def status(self, agent_name: str) -> AgentStatus:
         container = self._get_container(agent_name)
