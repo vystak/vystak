@@ -131,33 +131,40 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 
 async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
     """Stream response with live rendering. Returns usage info."""
-    tokens = []
     stream_result = client.StreamResult()
-    console.print(f"\n[agent]{agent_name}[/agent]", end="")
+    console.print(f"\n[agent]{agent_name}[/agent]")
+    has_output = False
 
     try:
-        first = True
-        async for token in client.stream(url, message, session_id, result=stream_result):
-            if first:
-                console.print()  # newline after agent name
-                first = True
-            tokens.append(token)
-            sys.stdout.write(token)
-            sys.stdout.flush()
+        async for event in client.stream_events(url, message, session_id, result=stream_result):
+            if event.type == "token":
+                has_output = True
+                sys.stdout.write(event.token)
+                sys.stdout.flush()
 
-        full_response = "".join(tokens)
+            elif event.type == "tool_call_start":
+                if has_output:
+                    console.print()  # newline before tool info
+                console.print(f"  [dim]> calling {event.tool}...[/dim]")
+                has_output = False
 
-        if not full_response:
+            elif event.type == "tool_result":
+                result_preview = event.result[:100] + "..." if len(event.result) > 100 else event.result
+                console.print(f"  [dim]> {event.tool}: {result_preview}[/dim]")
+
+            elif event.type == "done":
+                if has_output:
+                    console.print()  # final newline after tokens
+
+        if not has_output:
+            # Streaming produced no text — fallback to invoke
             invoke_result = await client.invoke(url, message, session_id)
-            console.print()
             console.print(Markdown(invoke_result.response))
             stream_result.input_tokens = invoke_result.input_tokens
             stream_result.output_tokens = invoke_result.output_tokens
             stream_result.total_tokens = invoke_result.total_tokens
-        else:
-            console.print()  # final newline
 
-    except Exception as e:
+    except Exception:
         console.print()
         invoke_result = await client.invoke(url, message, session_id)
         console.print(Markdown(invoke_result.response))
