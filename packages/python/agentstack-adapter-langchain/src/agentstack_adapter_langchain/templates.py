@@ -54,6 +54,15 @@ def _collect_system_prompt(agent: Agent) -> str:
     return "\n\n".join(prompts)
 
 
+def _get_session_store(agent: Agent):
+    """Find a SessionStore resource in the agent, if any."""
+    from agentstack.schema.resource import SessionStore
+    for resource in agent.resources:
+        if isinstance(resource, SessionStore):
+            return resource
+    return None
+
+
 def generate_agent_py(agent: Agent) -> str:
     """Generate a LangGraph agent definition file."""
     provider_type = agent.model.provider.type
@@ -88,6 +97,9 @@ def generate_agent_py(agent: Agent) -> str:
     # System prompt
     system_prompt = _collect_system_prompt(agent)
 
+    # Checkpointer based on resources
+    session_store = _get_session_store(agent)
+
     # Build the agent code
     lines = []
     lines.append(f'"""AgentStack generated agent: {agent.name}."""\n')
@@ -96,15 +108,32 @@ def generate_agent_py(agent: Agent) -> str:
     if tool_names:
         lines.append("from langchain_core.tools import tool")
 
-    lines.append("from langgraph.checkpoint.memory import MemorySaver")
+    if session_store and session_store.engine == "postgres":
+        lines.append("import os")
+        lines.append("")
+        lines.append("from langgraph.checkpoint.postgres import PostgresSaver")
+    elif session_store and session_store.engine == "sqlite":
+        lines.append("from langgraph.checkpoint.sqlite import SqliteSaver")
+    else:
+        lines.append("from langgraph.checkpoint.memory import MemorySaver")
+
     lines.append("from langgraph.prebuilt import create_react_agent")
     lines.append("")
     lines.append("")
     lines.append(f"# Model")
     lines.append(f"model = {model_class}({model_kwargs_str})")
     lines.append("")
-    lines.append("# Session memory")
-    lines.append("memory = MemorySaver()")
+
+    if session_store and session_store.engine == "postgres":
+        lines.append("# Session persistence (Postgres)")
+        lines.append('memory = PostgresSaver.from_conn_string(os.environ["SESSION_STORE_URL"])')
+    elif session_store and session_store.engine == "sqlite":
+        lines.append("# Session persistence (SQLite)")
+        lines.append(f'memory = SqliteSaver.from_conn_string("/data/{session_store.name}.db")')
+    else:
+        lines.append("# Session memory (in-memory, not persisted)")
+        lines.append("memory = MemorySaver()")
+
     lines.append("")
 
     if tool_stubs:
@@ -217,11 +246,18 @@ def generate_requirements_txt(agent: Agent) -> str:
     provider_type = agent.model.provider.type
     provider_pkg = PROVIDER_PACKAGES.get(provider_type, PROVIDER_PACKAGES["anthropic"])
 
+    session_store = _get_session_store(agent)
+    checkpoint_pkg = ""
+    if session_store and session_store.engine == "postgres":
+        checkpoint_pkg = "\nlanggraph-checkpoint-postgres>=2.0\npsycopg[binary]>=3.0"
+    elif session_store and session_store.engine == "sqlite":
+        checkpoint_pkg = "\nlanggraph-checkpoint-sqlite>=2.0"
+
     return dedent(f"""\
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
-        sse-starlette>=2.0
+        sse-starlette>=2.0{checkpoint_pkg}
     """)

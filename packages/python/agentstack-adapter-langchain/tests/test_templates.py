@@ -7,6 +7,7 @@ from agentstack.schema.channel import Channel
 from agentstack.schema.common import ChannelType
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
+from agentstack.schema.resource import SessionStore
 from agentstack.schema.skill import Skill
 
 from agentstack_adapter_langchain.templates import (
@@ -156,3 +157,58 @@ class TestGenerateRequirementsTxt:
         reqs = generate_requirements_txt(anthropic_agent)
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
+
+
+@pytest.fixture()
+def postgres_agent(anthropic_provider):
+    docker_provider = Provider(name="docker", type="docker")
+    return Agent(
+        name="pg-bot",
+        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        resources=[SessionStore(name="sessions", provider=docker_provider, engine="postgres")],
+    )
+
+
+@pytest.fixture()
+def sqlite_agent(anthropic_provider):
+    docker_provider = Provider(name="docker", type="docker")
+    return Agent(
+        name="sqlite-bot",
+        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        resources=[SessionStore(name="sessions", provider=docker_provider, engine="sqlite")],
+    )
+
+
+class TestCheckpointerSelection:
+    def test_no_resource_uses_memory(self, openai_agent):
+        code = generate_agent_py(openai_agent)
+        assert "MemorySaver" in code
+        assert "PostgresSaver" not in code
+        assert "SqliteSaver" not in code
+
+    def test_postgres_checkpointer(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        assert "PostgresSaver" in code
+        assert "SESSION_STORE_URL" in code
+        assert "MemorySaver" not in code
+        python_ast.parse(code)
+
+    def test_sqlite_checkpointer(self, sqlite_agent):
+        code = generate_agent_py(sqlite_agent)
+        assert "SqliteSaver" in code
+        assert "/data/" in code
+        assert "MemorySaver" not in code
+        python_ast.parse(code)
+
+    def test_postgres_requirements(self, postgres_agent):
+        reqs = generate_requirements_txt(postgres_agent)
+        assert "langgraph-checkpoint-postgres" in reqs
+
+    def test_sqlite_requirements(self, sqlite_agent):
+        reqs = generate_requirements_txt(sqlite_agent)
+        assert "langgraph-checkpoint-sqlite" in reqs
+
+    def test_no_resource_no_extra_requirements(self, openai_agent):
+        reqs = generate_requirements_txt(openai_agent)
+        assert "langgraph-checkpoint-postgres" not in reqs
+        assert "langgraph-checkpoint-sqlite" not in reqs
