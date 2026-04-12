@@ -24,3 +24,4 @@ class Agent(NamedModel):
     resources: list[Resource] = []
     secrets: list[Secret] = []
     platform: Platform | None = None
+    port: int | None = None

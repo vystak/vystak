@@ -108,12 +108,16 @@ class TestPlan:
 class TestApply:
     def test_builds_and_runs(self, provider, mock_docker_client, sample_code, not_found_error):
         client, _ = mock_docker_client
-        client.containers.get.side_effect = not_found_error("not found")
+        # First call: no existing container. After run: return a container with ports.
+        deployed_container = MagicMock()
+        deployed_container.ports = {"8000/tcp": [{"HostPort": "8080"}]}
+        client.containers.get.side_effect = [not_found_error("not found"), deployed_container]
         client.images.build.return_value = (MagicMock(), [])
         provider.set_generated_code(sample_code)
         plan = DeployPlan(agent_name="test-bot", actions=["Create"], current_hash=None, target_hash="abc123", changes={})
         result = provider.apply(plan)
         assert result.success is True
+        assert "localhost" in result.message
         client.images.build.assert_called_once()
         client.containers.run.assert_called_once()
 

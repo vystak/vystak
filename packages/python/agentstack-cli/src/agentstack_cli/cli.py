@@ -3,7 +3,7 @@
 import click
 
 from agentstack_cli import __version__
-from agentstack_cli.commands import apply, destroy, init, plan, status
+from agentstack_cli.commands import apply, destroy, init, logs, plan, status
 
 
 @click.group()
@@ -17,3 +17,4 @@ cli.add_command(plan)
 cli.add_command(apply)
 cli.add_command(destroy)
 cli.add_command(status)
+cli.add_command(logs)

@@ -24,6 +24,7 @@ resources:
     provider:
       name: docker
       type: docker
-    engine: postgres
+    engine: sqlite
 secrets:
   - name: ANTHROPIC_API_KEY
+port: 8080
