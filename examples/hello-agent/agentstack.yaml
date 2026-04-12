@@ -1,0 +1,22 @@
+name: hello-agent
+model:
+  name: claude
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: claude-sonnet-4-20250514
+  parameters:
+    temperature: 0.7
+skills:
+  - name: assistant
+    tools:
+      - get_weather
+      - get_time
+    prompt: |
+      You are a helpful assistant. Be concise and friendly.
+      When asked about the weather or time, use the available tools.
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
