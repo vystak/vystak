@@ -127,65 +127,59 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 
 
 async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
-    """Stream response with live rendering. Returns usage info."""
+    """Stream response with live Rich rendering. Returns usage info."""
     from rich.spinner import Spinner
     from rich.live import Live
+    from rich.text import Text as RichText
 
     stream_result = client.StreamResult()
     console.print(f"\n[agent]{agent_name}[/agent]")
+    tokens_buf: list[str] = []
     has_output = False
-    spinner_live = None
+    live = None
+
+    def _make_display():
+        """Build the current display — spinner or accumulated text."""
+        text = "".join(tokens_buf)
+        if text:
+            return Markdown(text)
+        return Spinner("dots", text="Thinking...", style="dim")
 
     try:
-        # Start with a spinner while waiting for first token
-        spinner = Spinner("dots", text="Thinking...", style="dim")
-        spinner_live = Live(spinner, console=console, refresh_per_second=12)
-        spinner_live.start()
+        live = Live(
+            Spinner("dots", text="Thinking...", style="dim"),
+            console=console,
+            refresh_per_second=12,
+            vertical_overflow="visible",
+        )
+        live.start()
 
         async for event in client.stream_events(url, message, session_id, result=stream_result):
             if event.type == "token":
-                # Kill spinner on first token
-                if spinner_live is not None:
-                    spinner_live.stop()
-                    spinner_live = None
                 has_output = True
-                sys.stdout.write(event.token)
-                sys.stdout.flush()
+                tokens_buf.append(event.token)
+                live.update(Markdown("".join(tokens_buf)))
 
             elif event.type == "tool_call_start":
-                # Update spinner to show tool call
-                if spinner_live is not None:
-                    spinner_live.stop()
-                    spinner_live = None
-                if has_output:
-                    console.print()
-                spinner = Spinner("dots", text=f"Calling {event.tool}...", style="dim")
-                spinner_live = Live(spinner, console=console, refresh_per_second=12)
-                spinner_live.start()
-                has_output = False
+                live.update(Spinner("dots", text=f"Calling {event.tool}...", style="dim"))
 
             elif event.type == "tool_result":
-                if spinner_live is not None:
-                    spinner_live.stop()
-                    spinner_live = None
                 result_preview = event.result[:100] + "..." if len(event.result) > 100 else event.result
-                console.print(f"  [dim]> {event.tool}: {result_preview}[/dim]")
-                # New spinner for next step
-                spinner = Spinner("dots", text="Thinking...", style="dim")
-                spinner_live = Live(spinner, console=console, refresh_per_second=12)
-                spinner_live.start()
+                # Show tool result briefly, then back to spinner
+                live.update(RichText(f"  > {event.tool}: {result_preview}", style="dim"))
+                await asyncio.sleep(0.3)
+                live.update(Spinner("dots", text="Thinking...", style="dim"))
 
             elif event.type == "done":
-                if spinner_live is not None:
-                    spinner_live.stop()
-                    spinner_live = None
-                if has_output:
-                    console.print()
+                pass
 
-        # Clean up spinner if still running
-        if spinner_live is not None:
-            spinner_live.stop()
-            spinner_live = None
+        # Stop live — the final Live render stays on screen
+        if live is not None:
+            if has_output:
+                # Final update with complete markdown
+                live.update(Markdown("".join(tokens_buf)))
+            live.stop()
+            live = None
 
         if not has_output:
             invoke_result = await client.invoke(url, message, session_id)
@@ -195,8 +189,8 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
             stream_result.total_tokens = invoke_result.total_tokens
 
     except Exception:
-        if spinner_live is not None:
-            spinner_live.stop()
+        if live is not None:
+            live.stop()
         console.print()
         invoke_result = await client.invoke(url, message, session_id)
         console.print(Markdown(invoke_result.response))
