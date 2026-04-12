@@ -7,6 +7,11 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.widgets import Frame, TextArea
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -359,6 +364,23 @@ class ChatREPL:
         except Exception as e:
             console.print(f"[error]{e}[/error]")
 
+    def _bottom_toolbar(self):
+        """Status bar at the bottom of the screen."""
+        if self.connected:
+            return HTML(
+                f'<style bg="#1a1a2e" fg="#e0e0e0">'
+                f' <b>{self._agent_name}</b>'
+                f' | session: {self._session_id[:8]}...'
+                f' | {self._agent_url}'
+                f' | /help for commands'
+                f'</style>'
+            )
+        return HTML(
+            '<style bg="#1a1a2e" fg="#888888">'
+            ' Not connected | /connect &lt;url&gt; or /use &lt;name&gt; | /help for commands'
+            '</style>'
+        )
+
     async def run(self):
         """Run the REPL."""
         self._show_welcome()
@@ -367,14 +389,24 @@ class ChatREPL:
             completer=SlashCompleter(self),
             history=InMemoryHistory(),
             complete_while_typing=True,
+            bottom_toolbar=self._bottom_toolbar,
+            multiline=False,
         )
 
         while self._running:
             try:
                 if self.connected:
-                    prompt_text = HTML(f"<b><style fg='cyan'>{self._agent_name}</style></b> &gt; ")
+                    prompt_text = HTML(
+                        f'\n<style fg="#444444">╭─ </style>'
+                        f'<b><style fg="ansibrightcyan">{self._agent_name}</style></b>\n'
+                        f'<style fg="#444444">╰─ </style>'
+                    )
                 else:
-                    prompt_text = HTML("<style fg='gray'>&gt; </style>")
+                    prompt_text = HTML(
+                        f'\n<style fg="#444444">╭─ </style>'
+                        f'<style fg="#888888">agentstack</style>\n'
+                        f'<style fg="#444444">╰─ </style>'
+                    )
 
                 line = await session.prompt_async(prompt_text)
             except (KeyboardInterrupt, EOFError):
