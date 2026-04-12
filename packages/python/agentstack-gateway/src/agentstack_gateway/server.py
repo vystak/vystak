@@ -249,6 +249,51 @@ def _find_route(agent_name: str) -> Route | None:
     return None
 
 
+# === Chat CLI Compatible Proxy ===
+# The chat CLI expects {base_url}/invoke and {base_url}/stream.
+# /proxy/{agent_name} acts as the base URL for a specific agent.
+
+@app.get("/proxy/{agent_name}/health")
+async def proxy_health(agent_name: str):
+    """Proxy health check for a specific agent."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{route.agent_url}/health")
+        return resp.json()
+
+
+@app.post("/proxy/{agent_name}/invoke")
+async def proxy_agent_invoke(agent_name: str, request: Request):
+    """Proxy invoke for a specific agent (chat CLI compatible)."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(f"{route.agent_url}/invoke", json=body)
+        return resp.json()
+
+
+@app.post("/proxy/{agent_name}/stream")
+async def proxy_agent_stream(agent_name: str, request: Request):
+    """Proxy stream for a specific agent (chat CLI compatible)."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+    body = await request.json()
+
+    async def stream_proxy():
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", f"{route.agent_url}/stream", json=body) as resp:
+                async for line in resp.aiter_lines():
+                    if line:
+                        yield line + "\n"
+
+    return StreamingResponse(stream_proxy(), media_type="text/event-stream")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=HOST, port=PORT)
