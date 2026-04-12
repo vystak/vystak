@@ -49,6 +49,15 @@ def apply(file_path):
         click.echo()
         click.echo(f"Deployed: {agent.name}")
         click.echo(f"  {result.message}")
+        # Show gateway info if channels reference gateways
+        from agentstack.schema.channel import SlackChannel
+        slack_channels = [ch for ch in agent.channels if isinstance(ch, SlackChannel)]
+        if slack_channels:
+            gateways = set()
+            for ch in slack_channels:
+                gateways.add(ch.provider.gateway.name)
+            for gw_name in gateways:
+                click.echo(f"  Gateway: agentstack-gateway-{gw_name}")
     else:
         click.echo("FAILED")
         click.echo(f"  Error: {result.message}", err=True)
