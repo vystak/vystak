@@ -5,7 +5,7 @@ from agentstack.schema.agent import Agent
 
 def generate_agent_card_code(agent: Agent) -> str:
     """Generate AGENT_CARD dict constant and /.well-known/agent.json endpoint."""
-    description = agent.instructions or agent.name
+    description = (agent.instructions or agent.name).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
     skills_list = [skill.name for skill in agent.skills]
 
     lines = []
