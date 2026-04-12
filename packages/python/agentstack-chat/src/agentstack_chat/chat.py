@@ -298,6 +298,8 @@ class ChatREPL:
         await self._cmd_connect(agent["url"])
 
     async def _cmd_agents(self, args: str):
+        from agentstack_chat.picker import pick
+
         parts = args.strip().split(maxsplit=2)
         sub = parts[0] if parts else ""
 
@@ -320,12 +322,24 @@ class ChatREPL:
             console.print("[system]No saved agents. /agents add <name> <url>[/system]")
             return
 
-        console.print()
+        # Check health for all agents
+        items = []
         for agent in saved:
             health_info = await client.health(agent["url"])
-            status = "[success]online[/success]" if health_info else "[error]offline[/error]"
-            console.print(f"  [cyan]{agent['name']}[/cyan]  {agent['url']}  {status}")
-        console.print()
+            status = "online" if health_info else "offline"
+            current = " (connected)" if agent["url"] == self._agent_url else ""
+            items.append({
+                "label": f"{agent['name']}{current}",
+                "detail": f"{agent['url']}  [{status}]",
+                "agent": agent,
+            })
+
+        selected = pick("Agents", items)
+        if selected is None:
+            return
+
+        agent = selected["agent"]
+        await self._cmd_connect(agent["url"])
 
     def _cmd_sessions(self, args: str):
         from agentstack_chat.picker import pick
