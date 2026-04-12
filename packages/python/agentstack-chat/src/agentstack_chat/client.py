@@ -120,3 +120,19 @@ async def health(url: str) -> dict | None:
             return response.json()
     except Exception:
         return None
+
+
+async def gateway_routes(gateway_url: str) -> list[dict]:
+    """Get all routes from a gateway — discovers deployed agents."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{gateway_url}/routes")
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        return []
+
+
+async def gateway_health(gateway_url: str) -> dict | None:
+    """Check gateway health."""
+    return await health(gateway_url)
