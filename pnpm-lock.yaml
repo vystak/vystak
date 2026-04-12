@@ -15,7 +15,55 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/typescript/adapter-mastra:
+    dependencies:
+      '@agentstack/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4
+      prettier:
+        specifier: ^3.4.0
+        version: 3.8.2
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4
+
+  packages/typescript/cli:
+    dependencies:
+      '@agentstack/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4
+      prettier:
+        specifier: ^3.4.0
+        version: 3.8.2
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4
+
   packages/typescript/core:
+    devDependencies:
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4
+      prettier:
+        specifier: ^3.4.0
+        version: 3.8.2
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4
+
+  packages/typescript/provider-docker:
+    dependencies:
+      '@agentstack/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       eslint:
         specifier: ^9.0.0
