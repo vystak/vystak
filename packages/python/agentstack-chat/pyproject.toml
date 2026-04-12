@@ -1,0 +1,22 @@
+[project]
+name = "agentstack-chat"
+version = "0.1.0"
+description = "AgentStack chat client — talk to your deployed agents"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "click>=8.0",
+    "httpx>=0.28",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+agentstack-chat = "agentstack_chat.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentstack_chat"]
