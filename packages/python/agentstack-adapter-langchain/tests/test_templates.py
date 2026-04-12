@@ -212,3 +212,78 @@ class TestCheckpointerSelection:
         reqs = generate_requirements_txt(openai_agent)
         assert "langgraph-checkpoint-postgres" not in reqs
         assert "langgraph-checkpoint-sqlite" not in reqs
+
+
+class TestMemoryGeneration:
+    def test_memory_tools_generated_with_resource(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        assert "save_memory" in code
+        assert "forget_memory" in code
+        assert "__SAVE_MEMORY__" in code
+
+    def test_no_memory_tools_without_resource(self, openai_agent):
+        code = generate_agent_py(openai_agent)
+        assert "save_memory" not in code
+        assert "forget_memory" not in code
+
+    def test_memory_system_prompt_with_resource(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        assert "long-term memory" in code.lower()
+
+    def test_no_memory_prompt_without_resource(self, openai_agent):
+        code = generate_agent_py(openai_agent)
+        assert "long-term memory" not in code.lower()
+
+    def test_postgres_store_import(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        assert "AsyncPostgresStore" in code
+
+    def test_sqlite_store_import(self, sqlite_agent):
+        code = generate_agent_py(sqlite_agent)
+        assert "AsyncSqliteStore" in code
+
+    def test_create_agent_accepts_store(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        assert "store=None" in code or "store=" in code
+
+    def test_agent_py_with_memory_parseable(self, postgres_agent):
+        code = generate_agent_py(postgres_agent)
+        python_ast.parse(code)
+
+    def test_agent_py_sqlite_with_memory_parseable(self, sqlite_agent):
+        code = generate_agent_py(sqlite_agent)
+        python_ast.parse(code)
+
+
+class TestServerMemory:
+    def test_server_accepts_user_id(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        assert "user_id" in code
+
+    def test_server_accepts_project_id(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        assert "project_id" in code
+
+    def test_server_recall_memories(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        assert "recall_memories" in code
+
+    def test_server_handle_memory_actions(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        assert "handle_memory_actions" in code
+
+    def test_server_no_memory_without_resource(self, openai_agent):
+        code = generate_server_py(openai_agent)
+        assert "recall_memories" not in code
+
+    def test_server_with_memory_parseable(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        python_ast.parse(code)
+
+    def test_server_sqlite_with_memory_parseable(self, sqlite_agent):
+        code = generate_server_py(sqlite_agent)
+        python_ast.parse(code)
+
+    def test_sqlite_requirements_include_aiosqlite(self, sqlite_agent):
+        reqs = generate_requirements_txt(sqlite_agent)
+        assert "aiosqlite" in reqs
