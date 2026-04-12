@@ -18,6 +18,7 @@ from agentstack_adapter_langchain.tools import (
     generate_tools_init,
     get_tool_requirements,
     read_tool_file,
+    scaffold_missing_tools,
 )
 
 
@@ -32,6 +33,13 @@ class LangChainAdapter(FrameworkAdapter):
 
         if base_dir:
             found_tools, missing_tools = discover_tools(agent, base_dir)
+
+            # Scaffold missing tools on disk (never overwrites existing files)
+            if missing_tools:
+                scaffold_missing_tools(missing_tools, base_dir)
+                # Re-discover — scaffolded tools are now "found"
+                found_tools, missing_tools = discover_tools(agent, base_dir)
+
             tool_reqs = get_tool_requirements(base_dir)
         else:
             seen = set()
