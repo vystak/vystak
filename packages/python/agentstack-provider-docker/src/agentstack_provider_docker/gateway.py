@@ -40,7 +40,10 @@ def write_gateway_source(gateway_dir: Path) -> None:
     for filename in ["server.py", "router.py", "__init__.py"]:
         src = pkg_dir / filename
         if src.exists():
-            shutil.copy2(src, gateway_dir / filename)
+            content = src.read_text()
+            # Rewrite package imports to local imports for Docker deployment
+            content = content.replace("from agentstack_gateway.", "from ")
+            (gateway_dir / filename).write_text(content)
 
     providers_dir = gateway_dir / "providers"
     providers_dir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +51,9 @@ def write_gateway_source(gateway_dir: Path) -> None:
     for filename in ["__init__.py", "base.py", "slack.py"]:
         src = providers_src / filename
         if src.exists():
-            shutil.copy2(src, providers_dir / filename)
+            content = src.read_text()
+            content = content.replace("from agentstack_gateway.", "from ")
+            (providers_dir / filename).write_text(content)
 
     (gateway_dir / "requirements.txt").write_text(GATEWAY_REQUIREMENTS)
     (gateway_dir / "Dockerfile").write_text(GATEWAY_DOCKERFILE)
