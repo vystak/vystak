@@ -1,0 +1,25 @@
+name: assistant-agent
+instructions: |
+  You are a helpful general-purpose assistant.
+  When the user asks about weather, use the ask_weather_agent tool
+  to get real weather data from the weather specialist agent.
+  Present the weather data in a friendly, readable format.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.7
+    anthropic_api_url: https://api.minimax.io/anthropic
+skills:
+  - name: assistant
+    tools:
+      - ask_weather_agent
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8082
