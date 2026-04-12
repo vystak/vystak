@@ -48,7 +48,7 @@ def apply(file_path):
         click.echo("OK")
         click.echo()
         click.echo(f"Deployed: {agent.name}")
-        click.echo(f"  Container: agentstack-{agent.name}")
+        click.echo(f"  {result.message}")
     else:
         click.echo("FAILED")
         click.echo(f"  Error: {result.message}", err=True)

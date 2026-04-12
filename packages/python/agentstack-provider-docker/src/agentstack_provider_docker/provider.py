@@ -169,11 +169,12 @@ class DockerProvider(PlatformProvider):
 
             # 5. Run agent container on network
             container_name = self._container_name(plan.agent_name)
+            host_port = self._agent.port if self._agent and self._agent.port else None
             self._client.containers.run(
                 image_tag,
                 name=container_name,
                 detach=True,
-                ports={"8000/tcp": None},
+                ports={"8000/tcp": host_port},
                 environment=self._build_env(),
                 volumes=self._build_volumes(),
                 network=network.name,
@@ -183,11 +184,16 @@ class DockerProvider(PlatformProvider):
                 },
             )
 
+            # Get the actual port
+            container = self._client.containers.get(container_name)
+            port_info = container.ports.get("8000/tcp")
+            actual_port = port_info[0]["HostPort"] if port_info else "?"
+
             return DeployResult(
                 agent_name=plan.agent_name,
                 success=True,
                 hash=plan.target_hash,
-                message=f"Deployed {plan.agent_name} as {container_name}",
+                message=f"Deployed {plan.agent_name} at http://localhost:{actual_port}",
             )
         except Exception as e:
             return DeployResult(
