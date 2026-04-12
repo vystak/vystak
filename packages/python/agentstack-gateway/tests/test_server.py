@@ -73,3 +73,38 @@ class TestRegisterProvider:
         })
         assert response.status_code == 200
         assert response.json()["status"] == "registered"
+
+
+import json
+
+
+class TestLoadRoutesFile:
+    def test_loads_routes(self, tmp_path):
+        from agentstack_gateway.server import load_routes_file, router
+        router._routes.clear()
+
+        routes_file = tmp_path / "routes.json"
+        routes_file.write_text(json.dumps({
+            "providers": [],
+            "routes": [
+                {
+                    "provider_name": "test-slack",
+                    "agent_name": "support-bot",
+                    "agent_url": "http://agent:8000",
+                    "channels": ["#support"],
+                    "listen": "mentions",
+                    "threads": True,
+                    "dm": True,
+                }
+            ],
+        }))
+
+        load_routes_file(str(routes_file))
+        routes = router.list_routes()
+        assert len(routes) == 1
+        assert routes[0].agent_name == "support-bot"
+        router._routes.clear()
+
+    def test_missing_file_no_error(self):
+        from agentstack_gateway.server import load_routes_file
+        load_routes_file("/nonexistent/routes.json")
