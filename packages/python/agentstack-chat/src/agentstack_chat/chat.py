@@ -340,7 +340,7 @@ class ChatREPL:
                 "agent": agent,
             })
 
-        selected = pick("Agents", items)
+        selected = await pick("Agents", items)
         if selected is None:
             return
 
@@ -368,7 +368,7 @@ class ChatREPL:
             })
         items.append({"label": "+ New session", "detail": "Start a new conversation", "session": None})
 
-        selected = pick("Sessions", items)
+        selected = await pick("Sessions", items)
         if selected is None:
             return
 
@@ -458,7 +458,7 @@ class ChatREPL:
         if len(items) == 1:
             selected = items[0]
         else:
-            selected = pick("Select Agent", items)
+            selected = await pick("Select Agent", items)
 
         if selected is None:
             return

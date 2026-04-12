@@ -8,7 +8,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 
 
-def pick(title: str, items: list[dict], display_key: str = "label", detail_key: str = "detail") -> dict | None:
+async def pick(title: str, items: list[dict], display_key: str = "label", detail_key: str = "detail") -> dict | None:
     """Show an interactive picker. Returns selected item or None if cancelled.
 
     items: list of dicts, each must have display_key and optionally detail_key.
@@ -65,6 +65,6 @@ def pick(title: str, items: list[dict], display_key: str = "label", detail_key: 
     layout = Layout(Window(control))
 
     app = Application(layout=layout, key_bindings=kb, full_screen=False)
-    app.run()
+    await app.run_async()
 
     return result[0]
