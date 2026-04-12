@@ -12,7 +12,19 @@ dev-dependencies = [
     "pytest>=8.0",
     "ruff>=0.8",
     "pyright>=1.1",
+    "agentstack",
+    "agentstack-cli",
+    "agentstack-adapter-mastra",
+    "agentstack-provider-docker",
+    "agentstack-channel-api",
 ]
+
+[tool.uv.sources]
+agentstack = { workspace = true }
+agentstack-cli = { workspace = true }
+agentstack-adapter-mastra = { workspace = true }
+agentstack-provider-docker = { workspace = true }
+agentstack-channel-api = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
