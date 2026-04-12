@@ -1,0 +1,194 @@
+# AgentStack
+
+Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.
+
+AgentStack builds nothing. It wires everything. Define your agent in Python or YAML, and AgentStack generates native framework code, provisions infrastructure, and deploys to Docker — from a single command.
+
+## Quick Start
+
+```bash
+# Install
+pip install agentstack agentstack-cli agentstack-adapter-langchain agentstack-provider-docker
+
+# Create an agent
+agentstack init
+
+# Preview what will be generated
+agentstack plan
+
+# Deploy to Docker
+export ANTHROPIC_API_KEY=your-key
+agentstack apply
+
+# Talk to your agent
+curl -X POST http://localhost:PORT/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!"}'
+
+# Tear down
+agentstack destroy
+```
+
+## Define an Agent
+
+**YAML (simple on-ramp):**
+
+```yaml
+name: support-bot
+instructions: |
+  You are a helpful support agent. Be concise and friendly.
+model:
+  name: claude
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: claude-sonnet-4-20250514
+  parameters:
+    temperature: 0.7
+skills:
+  - name: support
+    tools: [lookup_order, process_refund]
+    prompt: Always verify the order before processing refunds.
+channels:
+  - name: api
+    type: api
+resources:
+  - name: sessions
+    provider:
+      name: docker
+      type: docker
+    engine: postgres
+secrets:
+  - name: ANTHROPIC_API_KEY
+```
+
+**Python (code-first):**
+
+```python
+import agentstack as ast
+
+anthropic = ast.Provider(name="anthropic", type="anthropic")
+model = ast.Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
+
+agent = ast.Agent(
+    name="support-bot",
+    instructions="You are a helpful support agent.",
+    model=model,
+    skills=[ast.Skill(name="support", tools=["lookup_order", "process_refund"])],
+    channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
+)
+```
+
+## What `agentstack apply` Does
+
+```
+agentstack.yaml
+       |
+   [1] Validate agent definition
+       |
+   [2] Generate code (LangGraph agent + FastAPI server)
+       |
+   [3] Provision resources (Postgres container, Docker network)
+       |
+   [4] Build Docker image
+       |
+   [5] Deploy container
+       |
+   Agent running at http://localhost:PORT
+       /invoke  — request-response
+       /stream  — SSE streaming
+       /health  — health check
+```
+
+## Features
+
+- **Schema-driven** — Pydantic models for Agent, Skill, Channel, Resource, Workspace, Provider, Platform, McpServer, Secret
+- **Hash-based change detection** — content-addressable hashing detects what changed, enables partial deploys
+- **LangChain/LangGraph adapter** — generates native LangGraph react agents with FastAPI harness
+- **Docker provider** — builds images, manages containers, provisions Postgres/SQLite resources
+- **Session persistence** — conversations persist across container restarts (Postgres or SQLite)
+- **Long-term memory** — agents remember facts across sessions, scoped to user/project/global
+- **YAML + Python** — define agents in YAML for simplicity or Python for power
+- **CLI** — `init`, `plan`, `apply`, `destroy`, `status`
+
+## Architecture
+
+```
+                    ┌─────────────┐
+                    │ Agent Schema│  ← Define once
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+     ┌────────▼──┐  ┌──────▼────┐  ┌───▼────────┐
+     │ Framework │  │ Platform  │  │  Channel   │
+     │  Adapter  │  │ Provider  │  │  Adapter   │
+     └────────┬──┘  └──────┬────┘  └───┬────────┘
+              │            │            │
+        LangChain     Docker       REST API
+        LangGraph   Kubernetes      Slack
+        CrewAI     AWS AgentCore    Voice
+        (raw)      Azure Foundry   Webhook
+```
+
+**Three independent choices:**
+- **Framework adapter** — HOW the agent thinks (LangChain, raw, ...)
+- **Platform provider** — WHERE the agent runs (Docker, AWS, ...)
+- **Channel adapter** — HOW users reach it (API, Slack, ...)
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `agentstack init` | Create a starter `agentstack.yaml` |
+| `agentstack plan` | Show what would change |
+| `agentstack apply` | Deploy or update the agent |
+| `agentstack destroy` | Stop and remove the agent |
+| `agentstack status` | Show running agent status |
+| `agentstack logs` | Tail agent container logs |
+
+## Project Structure
+
+```
+packages/
+  python/
+    agentstack/                  # Core SDK — schema, hash, loader, stores
+    agentstack-cli/              # CLI tool
+    agentstack-adapter-langchain/ # LangChain/LangGraph code generator
+    agentstack-provider-docker/  # Docker deployment provider
+    agentstack-adapter-mastra/   # Mastra adapter (stub)
+    agentstack-channel-api/      # REST API channel (stub)
+  typescript/
+    core/                        # @agentstack/core (stub)
+    cli/                         # @agentstack/cli (stub)
+    adapter-mastra/              # @agentstack/adapter-mastra (stub)
+    provider-docker/             # @agentstack/provider-docker (stub)
+```
+
+## Development
+
+```bash
+# Prerequisites: Python 3.11+, Node 20+, uv, pnpm, just
+
+# Setup
+uv sync
+pnpm install
+
+# Run all tests
+just test
+
+# Run Python tests only
+just test-python
+
+# Lint
+just lint
+
+# Format
+just fmt
+```
+
+See [docs/getting-started.md](docs/getting-started.md) for the full contributor guide and [docs/principles.md](docs/principles.md) for the project philosophy.
+
+## License
+
+Apache 2.0
