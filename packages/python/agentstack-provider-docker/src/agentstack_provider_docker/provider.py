@@ -15,7 +15,15 @@ from agentstack.providers.base import (
     PlatformProvider,
 )
 from agentstack.schema.agent import Agent
+from agentstack.schema.channel import SlackChannel
 from agentstack.schema.resource import SessionStore
+from agentstack_provider_docker.gateway import (
+    build_gateway_image,
+    destroy_gateway,
+    provision_gateway,
+    write_gateway_source,
+    write_routes_file,
+)
 from agentstack_provider_docker.network import ensure_network
 from agentstack_provider_docker.resources import (
     destroy_resource,
@@ -88,6 +96,80 @@ class DockerProvider(PlatformProvider):
                 volumes[info["volume_name"]] = {"bind": "/data", "mode": "rw"}
         return volumes
 
+    def _collect_gateway_info(self) -> dict:
+        """Extract gateway/provider/route info from agent channels."""
+        if not self._agent:
+            return {}
+
+        gateways = {}
+
+        for channel in self._agent.channels:
+            if not isinstance(channel, SlackChannel):
+                continue
+
+            cp = channel.provider
+            gw = cp.gateway
+            gw_name = gw.name
+
+            if gw_name not in gateways:
+                gateways[gw_name] = {"gateway": gw, "providers": {}, "routes": []}
+
+            gw_info = gateways[gw_name]
+
+            if cp.name not in gw_info["providers"]:
+                config = dict(cp.config)
+                resolved_config = {}
+                for key, value in config.items():
+                    if hasattr(value, "name"):
+                        resolved_config[key] = os.environ.get(value.name, "")
+                    else:
+                        resolved_config[key] = value
+                gw_info["providers"][cp.name] = {"name": cp.name, "type": cp.type, "config": resolved_config}
+
+            agent_url = f"http://{self._container_name(self._agent.name)}:8000"
+            gw_info["routes"].append({
+                "provider_name": cp.name,
+                "agent_name": self._agent.name,
+                "agent_url": agent_url,
+                "channels": channel.channels,
+                "listen": channel.listen,
+                "threads": channel.threads,
+                "dm": channel.dm,
+            })
+
+        return gateways
+
+    def provision_gateways(self, network) -> None:
+        """Provision gateway containers for the agent's channels."""
+        gateways = self._collect_gateway_info()
+
+        for gw_name, gw_info in gateways.items():
+            gateway = gw_info["gateway"]
+            gateway_dir = Path(".agentstack") / f"gateway-{gw_name}"
+
+            write_gateway_source(gateway_dir)
+
+            routes_path = gateway_dir / "routes.json"
+            write_routes_file(routes_path, list(gw_info["providers"].values()), gw_info["routes"])
+
+            build_gateway_image(self._client, gw_name, str(gateway_dir))
+
+            env = {}
+            for prov in gw_info["providers"].values():
+                for key, value in prov["config"].items():
+                    if isinstance(value, str) and value:
+                        env_key = f"{prov['name'].upper().replace('-', '_')}_{key.upper()}"
+                        env[env_key] = value
+
+            port = gateway.config.get("port", 8080)
+            provision_gateway(self._client, gw_name, network, routes_path=str(routes_path), env=env, port=port)
+
+    def destroy_gateways(self) -> None:
+        """Destroy gateway containers for the agent's channels."""
+        gateways = self._collect_gateway_info()
+        for gw_name in gateways:
+            destroy_gateway(self._client, gw_name)
+
     def get_hash(self, agent_name: str) -> str | None:
         container = self._get_container(agent_name)
         if container is None:
@@ -148,6 +230,9 @@ class DockerProvider(PlatformProvider):
                             self._client, resource, network, SECRETS_PATH
                         )
                         self._resource_info.append(info)
+
+            # 2.5. Provision gateways
+            self.provision_gateways(network)
 
             # 3. Stop existing agent container
             existing = self._get_container(plan.agent_name)
@@ -214,6 +299,7 @@ class DockerProvider(PlatformProvider):
         if include_resources and self._agent:
             for resource in self._agent.resources:
                 destroy_resource(self._client, resource.name)
+            self.destroy_gateways()
 
     def status(self, agent_name: str) -> AgentStatus:
         container = self._get_container(agent_name)
