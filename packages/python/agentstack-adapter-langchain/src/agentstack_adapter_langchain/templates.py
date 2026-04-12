@@ -53,23 +53,18 @@ Use forget_memory to remove incorrect or outdated memories when asked.
 """
 
 
-def _generate_tool_stubs(agent: Agent) -> str:
-    """Generate @tool stub functions from agent skills."""
+def _generate_tool_stubs(stub_tool_names: list[str]) -> str:
+    """Generate @tool stub functions for tools without real implementations."""
     tools = []
-    seen = set()
-    for skill in agent.skills:
-        for tool_name in skill.tools:
-            if tool_name in seen:
-                continue
-            seen.add(tool_name)
-            docstring = tool_name.replace("_", " ").title() + "."
-            stub = (
-                f"@tool\n"
-                f"def {tool_name}(input: str) -> str:\n"
-                f'    """{docstring}"""\n'
-                f'    return f"Stub: {tool_name} called with {{input}}"'
-            )
-            tools.append(stub)
+    for tool_name in stub_tool_names:
+        docstring = tool_name.replace("_", " ").title() + "."
+        stub = (
+            f"@tool\n"
+            f"def {tool_name}(input: str) -> str:\n"
+            f'    """{docstring}"""\n'
+            f'    return f"Stub: {tool_name} called with {{input}}"'
+        )
+        tools.append(stub)
     return "\n\n".join(tools)
 
 
@@ -99,7 +94,7 @@ def _get_session_store(agent: Agent):
     return None
 
 
-def generate_agent_py(agent: Agent) -> str:
+def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, stub_tool_names: list[str] | None = None) -> str:
     """Generate a LangGraph agent definition file."""
     provider_type = agent.model.provider.type
     model_import, model_class = MODEL_PROVIDERS.get(
@@ -116,19 +111,26 @@ def generate_agent_py(agent: Agent) -> str:
             model_kwargs.append(f"{key}={value}")
     model_kwargs_str = ", ".join(model_kwargs)
 
-    # Build tool stubs
-    tool_stubs = _generate_tool_stubs(agent)
+    # Tool handling
+    if found_tool_names is None and stub_tool_names is None:
+        # Legacy: extract all tools from skills, treat as stubs
+        seen = set()
+        stub_tool_names = []
+        for skill in agent.skills:
+            for tool_name in skill.tools:
+                if tool_name not in seen:
+                    seen.add(tool_name)
+                    stub_tool_names.append(tool_name)
+        found_tool_names = []
 
-    # Collect tool names
-    tool_names = []
-    seen = set()
-    for skill in agent.skills:
-        for tool_name in skill.tools:
-            if tool_name not in seen:
-                seen.add(tool_name)
-                tool_names.append(tool_name)
+    if found_tool_names is None:
+        found_tool_names = []
+    if stub_tool_names is None:
+        stub_tool_names = []
 
-    tools_list = ", ".join(tool_names) if tool_names else ""
+    tool_stubs = _generate_tool_stubs(stub_tool_names)
+    all_tool_names = found_tool_names + stub_tool_names
+    tools_list = ", ".join(all_tool_names) if all_tool_names else ""
 
     # System prompt
     system_prompt = _collect_system_prompt(agent)
@@ -141,8 +143,8 @@ def generate_agent_py(agent: Agent) -> str:
     lines.append(f'"""AgentStack generated agent: {agent.name}."""\n')
     lines.append(f"{model_import}")
 
-    # Import tool decorator if needed (skill tools or memory tools)
-    if tool_names or session_store:
+    # Import tool decorator if needed (stub tools or memory tools)
+    if stub_tool_names or session_store:
         lines.append("from langchain_core.tools import tool")
 
     if session_store and session_store.engine == "postgres":
@@ -183,9 +185,16 @@ def generate_agent_py(agent: Agent) -> str:
 
     lines.append("")
 
+    # Import real tools from tools/ package
+    if found_tool_names:
+        lines.append("")
+        lines.append("# Tools (loaded from tools/ directory)")
+        imports = ", ".join(found_tool_names)
+        lines.append(f"from tools import {imports}")
+
     if tool_stubs:
         lines.append("")
-        lines.append("# Tools")
+        lines.append("# Tool stubs (no implementation found)")
         lines.append(tool_stubs)
 
     if session_store:
@@ -433,7 +442,7 @@ def generate_server_py(agent: Agent) -> str:
     return "\n".join(lines)
 
 
-def generate_requirements_txt(agent: Agent) -> str:
+def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str:
     """Generate a requirements.txt based on the agent's model provider."""
     provider_type = agent.model.provider.type
     provider_pkg = PROVIDER_PACKAGES.get(provider_type, PROVIDER_PACKAGES["anthropic"])
@@ -445,13 +454,17 @@ def generate_requirements_txt(agent: Agent) -> str:
     elif session_store and session_store.engine == "sqlite":
         checkpoint_pkg = "\nlanggraph-checkpoint-sqlite>=2.0\naiosqlite>=0.20"
 
+    tool_deps = ""
+    if tool_reqs:
+        tool_deps = "\n" + tool_reqs
+
     return dedent(f"""\
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
-        sse-starlette>=2.0{checkpoint_pkg}
+        sse-starlette>=2.0{checkpoint_pkg}{tool_deps}
     """)
 
 
