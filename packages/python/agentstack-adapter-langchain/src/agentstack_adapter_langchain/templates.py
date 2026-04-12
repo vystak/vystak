@@ -96,11 +96,15 @@ def generate_agent_py(agent: Agent) -> str:
     if tool_names:
         lines.append("from langchain_core.tools import tool")
 
+    lines.append("from langgraph.checkpoint.memory import MemorySaver")
     lines.append("from langgraph.prebuilt import create_react_agent")
     lines.append("")
     lines.append("")
     lines.append(f"# Model")
     lines.append(f"model = {model_class}({model_kwargs_str})")
+    lines.append("")
+    lines.append("# Session memory")
+    lines.append("memory = MemorySaver()")
     lines.append("")
 
     if tool_stubs:
@@ -116,10 +120,10 @@ def generate_agent_py(agent: Agent) -> str:
         lines.append(f'system_prompt = """{escaped_prompt}"""')
         lines.append("")
         lines.append(
-            f"agent = create_react_agent(model, [{tools_list}], prompt=system_prompt)"
+            f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory, prompt=system_prompt)"
         )
     else:
-        lines.append(f"agent = create_react_agent(model, [{tools_list}])")
+        lines.append(f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory)")
 
     lines.append("")
 
