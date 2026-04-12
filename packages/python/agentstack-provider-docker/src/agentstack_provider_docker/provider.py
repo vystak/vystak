@@ -159,7 +159,9 @@ class DockerProvider(PlatformProvider):
             build_dir = Path(".agentstack") / plan.agent_name
             build_dir.mkdir(parents=True, exist_ok=True)
             for filename, content in self._generated_code.files.items():
-                (build_dir / filename).write_text(content)
+                file_path = build_dir / filename
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content)
             dockerfile_content = DOCKERFILE_TEMPLATE.format(
                 entrypoint=self._generated_code.entrypoint
             )
