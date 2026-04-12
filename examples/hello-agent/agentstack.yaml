@@ -20,4 +20,4 @@ channels:
   - name: api
     type: api
 secrets:
-  - name: ANTHROPIC_API_KEY
+  - name: MINIMAX_API_KEY

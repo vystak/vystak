@@ -60,7 +60,7 @@ model:
     anthropic_api_url: https://api.minimax.io/anthropic  # MiniMax endpoint
 ```
 
-The `ANTHROPIC_API_KEY` env var holds your MiniMax token. LangChain's `ChatAnthropic` sends requests to MiniMax's endpoint instead of Anthropic's.
+The `MINIMAX_API_KEY` env var holds your MiniMax token. LangChain's `ChatAnthropic` sends requests to MiniMax's endpoint instead of Anthropic's.
 
 ## What `agentstack apply` Creates
 
@@ -114,7 +114,7 @@ agent = Agent(
         ),
     ],
     channels=[Channel(name="api", type=ChannelType.API)],
-    secrets=[Secret(name="ANTHROPIC_API_KEY")],
+    secrets=[Secret(name="MINIMAX_API_KEY")],
 )
 ```
 
