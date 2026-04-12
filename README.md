@@ -20,7 +20,13 @@ agentstack plan
 export ANTHROPIC_API_KEY=your-key
 agentstack apply
 
-# Talk to your agent
+# Talk to your agent (interactive REPL)
+agentstack-chat --url http://localhost:PORT
+
+# Or one-shot
+agentstack-chat --url http://localhost:PORT -p "Hello!"
+
+# Or via curl
 curl -X POST http://localhost:PORT/invoke \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello!"}'
@@ -100,6 +106,34 @@ agentstack.yaml
        /health  — health check
 ```
 
+## Chat Client
+
+Talk to your deployed agents from the terminal with `agentstack-chat`:
+
+```bash
+# Interactive REPL — connect and chat
+agentstack-chat --url http://localhost:8080
+
+# One-shot prompt
+agentstack-chat --url http://localhost:8080 -p "What is the weather in NYC?"
+```
+
+Inside the REPL, use slash commands:
+
+| Command | Description |
+|---------|-------------|
+| `/connect <url>` | Connect to an agent |
+| `/use <name>` | Connect to a saved agent |
+| `/agents` | List saved agents |
+| `/agents add <name> <url>` | Save an agent |
+| `/sessions` | List chat sessions |
+| `/new` | New session (same agent) |
+| `/resume <id>` | Resume a previous session |
+| `/status` | Show connection info |
+| `/help` | Show all commands |
+
+Features: streaming responses, tool call visibility, tab completion, persistent prompt history, token usage tracking in the status bar.
+
 ## Features
 
 - **Schema-driven** — Pydantic models for Agent, Skill, Channel, Resource, Workspace, Provider, Platform, McpServer, Secret
@@ -108,6 +142,8 @@ agentstack.yaml
 - **Docker provider** — builds images, manages containers, provisions Postgres/SQLite resources
 - **Session persistence** — conversations persist across container restarts (Postgres or SQLite)
 - **Long-term memory** — agents remember facts across sessions, scoped to user/project/global
+- **Chat client** — interactive REPL with streaming, tool visibility, slash commands, and token tracking
+- **Gateway** — channel routing service for Slack and other integrations
 - **YAML + Python** — define agents in YAML for simplicity or Python for power
 - **CLI** — `init`, `plan`, `apply`, `destroy`, `status`
 
@@ -156,6 +192,8 @@ packages/
     agentstack-cli/              # CLI tool
     agentstack-adapter-langchain/ # LangChain/LangGraph code generator
     agentstack-provider-docker/  # Docker deployment provider
+    agentstack-gateway/          # Channel gateway (Slack routing)
+    agentstack-chat/             # Interactive chat client
     agentstack-adapter-mastra/   # Mastra adapter (stub)
     agentstack-channel-api/      # REST API channel (stub)
   typescript/
