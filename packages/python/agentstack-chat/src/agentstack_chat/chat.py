@@ -36,9 +36,10 @@ COMMANDS = [
     ("/agents", "", "List saved agents"),
     ("/agents add", "<name> <url>", "Save an agent"),
     ("/agents remove", "<name>", "Remove a saved agent"),
-    ("/sessions", "[agent]", "List sessions"),
+    ("/gateway", "<url>", "Connect to a gateway — discover agents"),
+    ("/sessions", "", "Pick a session to resume"),
     ("/new", "", "New session (same agent)"),
-    ("/resume", "<id>", "Resume a session"),
+    ("/resume", "<id>", "Resume a session by ID"),
     ("/status", "", "Show connection info"),
     ("/help", "", "Show commands"),
     ("/exit", "", "Quit"),
@@ -232,12 +233,13 @@ class ChatREPL:
         table.add_column()
         table.add_row("/connect <url>", "Connect to an agent by URL")
         table.add_row("/use <name>", "Connect to a saved agent")
+        table.add_row("/gateway <url>", "Discover agents from a gateway")
         table.add_row("/agents", "List saved agents")
         table.add_row("/agents add <name> <url>", "Save an agent")
         table.add_row("/agents remove <name>", "Remove a saved agent")
-        table.add_row("/sessions", "List sessions")
+        table.add_row("/sessions", "Pick a session to resume")
         table.add_row("/new", "New session (same agent)")
-        table.add_row("/resume <id>", "Resume a session")
+        table.add_row("/resume <id>", "Resume a session by ID")
         table.add_row("/status", "Show connection info")
         table.add_row("/help", "Show this help")
         table.add_row("/exit", "Quit")
@@ -326,18 +328,44 @@ class ChatREPL:
         console.print()
 
     def _cmd_sessions(self, args: str):
+        from agentstack_chat.picker import pick
+
         agent_filter = args.strip() or None
         saved = get_sessions_for_agent(agent_filter) if agent_filter else list_sessions()
 
         if not saved:
-            console.print("[system]No sessions.[/system]")
+            console.print("[system]No sessions. Start chatting to create one.[/system]")
             return
 
-        console.print()
+        # Build picker items
+        items = []
         for s in saved:
-            marker = " [success]<- current[/success]" if s["id"] == self._session_id else ""
-            console.print(f"  [bold]{s['id'][:8]}[/bold]  [cyan]{s['agent_name']}[/cyan]  {s['agent_url']}{marker}")
-        console.print()
+            current = " (current)" if s["id"] == self._session_id else ""
+            items.append({
+                "label": f"{s['id'][:8]}  {s['agent_name']}{current}",
+                "detail": s["agent_url"],
+                "session": s,
+            })
+        items.append({"label": "+ New session", "detail": "Start a new conversation", "session": None})
+
+        selected = pick("Sessions", items)
+        if selected is None:
+            return
+
+        session = selected["session"]
+        if session is None:
+            # New session
+            if self._agent_url:
+                self._cmd_new()
+            else:
+                console.print("[warning]Connect to an agent first (/connect or /use)[/warning]")
+            return
+
+        self._agent_name = session["agent_name"]
+        self._agent_url = session["agent_url"]
+        self._session_id = session["id"]
+        self._reset_tokens()
+        console.print(f"[success]Resumed: {self._agent_name} ({self._session_id[:8]}...)[/success]")
 
     def _cmd_resume(self, args: str):
         session_id = args.strip()
@@ -368,7 +396,65 @@ class ChatREPL:
 
         session = create_session(self._agent_name, self._agent_url)
         self._session_id = session["id"]
+        self._reset_tokens()
         console.print(f"[success]New session: {self._session_id[:8]}...[/success]")
+
+    async def _cmd_gateway(self, args: str):
+        """Connect to a gateway and pick an agent."""
+        from agentstack_chat.picker import pick
+
+        gateway_url = args.strip().rstrip("/")
+        if not gateway_url:
+            console.print("[error]Usage: /gateway <url>[/error]")
+            return
+
+        console.print(f"[dim]Connecting to gateway at {gateway_url}...[/dim]")
+        routes = await client.gateway_routes(gateway_url)
+
+        if not routes:
+            console.print(f"[error]No agents found at {gateway_url}[/error]")
+            return
+
+        # Deduplicate agents from routes
+        agents_map = {}
+        for route in routes:
+            name = route.get("agent_name", "unknown")
+            url = route.get("agent_url", "")
+            channels = route.get("channels", [])
+            if name not in agents_map:
+                agents_map[name] = {"name": name, "url": url, "channels": []}
+            agents_map[name]["channels"].extend(channels)
+
+        items = []
+        for name, info in agents_map.items():
+            channels_str = ", ".join(info["channels"]) if info["channels"] else "no channels"
+            items.append({
+                "label": name,
+                "detail": f"{info['url']}  ({channels_str})",
+                "agent_name": name,
+                "agent_url": info["url"],
+            })
+
+        if len(items) == 1:
+            selected = items[0]
+        else:
+            selected = pick("Select Agent", items)
+
+        if selected is None:
+            return
+
+        agent_name = selected["agent_name"]
+        agent_url = selected["agent_url"]
+
+        # Save and connect
+        add_agent(agent_name, agent_url)
+        console.print(f"[success]Connected to {agent_name}[/success]")
+
+        self._agent_name = agent_name
+        self._agent_url = agent_url
+        session = create_session(agent_name, agent_url)
+        self._session_id = session["id"]
+        self._reset_tokens()
 
     async def _handle_command(self, line: str):
         parts = line[1:].split(maxsplit=1)
@@ -386,6 +472,8 @@ class ChatREPL:
                 await self._cmd_use(args)
             case "agents":
                 await self._cmd_agents(args)
+            case "gateway":
+                await self._cmd_gateway(args)
             case "sessions":
                 self._cmd_sessions(args)
             case "resume":
@@ -500,13 +588,16 @@ class ChatREPL:
                     await self._process_queue()
 
 
-def run_repl(auto_connect_url: str | None = None):
+def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None = None):
     """Entry point for interactive REPL."""
     async def _run():
         repl = ChatREPL()
         if auto_connect_url:
             repl._show_welcome()
             await repl._cmd_connect(auto_connect_url)
+        elif auto_gateway_url:
+            repl._show_welcome()
+            await repl._cmd_gateway(auto_gateway_url)
         await repl.run()
 
     asyncio.run(_run())
