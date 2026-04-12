@@ -6,10 +6,13 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "agentstack>=0.1.0",
+    "agentstack-adapter-langchain>=0.1.0",
+    "agentstack-provider-docker>=0.1.0",
+    "click>=8.0",
 ]
 
 [project.scripts]
-agentstack = "agentstack_cli.cli:main"
+agentstack = "agentstack_cli.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -20,3 +23,5 @@ packages = ["src/agentstack_cli"]
 
 [tool.uv.sources]
 agentstack = { workspace = true }
+agentstack-adapter-langchain = { workspace = true }
+agentstack-provider-docker = { workspace = true }
