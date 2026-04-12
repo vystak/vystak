@@ -19,5 +19,11 @@ skills:
 channels:
   - name: api
     type: api
+resources:
+  - name: sessions
+    provider:
+      name: docker
+      type: docker
+    engine: postgres
 secrets:
   - name: ANTHROPIC_API_KEY

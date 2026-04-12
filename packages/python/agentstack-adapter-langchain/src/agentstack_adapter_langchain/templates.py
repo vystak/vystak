@@ -60,6 +60,9 @@ def _get_session_store(agent: Agent):
     for resource in agent.resources:
         if isinstance(resource, SessionStore):
             return resource
+        # YAML-loaded resources are base Resource — match by engine
+        if resource.engine in ("postgres", "sqlite", "redis"):
+            return resource
     return None
 
 
