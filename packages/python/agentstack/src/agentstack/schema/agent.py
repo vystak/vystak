@@ -14,6 +14,7 @@ from agentstack.schema.workspace import Workspace
 class Agent(NamedModel):
     """An AI agent — the central deployable unit."""
 
+    instructions: str | None = None
     model: Model
     skills: list[Skill] = []
     channels: list[Channel] = []
