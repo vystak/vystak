@@ -1,0 +1,24 @@
+name: weather-agent
+instructions: |
+  You are a weather specialist agent. When asked about weather,
+  use the get_weather tool to fetch real data. Return concise,
+  factual weather reports. You serve other agents via A2A protocol.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.3
+    anthropic_api_url: https://api.minimax.io/anthropic
+skills:
+  - name: weather
+    tools:
+      - get_weather
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8081
