@@ -10,10 +10,8 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
@@ -127,72 +125,69 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 
 
 async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
-    """Stream response with live Rich rendering. Returns usage info."""
-    from rich.spinner import Spinner
-    from rich.live import Live
-    from rich.text import Text as RichText
-
+    """Stream response without disrupting the prompt_toolkit layout."""
     stream_result = client.StreamResult()
-    console.print(f"\n[agent]{agent_name}[/agent]")
     tokens_buf: list[str] = []
     has_output = False
-    live = None
+    status_line_shown = False
 
-    def _make_display():
-        """Build the current display — spinner or accumulated text."""
-        text = "".join(tokens_buf)
-        if text:
-            return Markdown(text)
-        return Spinner("dots", text="Thinking...", style="dim")
+    # Print status line (will be overwritten by first token)
+    console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
+    status_line_shown = True
 
     try:
-        live = Live(
-            Spinner("dots", text="Thinking...", style="dim"),
-            console=console,
-            refresh_per_second=12,
-            vertical_overflow="visible",
-        )
-        live.start()
-
         async for event in client.stream_events(url, message, session_id, result=stream_result):
             if event.type == "token":
+                if status_line_shown:
+                    # Clear the status line
+                    console.print(" " * 60, end="\r")
+                    console.print(f"[agent]{agent_name}[/agent]")
+                    status_line_shown = False
                 has_output = True
                 tokens_buf.append(event.token)
-                live.update(Markdown("".join(tokens_buf)))
+                # Write raw token to stdout for real-time feel
+                sys.stdout.write(event.token)
+                sys.stdout.flush()
 
             elif event.type == "tool_call_start":
-                live.update(Spinner("dots", text=f"Calling {event.tool}...", style="dim"))
+                if status_line_shown:
+                    console.print(" " * 60, end="\r")
+                    status_line_shown = False
+                if has_output:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    has_output = False
+                console.print(f"[dim]  > calling {event.tool}...[/dim]")
 
             elif event.type == "tool_result":
                 result_preview = event.result[:100] + "..." if len(event.result) > 100 else event.result
-                # Show tool result briefly, then back to spinner
-                live.update(RichText(f"  > {event.tool}: {result_preview}", style="dim"))
-                await asyncio.sleep(0.3)
-                live.update(Spinner("dots", text="Thinking...", style="dim"))
+                console.print(f"[dim]  > {event.tool}: {result_preview}[/dim]")
+                console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
+                status_line_shown = True
 
             elif event.type == "done":
-                pass
-
-        # Stop live — the final Live render stays on screen
-        if live is not None:
-            if has_output:
-                # Final update with complete markdown
-                live.update(Markdown("".join(tokens_buf)))
-            live.stop()
-            live = None
+                if status_line_shown:
+                    console.print(" " * 60, end="\r")
+                    status_line_shown = False
+                if has_output:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
 
         if not has_output:
+            if status_line_shown:
+                console.print(" " * 60, end="\r")
             invoke_result = await client.invoke(url, message, session_id)
+            console.print(f"[agent]{agent_name}[/agent]")
             console.print(Markdown(invoke_result.response))
             stream_result.input_tokens = invoke_result.input_tokens
             stream_result.output_tokens = invoke_result.output_tokens
             stream_result.total_tokens = invoke_result.total_tokens
 
     except Exception:
-        if live is not None:
-            live.stop()
-        console.print()
+        if status_line_shown:
+            console.print(" " * 60, end="\r")
         invoke_result = await client.invoke(url, message, session_id)
+        console.print(f"[agent]{agent_name}[/agent]")
         console.print(Markdown(invoke_result.response))
         stream_result.input_tokens = invoke_result.input_tokens
         stream_result.output_tokens = invoke_result.output_tokens
