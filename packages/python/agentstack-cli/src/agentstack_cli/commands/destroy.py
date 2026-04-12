@@ -26,7 +26,7 @@ def destroy(file_path, agent_name, include_resources):
     click.echo(f"Destroying: {agent_name}")
     provider = DockerProvider()
 
-    if include_resources and agent:
+    if agent:
         provider.set_agent(agent)
 
     click.echo(f"Stopping container agentstack-{agent_name}... ", nl=False)
@@ -34,7 +34,7 @@ def destroy(file_path, agent_name, include_resources):
         provider.destroy(agent_name, include_resources=include_resources)
         click.echo("OK")
         if include_resources:
-            click.echo("Resource containers removed (volumes preserved)")
+            click.echo("Resource and gateway containers removed (volumes preserved)")
         click.echo(f"Destroyed: {agent_name}")
     except Exception as e:
         click.echo("FAILED")
