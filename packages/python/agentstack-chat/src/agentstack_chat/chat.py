@@ -129,14 +129,15 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
     return Text("...", style="dim")
 
 
-async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> str:
-    """Stream response with live rendering."""
+async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
+    """Stream response with live rendering. Returns usage info."""
     tokens = []
+    stream_result = client.StreamResult()
     console.print(f"\n[agent]{agent_name}[/agent]", end="")
 
     try:
         first = True
-        async for token in client.stream(url, message, session_id):
+        async for token in client.stream(url, message, session_id, result=stream_result):
             if first:
                 console.print()  # newline after agent name
                 first = True
@@ -147,18 +148,24 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
         full_response = "".join(tokens)
 
         if not full_response:
-            full_response = await client.invoke(url, message, session_id)
+            invoke_result = await client.invoke(url, message, session_id)
             console.print()
-            console.print(Markdown(full_response))
+            console.print(Markdown(invoke_result.response))
+            stream_result.input_tokens = invoke_result.input_tokens
+            stream_result.output_tokens = invoke_result.output_tokens
+            stream_result.total_tokens = invoke_result.total_tokens
         else:
             console.print()  # final newline
 
     except Exception as e:
         console.print()
-        full_response = await client.invoke(url, message, session_id)
-        console.print(Markdown(full_response))
+        invoke_result = await client.invoke(url, message, session_id)
+        console.print(Markdown(invoke_result.response))
+        stream_result.input_tokens = invoke_result.input_tokens
+        stream_result.output_tokens = invoke_result.output_tokens
+        stream_result.total_tokens = invoke_result.total_tokens
 
-    return full_response
+    return stream_result
 
 
 class ChatREPL:
@@ -169,10 +176,20 @@ class ChatREPL:
         self._agent_url: str | None = None
         self._session_id: str | None = None
         self._running = True
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
+        self._last_input_tokens: int = 0
+        self._last_output_tokens: int = 0
 
     @property
     def connected(self) -> bool:
         return self._agent_url is not None and self._session_id is not None
+
+    def _reset_tokens(self):
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
 
     def _show_welcome(self):
         console.print()
@@ -360,19 +377,38 @@ class ChatREPL:
         try:
             console.print(f"\n[user]You[/user]")
             console.print(message)
-            await _stream_response(self._agent_url, message, self._session_id, self._agent_name)
+            result = await _stream_response(self._agent_url, message, self._session_id, self._agent_name)
+            self._last_input_tokens = result.input_tokens
+            self._last_output_tokens = result.output_tokens
+            self._total_input_tokens += result.input_tokens
+            self._total_output_tokens += result.output_tokens
         except Exception as e:
             console.print(f"[error]{e}[/error]")
 
+    def _format_tokens(self, count: int) -> str:
+        """Format token count with K/M suffixes."""
+        if count >= 1_000_000:
+            return f"{count / 1_000_000:.1f}M"
+        if count >= 1_000:
+            return f"{count / 1_000:.1f}K"
+        return str(count)
+
     def _bottom_toolbar(self):
-        """Status line below the input — shows agent, session, context."""
+        """Status line below the input — shows agent, session, tokens."""
         if self.connected:
+            total = self._total_input_tokens + self._total_output_tokens
+            tokens_str = (
+                f'tokens: {self._format_tokens(total)}'
+                f' ({self._format_tokens(self._total_input_tokens)} in'
+                f' / {self._format_tokens(self._total_output_tokens)} out)'
+            ) if total > 0 else "tokens: 0"
+
             return HTML(
                 f'  <style fg="#6a6a8a">{self._agent_name}</style>'
                 f' <style fg="#444444">|</style>'
                 f' <style fg="#6a6a8a">session: {self._session_id[:8]}</style>'
                 f' <style fg="#444444">|</style>'
-                f' <style fg="#6a6a8a">{self._agent_url}</style>'
+                f' <style fg="#6a6a8a">{tokens_str}</style>'
             )
         return HTML(
             '  <style fg="#6a6a8a">not connected</style>'
