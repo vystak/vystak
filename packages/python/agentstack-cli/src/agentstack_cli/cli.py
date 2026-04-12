@@ -1,23 +1,19 @@
-"""CLI entry point."""
+"""AgentStack CLI entry point."""
 
 import click
 
 from agentstack_cli import __version__
-from agentstack_cli.commands.init import init
+from agentstack_cli.commands import apply, destroy, init, plan, status
 
 
 @click.group()
-@click.version_option(__version__, prog_name="agentstack")
-def cli() -> None:
-    """AgentStack CLI — manage and deploy AI agents."""
+@click.version_option(version=__version__)
+def cli():
+    """AgentStack — declarative AI agent orchestration."""
 
 
 cli.add_command(init)
-
-
-def main() -> None:
-    cli()
-
-
-if __name__ == "__main__":
-    main()
+cli.add_command(plan)
+cli.add_command(apply)
+cli.add_command(destroy)
+cli.add_command(status)
