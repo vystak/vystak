@@ -28,7 +28,7 @@ def apply(file_path):
     click.echo("OK")
 
     click.echo("Generating code... ", nl=False)
-    code = adapter.generate(agent)
+    code = adapter.generate(agent, base_dir=path.parent)
     click.echo("OK")
 
     provider = DockerProvider()
