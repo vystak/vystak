@@ -31,3 +31,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# AgentStack generated output
+.agentstack/

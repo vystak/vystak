@@ -41,6 +41,7 @@ def apply(file_path):
 
     click.echo("Building Docker image... ", nl=False)
     provider.set_generated_code(code)
+    provider.set_agent(agent)
     result = provider.apply(deploy_plan)
 
     if result.success:

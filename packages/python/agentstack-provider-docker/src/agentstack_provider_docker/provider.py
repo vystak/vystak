@@ -1,5 +1,6 @@
 """Docker platform provider — builds and runs agents as Docker containers."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -31,11 +32,37 @@ class DockerProvider(PlatformProvider):
     """Deploys and manages agents as Docker containers."""
 
     def __init__(self):
-        self._client = docker.from_env()
+        self._client = self._create_client()
         self._generated_code: GeneratedCode | None = None
+        self._agent: Agent | None = None
+
+    @staticmethod
+    def _create_client():
+        """Create Docker client, trying Docker Desktop socket if default fails."""
+        try:
+            return docker.from_env()
+        except docker.errors.DockerException:
+            # Docker Desktop on macOS uses a non-default socket
+            desktop_socket = Path.home() / ".docker" / "run" / "docker.sock"
+            if desktop_socket.exists():
+                return docker.DockerClient(base_url=f"unix://{desktop_socket}")
+            raise
 
     def set_generated_code(self, code: GeneratedCode) -> None:
         self._generated_code = code
+
+    def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
+
+    def _build_env(self) -> dict[str, str]:
+        """Build environment variables for the container from agent secrets."""
+        env = {}
+        if self._agent:
+            for secret in self._agent.secrets:
+                value = os.environ.get(secret.name)
+                if value:
+                    env[secret.name] = value
+        return env
 
     def _container_name(self, agent_name: str) -> str:
         return f"agentstack-{agent_name}"
@@ -99,16 +126,17 @@ class DockerProvider(PlatformProvider):
                 existing.stop()
                 existing.remove()
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmppath = Path(tmpdir)
-                for filename, content in self._generated_code.files.items():
-                    (tmppath / filename).write_text(content)
-                dockerfile_content = DOCKERFILE_TEMPLATE.format(
-                    entrypoint=self._generated_code.entrypoint
-                )
-                (tmppath / "Dockerfile").write_text(dockerfile_content)
-                image_tag = f"{self._container_name(plan.agent_name)}:latest"
-                self._client.images.build(path=str(tmppath), tag=image_tag)
+            # Write generated files to .agentstack/<agent-name>/
+            build_dir = Path(".agentstack") / plan.agent_name
+            build_dir.mkdir(parents=True, exist_ok=True)
+            for filename, content in self._generated_code.files.items():
+                (build_dir / filename).write_text(content)
+            dockerfile_content = DOCKERFILE_TEMPLATE.format(
+                entrypoint=self._generated_code.entrypoint
+            )
+            (build_dir / "Dockerfile").write_text(dockerfile_content)
+            image_tag = f"{self._container_name(plan.agent_name)}:latest"
+            self._client.images.build(path=str(build_dir), tag=image_tag)
 
             container_name = self._container_name(plan.agent_name)
             self._client.containers.run(
@@ -116,6 +144,7 @@ class DockerProvider(PlatformProvider):
                 name=container_name,
                 detach=True,
                 ports={"8000/tcp": None},
+                environment=self._build_env(),
                 labels={
                     "agentstack.hash": plan.target_hash,
                     "agentstack.agent": plan.agent_name,
