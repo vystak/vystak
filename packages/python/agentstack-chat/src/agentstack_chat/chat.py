@@ -1,85 +1,312 @@
-"""Interactive chat loop with Rich TUI."""
+"""Interactive chat REPL — Claude Code-style terminal interface."""
 
 import asyncio
+import sys
 
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.rule import Rule
+from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme
 
 from agentstack_chat import client
+from agentstack_chat.config import (
+    add_agent,
+    create_session,
+    get_agent,
+    get_session,
+    get_sessions_for_agent,
+    list_agents,
+    list_sessions,
+    remove_agent,
+)
+
+custom_theme = Theme({
+    "user": "bold cyan",
+    "agent": "bold blue",
+    "system": "dim",
+    "error": "bold red",
+    "success": "bold green",
+    "warning": "bold yellow",
+})
+
+console = Console(theme=custom_theme)
 
 
-console = Console()
-
-
-def _render_streaming(tokens: list[str]) -> Panel:
-    """Render accumulated tokens as a markdown panel."""
+def _render_streaming(tokens: list[str], agent_name: str) -> Text:
+    """Render accumulated tokens during streaming."""
     text = "".join(tokens)
     if text:
-        return Panel(Markdown(text), title="Agent", border_style="blue", expand=True)
-    return Panel(Text("Thinking...", style="dim"), title="Agent", border_style="blue", expand=True)
+        return Text(text)
+    return Text("...", style="dim")
 
 
-async def _stream_response(url: str, message: str, session_id: str) -> str:
-    """Stream response with live Rich rendering."""
+async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> str:
+    """Stream response with live rendering."""
     tokens = []
+    console.print(f"\n[agent]{agent_name}[/agent]", end="")
 
-    with Live(_render_streaming(tokens), console=console, refresh_per_second=15) as live:
+    try:
+        first = True
         async for token in client.stream(url, message, session_id):
+            if first:
+                console.print()  # newline after agent name
+                first = True
             tokens.append(token)
-            live.update(_render_streaming(tokens))
+            sys.stdout.write(token)
+            sys.stdout.flush()
 
-    full_response = "".join(tokens)
+        full_response = "".join(tokens)
 
-    # If streaming didn't work, fall back to invoke
-    if not full_response:
-        console.print(Text("Streaming unavailable, using invoke...", style="dim"))
+        if not full_response:
+            full_response = await client.invoke(url, message, session_id)
+            console.print()
+            console.print(Markdown(full_response))
+        else:
+            console.print()  # final newline
+
+    except Exception as e:
+        console.print()
         full_response = await client.invoke(url, message, session_id)
-        console.print(Panel(Markdown(full_response), title="Agent", border_style="blue"))
+        console.print(Markdown(full_response))
 
     return full_response
 
 
-async def chat_loop(agent_name: str, agent_url: str, session_id: str) -> None:
-    """Run the interactive chat loop."""
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]Agent:[/bold] {agent_name}\n"
-            f"[bold]Session:[/bold] {session_id[:8]}...\n"
-            f"[bold]URL:[/bold] {agent_url}\n\n"
-            "[dim]Type your message and press Enter. Type 'exit' or 'quit' to leave.[/dim]",
-            title="AgentStack Chat",
-            border_style="green",
-        )
-    )
-    console.print()
+class ChatREPL:
+    """Interactive chat REPL with slash commands."""
 
-    while True:
+    def __init__(self):
+        self._agent_name: str | None = None
+        self._agent_url: str | None = None
+        self._session_id: str | None = None
+        self._running = True
+
+    @property
+    def connected(self) -> bool:
+        return self._agent_url is not None and self._session_id is not None
+
+    def _show_welcome(self):
+        console.print()
+        console.print("[bold]AgentStack Chat[/bold] v0.1.0", style="success")
+        console.print("[system]Type /help for commands, or start chatting.[/system]")
+        console.print()
+
+    def _show_help(self):
+        console.print()
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column(style="cyan")
+        table.add_column()
+        table.add_row("/connect <url>", "Connect to an agent by URL")
+        table.add_row("/use <name>", "Connect to a saved agent")
+        table.add_row("/agents", "List saved agents")
+        table.add_row("/agents add <name> <url>", "Save an agent")
+        table.add_row("/agents remove <name>", "Remove a saved agent")
+        table.add_row("/sessions", "List sessions")
+        table.add_row("/new", "New session (same agent)")
+        table.add_row("/resume <id>", "Resume a session")
+        table.add_row("/status", "Show connection info")
+        table.add_row("/help", "Show this help")
+        table.add_row("/exit", "Quit")
+        console.print(table)
+        console.print()
+
+    def _show_status(self):
+        if self.connected:
+            console.print(f"  [system]agent:[/system]   [agent]{self._agent_name}[/agent]")
+            console.print(f"  [system]session:[/system] {self._session_id[:8]}...")
+            console.print(f"  [system]url:[/system]     {self._agent_url}")
+        else:
+            console.print("[warning]Not connected[/warning]")
+
+    def _prompt(self) -> str:
+        """Get the prompt string."""
+        if self.connected:
+            return f"{self._agent_name} > "
+        return "> "
+
+    async def _cmd_connect(self, args: str):
+        url = args.strip().rstrip("/")
+        if not url:
+            console.print("[error]Usage: /connect <url>[/error]")
+            return
+
+        health_info = await client.health(url)
+
+        if health_info:
+            agent_name = health_info.get("agent", "unknown")
+            console.print(f"[success]Connected to {agent_name}[/success]")
+        else:
+            agent_name = "unknown"
+            console.print(f"[warning]Agent at {url} not responding, connecting anyway[/warning]")
+
+        self._agent_name = agent_name
+        self._agent_url = url
+
+        session = create_session(agent_name, url)
+        self._session_id = session["id"]
+
+        # Auto-save the agent
+        add_agent(agent_name, url)
+
+    async def _cmd_use(self, args: str):
+        name = args.strip()
+        if not name:
+            console.print("[error]Usage: /use <agent-name>[/error]")
+            return
+
+        agent = get_agent(name)
+        if not agent:
+            console.print(f"[error]Agent '{name}' not found. /agents to list.[/error]")
+            return
+
+        await self._cmd_connect(agent["url"])
+
+    async def _cmd_agents(self, args: str):
+        parts = args.strip().split(maxsplit=2)
+        sub = parts[0] if parts else ""
+
+        if sub == "add" and len(parts) == 3:
+            _, name, url = parts
+            add_agent(name, url.rstrip("/"))
+            console.print(f"[success]Saved: {name} -> {url}[/success]")
+            return
+
+        if sub == "remove" and len(parts) == 2:
+            _, name = parts
+            if remove_agent(name):
+                console.print(f"[success]Removed: {name}[/success]")
+            else:
+                console.print(f"[error]Not found: {name}[/error]")
+            return
+
+        saved = list_agents()
+        if not saved:
+            console.print("[system]No saved agents. /agents add <name> <url>[/system]")
+            return
+
+        console.print()
+        for agent in saved:
+            health_info = await client.health(agent["url"])
+            status = "[success]online[/success]" if health_info else "[error]offline[/error]"
+            console.print(f"  [cyan]{agent['name']}[/cyan]  {agent['url']}  {status}")
+        console.print()
+
+    def _cmd_sessions(self, args: str):
+        agent_filter = args.strip() or None
+        saved = get_sessions_for_agent(agent_filter) if agent_filter else list_sessions()
+
+        if not saved:
+            console.print("[system]No sessions.[/system]")
+            return
+
+        console.print()
+        for s in saved:
+            marker = " [success]<- current[/success]" if s["id"] == self._session_id else ""
+            console.print(f"  [bold]{s['id'][:8]}[/bold]  [cyan]{s['agent_name']}[/cyan]  {s['agent_url']}{marker}")
+        console.print()
+
+    def _cmd_resume(self, args: str):
+        session_id = args.strip()
+        if not session_id:
+            console.print("[error]Usage: /resume <session-id>[/error]")
+            return
+
+        session = get_session(session_id)
+        if not session:
+            for s in list_sessions():
+                if s["id"].startswith(session_id):
+                    session = s
+                    break
+
+        if not session:
+            console.print(f"[error]Session not found. /sessions to list.[/error]")
+            return
+
+        self._agent_name = session["agent_name"]
+        self._agent_url = session["agent_url"]
+        self._session_id = session["id"]
+        console.print(f"[success]Resumed: {self._agent_name} ({self._session_id[:8]}...)[/success]")
+
+    def _cmd_new(self):
+        if not self._agent_url:
+            console.print("[error]Not connected. /connect or /use first.[/error]")
+            return
+
+        session = create_session(self._agent_name, self._agent_url)
+        self._session_id = session["id"]
+        console.print(f"[success]New session: {self._session_id[:8]}...[/success]")
+
+    async def _handle_command(self, line: str):
+        parts = line[1:].split(maxsplit=1)
+        cmd = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        match cmd:
+            case "exit" | "quit":
+                self._running = False
+            case "help":
+                self._show_help()
+            case "connect":
+                await self._cmd_connect(args)
+            case "use":
+                await self._cmd_use(args)
+            case "agents":
+                await self._cmd_agents(args)
+            case "sessions":
+                self._cmd_sessions(args)
+            case "resume":
+                self._cmd_resume(args)
+            case "new":
+                self._cmd_new()
+            case "status":
+                self._show_status()
+            case _:
+                console.print(f"[error]Unknown: /{cmd}[/error]  [system]Type /help[/system]")
+
+    async def _handle_message(self, message: str):
+        if not self.connected:
+            console.print("[warning]Not connected. /connect <url> or /use <name>[/warning]")
+            return
+
         try:
-            message = Prompt.ask("[bold cyan]You[/bold cyan]")
-        except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Goodbye![/dim]")
-            break
-
-        message = message.strip()
-        if not message:
-            continue
-        if message.lower() in ("exit", "quit", "/exit", "/quit"):
-            console.print("[dim]Goodbye![/dim]")
-            break
-
-        try:
-            await _stream_response(agent_url, message, session_id)
-            console.print()
+            console.print(f"\n[user]You[/user]")
+            console.print(message)
+            await _stream_response(self._agent_url, message, self._session_id, self._agent_name)
         except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            console.print()
+            console.print(f"[error]{e}[/error]")
+
+    async def run(self):
+        """Run the REPL."""
+        self._show_welcome()
+
+        while self._running:
+            try:
+                line = console.input(f"[bold]{self._prompt()}[/bold]")
+            except (KeyboardInterrupt, EOFError):
+                console.print("\n[system]Goodbye![/system]")
+                break
+
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("/"):
+                await self._handle_command(line)
+            else:
+                await self._handle_message(line)
 
 
-def run_chat(agent_name: str, agent_url: str, session_id: str) -> None:
-    """Entry point for the chat loop."""
-    asyncio.run(chat_loop(agent_name, agent_url, session_id))
+def run_repl(auto_connect_url: str | None = None):
+    """Entry point."""
+    async def _run():
+        repl = ChatREPL()
+        if auto_connect_url:
+            repl._show_welcome()
+            await repl._cmd_connect(auto_connect_url)
+        await repl.run()
+
+    asyncio.run(_run())
