@@ -287,3 +287,36 @@ class TestServerMemory:
     def test_sqlite_requirements_include_aiosqlite(self, sqlite_agent):
         reqs = generate_requirements_txt(sqlite_agent)
         assert "aiosqlite" in reqs
+
+
+class TestA2AInServer:
+    def test_server_has_agent_card_endpoint(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "/.well-known/agent.json" in code
+
+    def test_server_has_a2a_endpoint(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "/a2a" in code
+
+    def test_server_has_task_manager(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "TaskManager" in code
+
+    def test_server_has_jsonrpc_methods(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "tasks/send" in code
+        assert "tasks/get" in code
+        assert "tasks/cancel" in code
+        assert "tasks/sendSubscribe" in code
+
+    def test_server_a2a_parseable(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        python_ast.parse(code)
+
+    def test_server_a2a_with_resources_parseable(self, postgres_agent):
+        code = generate_server_py(postgres_agent)
+        python_ast.parse(code)
+
+    def test_server_a2a_sqlite_parseable(self, sqlite_agent):
+        code = generate_server_py(sqlite_agent)
+        python_ast.parse(code)
