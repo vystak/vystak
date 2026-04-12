@@ -3,6 +3,11 @@
 from textwrap import dedent
 
 from agentstack.schema.agent import Agent
+from agentstack_adapter_langchain.a2a import (
+    generate_a2a_handler_code,
+    generate_agent_card_code,
+    generate_task_manager_code,
+)
 
 # Provider type -> (import statement, class name)
 MODEL_PROVIDERS = {
@@ -265,7 +270,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("import os")
     lines.append("import uuid")
     lines.append("")
-    lines.append("from fastapi import FastAPI")
+    lines.append("from fastapi import FastAPI, Request")
     lines.append("from pydantic import BaseModel")
     lines.append("from sse_starlette.sse import EventSourceResponse")
     lines.append("")
@@ -300,6 +305,7 @@ def generate_server_py(agent: Agent) -> str:
         lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
     else:
         lines.append("from agent import agent")
+        lines.append("_agent = agent  # alias for A2A handlers")
         lines.append("")
         lines.append(f'app = FastAPI(title="{agent.name}")')
 
@@ -433,6 +439,12 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    return EventSourceResponse(event_generator())")
     lines.append("")
     lines.append("")
+
+    # A2A Protocol
+    lines.append(generate_task_manager_code())
+    lines.append(generate_agent_card_code(agent))
+    lines.append(generate_a2a_handler_code(agent))
+
     lines.append('if __name__ == "__main__":')
     lines.append("    import uvicorn")
     lines.append("")
