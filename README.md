@@ -101,9 +101,11 @@ agentstack.yaml
    [5] Deploy container
        |
    Agent running at http://localhost:PORT
-       /invoke  — request-response
-       /stream  — SSE streaming
-       /health  — health check
+       /invoke                    — request-response
+       /stream                    — SSE streaming
+       /health                    — health check
+       /.well-known/agent.json    — A2A Agent Card (discovery)
+       /a2a                       — A2A JSON-RPC (agent-to-agent)
 ```
 
 ## Chat Client
@@ -143,9 +145,68 @@ Features: streaming responses, tool call visibility, tab completion, persistent 
 - **Session persistence** — conversations persist across container restarts (Postgres or SQLite)
 - **Long-term memory** — agents remember facts across sessions, scoped to user/project/global
 - **Chat client** — interactive REPL with streaming, tool visibility, slash commands, and token tracking
+- **A2A protocol** — agents discover and communicate via Google's Agent-to-Agent standard (JSON-RPC 2.0)
+- **Multi-agent** — deploy multiple agents that call each other in parallel via A2A with nested streaming
+- **Real tool loading** — write plain Python functions in `tools/`, auto-scaffolded on first deploy
 - **Gateway** — channel routing service for Slack and other integrations
 - **YAML + Python** — define agents in YAML for simplicity or Python for power
-- **CLI** — `init`, `plan`, `apply`, `destroy`, `status`
+- **CLI** — `init`, `plan`, `apply`, `destroy`, `status`, `logs`
+
+## Multi-Agent (A2A Protocol)
+
+AgentStack agents implement Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Agents discover each other via Agent Cards and communicate via JSON-RPC 2.0 over HTTP.
+
+**Deploy multiple agents:**
+
+```bash
+# Deploy a weather specialist
+cd examples/multi-agent/weather && agentstack apply
+
+# Deploy a time specialist
+cd examples/multi-agent/time && agentstack apply
+
+# Deploy an assistant that calls both
+cd examples/multi-agent/assistant && agentstack apply
+```
+
+**Agents call each other via A2A tools:**
+
+```python
+# tools/ask_weather_agent.py — async for parallel execution
+async def ask_weather_agent(question: str) -> str:
+    """Ask the weather agent via A2A protocol."""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://agentstack-weather-agent:8000/a2a",
+            json={"jsonrpc": "2.0", "method": "tasks/send", ...}
+        )
+    return extract_response(response.json())
+```
+
+**Parallel agent calls with full streaming visibility:**
+
+```
+$ curl -N http://localhost:8082/stream -d '{"message": "Weather in Tokyo AND current time?"}'
+
+data: {"type": "tool_call_start", "tool": "ask_weather_agent"}   ← both tools called
+data: {"type": "tool_call_start", "tool": "ask_time_agent"}      ← in parallel!
+data: {"type": "agent_call", "agent": "weather-agent", "status": "started"}
+data: {"type": "agent_call", "agent": "time-agent", "status": "started"}
+data: {"type": "agent_call", "agent": "time-agent", "status": "completed"}  ← finished first
+data: {"type": "agent_call", "agent": "weather-agent", "status": "completed"}
+data: {"type": "token", "token": "Here's the info..."}          ← combined response
+data: {"type": "done"}
+```
+
+**A2A endpoints on every agent:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/agent.json` | Agent Card — name, skills, capabilities |
+| `POST /a2a` `tasks/send` | Send a message, get response |
+| `POST /a2a` `tasks/sendSubscribe` | Streaming response via SSE |
+| `POST /a2a` `tasks/get` | Check task status |
+| `POST /a2a` `tasks/cancel` | Cancel a running task |
 
 ## Architecture
 
