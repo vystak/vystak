@@ -1,0 +1,32 @@
+{
+  "providers": [],
+  "routes": [
+    {
+      "provider_name": "api",
+      "agent_name": "assistant-agent",
+      "agent_url": "http://agentstack-assistant-agent:8000",
+      "channels": [],
+      "listen": "all",
+      "threads": true,
+      "dm": true
+    },
+    {
+      "provider_name": "api",
+      "agent_name": "weather-agent",
+      "agent_url": "http://agentstack-weather-agent:8000",
+      "channels": [],
+      "listen": "all",
+      "threads": true,
+      "dm": true
+    },
+    {
+      "provider_name": "api",
+      "agent_name": "time-agent",
+      "agent_url": "http://agentstack-time-agent:8000",
+      "channels": [],
+      "listen": "all",
+      "threads": true,
+      "dm": true
+    }
+  ]
+}

@@ -149,6 +149,106 @@ async def list_routes():
     ]
 
 
+# === Chat / A2A Proxy ===
+# The gateway proxies requests to agents, acting as the unified entry point.
+
+import httpx
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+
+
+@app.get("/agents")
+async def list_agents():
+    """List all registered agents with their Agent Cards."""
+    agents = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for route in router.list_routes():
+            try:
+                resp = await client.get(f"{route.agent_url}/.well-known/agent.json")
+                card = resp.json()
+                card["_route"] = {"agent_name": route.agent_name, "agent_url": route.agent_url}
+                agents.append(card)
+            except Exception:
+                agents.append({
+                    "name": route.agent_name,
+                    "url": route.agent_url,
+                    "status": "unreachable",
+                })
+    return agents
+
+
+@app.post("/invoke/{agent_name}")
+async def proxy_invoke(agent_name: str, request: Request):
+    """Proxy an invoke request to a specific agent."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(f"{route.agent_url}/invoke", json=body)
+        return resp.json()
+
+
+@app.post("/stream/{agent_name}")
+async def proxy_stream(agent_name: str, request: Request):
+    """Proxy a stream request to a specific agent via SSE."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+
+    body = await request.json()
+
+    async def stream_proxy():
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", f"{route.agent_url}/stream", json=body) as resp:
+                async for line in resp.aiter_lines():
+                    if line:
+                        yield line + "\n"
+
+    return StreamingResponse(stream_proxy(), media_type="text/event-stream")
+
+
+@app.post("/a2a/{agent_name}")
+async def proxy_a2a(agent_name: str, request: Request):
+    """Proxy an A2A JSON-RPC request to a specific agent."""
+    route = _find_route(agent_name)
+    if not route:
+        return {"error": f"Agent '{agent_name}' not found"}
+
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(f"{route.agent_url}/a2a", json=body)
+        return resp.json()
+
+
+@app.get("/.well-known/agent.json")
+async def gateway_agent_card():
+    """Gateway Agent Card — lists all agents as skills."""
+    skills = []
+    for route in router.list_routes():
+        skills.append({
+            "id": route.agent_name,
+            "name": route.agent_name,
+            "url": route.agent_url,
+        })
+    return {
+        "name": "agentstack-gateway",
+        "description": "AgentStack gateway — unified entry point for all agents",
+        "version": "0.1.0",
+        "capabilities": {"streaming": True, "pushNotifications": False},
+        "skills": skills,
+    }
+
+
+def _find_route(agent_name: str) -> Route | None:
+    """Find a route by agent name."""
+    for route in router.list_routes():
+        if route.agent_name == agent_name:
+            return route
+    return None
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=HOST, port=PORT)
