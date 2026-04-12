@@ -1,0 +1,23 @@
+name: time-agent
+instructions: |
+  You are a time specialist agent. When asked about time,
+  use the get_time tool. Return concise, factual responses.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.3
+    anthropic_api_url: https://api.minimax.io/anthropic
+skills:
+  - name: time
+    tools:
+      - get_time
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8083

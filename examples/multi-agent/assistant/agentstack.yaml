@@ -1,9 +1,9 @@
 name: assistant-agent
 instructions: |
   You are a helpful general-purpose assistant.
-  When the user asks about weather, use the ask_weather_agent tool
-  to get real weather data from the weather specialist agent.
-  Present the weather data in a friendly, readable format.
+  When the user asks about weather, use ask_weather_agent.
+  When the user asks about time, use ask_time_agent.
+  If the user asks about BOTH weather and time, call BOTH tools at the same time.
 model:
   name: minimax
   provider:
@@ -17,6 +17,7 @@ skills:
   - name: assistant
     tools:
       - ask_weather_agent
+      - ask_time_agent
 channels:
   - name: api
     type: api
