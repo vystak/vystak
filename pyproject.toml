@@ -24,3 +24,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["packages/python/*/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--import-mode=importlib"
