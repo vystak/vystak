@@ -12,12 +12,15 @@ from agentstack_provider_docker.provider import DockerProvider
 
 @pytest.fixture()
 def mock_docker_client():
-    with patch("agentstack_provider_docker.provider.docker") as mock_docker:
+    with patch("agentstack_provider_docker.provider.docker") as mock_docker, \
+         patch("agentstack_provider_docker.provider.ensure_network") as mock_network, \
+         patch("agentstack_provider_docker.provider.provision_resource") as mock_provision:
         client = MagicMock()
         mock_docker.from_env.return_value = client
-        # Make docker.errors.NotFound available
         mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
-        yield client, mock_docker.errors.NotFound
+        mock_docker.errors.DockerException = type("DockerException", (Exception,), {})
+        mock_network.return_value = MagicMock(name="agentstack-net")
+        yield client, mock_docker.errors
 
 
 @pytest.fixture()
@@ -27,8 +30,8 @@ def provider(mock_docker_client):
 
 @pytest.fixture()
 def not_found_error(mock_docker_client):
-    _, not_found_cls = mock_docker_client
-    return not_found_cls
+    _, errors = mock_docker_client
+    return errors.NotFound
 
 
 @pytest.fixture()
