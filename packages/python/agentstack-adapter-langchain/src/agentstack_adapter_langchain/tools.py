@@ -82,6 +82,36 @@ def generate_tools_init(tool_names: list[str]) -> str:
     return "\n".join(lines)
 
 
+def scaffold_missing_tools(missing_tools: list[str], base_dir: Path) -> list[str]:
+    """Scaffold tool files for missing tools. Never overwrites existing files.
+
+    Returns list of tool names that were scaffolded.
+    """
+    if not missing_tools:
+        return []
+
+    tools_dir = base_dir / "tools"
+    tools_dir.mkdir(exist_ok=True)
+
+    scaffolded = []
+    for tool_name in missing_tools:
+        tool_path = tools_dir / f"{tool_name}.py"
+        if tool_path.exists():
+            continue
+
+        docstring = tool_name.replace("_", " ").title() + "."
+        content = (
+            f"def {tool_name}(input: str) -> str:\n"
+            f'    """{docstring}"""\n'
+            f"    # TODO: implement this tool\n"
+            f'    return f"{tool_name} called with {{input}}"\n'
+        )
+        tool_path.write_text(content)
+        scaffolded.append(tool_name)
+
+    return scaffolded
+
+
 def get_tool_requirements(base_dir: Path) -> str | None:
     """Read tools/requirements.txt if it exists."""
     req_path = base_dir / "tools" / "requirements.txt"
