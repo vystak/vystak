@@ -1,19 +1,70 @@
 """Gateway management API."""
 
 import asyncio
+import json
 import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from agentstack_gateway.router import Route, Router
 
-app = FastAPI(title="agentstack-gateway")
 router = Router()
 providers: dict = {}
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
+ROUTES_FILE = os.environ.get("ROUTES_FILE", "/app/routes.json")
+
+
+def load_routes_file(path: str | None = None) -> None:
+    """Load providers and routes from a JSON config file."""
+    path = path or ROUTES_FILE
+    routes_path = Path(path)
+    if not routes_path.exists():
+        return
+
+    data = json.loads(routes_path.read_text())
+
+    for route_data in data.get("routes", []):
+        route = Route(
+            provider_name=route_data["provider_name"],
+            agent_name=route_data["agent_name"],
+            agent_url=route_data["agent_url"],
+            channels=route_data.get("channels", []),
+            listen=route_data.get("listen", "mentions"),
+            threads=route_data.get("threads", True),
+            dm=route_data.get("dm", True),
+        )
+        router.add_route(route)
+
+    for provider_data in data.get("providers", []):
+        name = provider_data["name"]
+        ptype = provider_data["type"]
+        config = provider_data.get("config", {})
+
+        if name not in providers and ptype == "slack":
+            from agentstack_gateway.providers.slack import SlackProviderRunner
+            runner = SlackProviderRunner(name=name, config=config, event_router=router)
+            providers[name] = runner
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    load_routes_file()
+    for runner in providers.values():
+        asyncio.create_task(runner.start())
+    yield
+    for runner in providers.values():
+        try:
+            await runner.stop()
+        except Exception:
+            pass
+
+
+app = FastAPI(title="agentstack-gateway", lifespan=lifespan)
 
 
 class RegisterProviderRequest(BaseModel):
