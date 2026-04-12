@@ -13,6 +13,9 @@ dependencies = [
     "aiohttp>=3.9",
 ]
 
+[project.scripts]
+agentstack-gateway = "agentstack_gateway.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

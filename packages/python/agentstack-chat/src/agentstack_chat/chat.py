@@ -268,6 +268,12 @@ class ChatREPL:
 
         health_info = await client.health(url)
 
+        if health_info and "routes" in health_info:
+            # This is a gateway — auto-discover agents and pick one
+            console.print(f"[dim]Detected gateway at {url}[/dim]")
+            await self._cmd_gateway(url)
+            return
+
         if health_info:
             agent_name = health_info.get("agent", "unknown")
             console.print(f"[success]Connected to {agent_name}[/success]")
@@ -458,11 +464,12 @@ class ChatREPL:
             return
 
         agent_name = selected["agent_name"]
-        agent_url = selected["agent_url"]
+        # Use gateway proxy URL (not the internal Docker URL)
+        agent_url = f"{gateway_url}/proxy/{agent_name}"
 
         # Save and connect
         add_agent(agent_name, agent_url)
-        console.print(f"[success]Connected to {agent_name}[/success]")
+        console.print(f"[success]Connected to {agent_name} via gateway[/success]")
 
         self._agent_name = agent_name
         self._agent_url = agent_url
@@ -639,7 +646,18 @@ def run_oneshot(url: str | None = None, message: str = ""):
             agent_url = agent_url.rstrip("/")
             health_info = await client.health(agent_url)
             if health_info:
-                agent_name = health_info.get("agent", "agent")
+                if "routes" in health_info:
+                    # Gateway detected — use first agent via proxy
+                    routes = await client.gateway_routes(agent_url)
+                    if routes:
+                        agent_name = routes[0].get("agent_name", "agent")
+                        agent_url = f"{agent_url}/proxy/{agent_name}"
+                        console.print(f"[dim]Gateway detected. Using {agent_name}[/dim]")
+                    else:
+                        console.print("[error]Gateway has no agents[/error]")
+                        raise SystemExit(1)
+                else:
+                    agent_name = health_info.get("agent", "agent")
 
         session = create_session(agent_name, agent_url)
         result = await _stream_response(agent_url, message, session["id"], agent_name)
