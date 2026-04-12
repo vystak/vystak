@@ -3,15 +3,12 @@
 import asyncio
 import sys
 
+from pathlib import Path
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.widgets import Frame, TextArea
+from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -427,6 +424,19 @@ class ChatREPL:
         except Exception as e:
             console.print(f"[error]{e}[/error]")
 
+    async def _process_queue(self):
+        """Process all queued messages sequentially."""
+        self._processing = True
+        try:
+            while not self._message_queue.empty():
+                message = await self._message_queue.get()
+                await self._handle_message(message)
+                remaining = self._message_queue.qsize()
+                if remaining > 0:
+                    console.print(f"[system]  ({remaining} queued)[/system]")
+        finally:
+            self._processing = False
+
     def _format_tokens(self, count: int) -> str:
         """Format token count with K/M suffixes."""
         if count >= 1_000_000:
@@ -462,12 +472,21 @@ class ChatREPL:
         """Run the REPL."""
         self._show_welcome()
 
+        # Persistent history — last 30 prompts saved to disk
+        history_path = Path.home() / ".agentstack" / "chat_history"
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history = FileHistory(str(history_path))
+
         session = PromptSession(
             completer=SlashCompleter(self),
-            history=InMemoryHistory(),
+            history=history,
             complete_while_typing=True,
             bottom_toolbar=self._bottom_toolbar,
         )
+
+        # Message queue — type while agent is responding
+        self._message_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._processing = False
 
         while self._running:
             try:
@@ -485,16 +504,55 @@ class ChatREPL:
             if line.startswith("/"):
                 await self._handle_command(line)
             else:
-                await self._handle_message(line)
+                # Queue the message
+                await self._message_queue.put(line)
+                # Process queue if not already processing
+                if not self._processing:
+                    await self._process_queue()
 
 
 def run_repl(auto_connect_url: str | None = None):
-    """Entry point."""
+    """Entry point for interactive REPL."""
     async def _run():
         repl = ChatREPL()
         if auto_connect_url:
             repl._show_welcome()
             await repl._cmd_connect(auto_connect_url)
         await repl.run()
+
+    asyncio.run(_run())
+
+
+def run_oneshot(url: str | None = None, message: str = ""):
+    """Send a single message and exit. For scripting/piping."""
+    from agentstack_chat.config import get_agent, list_agents, create_session
+
+    async def _run():
+        # Resolve URL
+        agent_url = url
+        agent_name = "agent"
+
+        if not agent_url:
+            # Try first saved agent
+            agents = list_agents()
+            if agents:
+                agent_url = agents[0]["url"]
+                agent_name = agents[0]["name"]
+            else:
+                console.print("[error]No URL specified and no saved agents. Use --url or add an agent.[/error]")
+                raise SystemExit(1)
+        else:
+            agent_url = agent_url.rstrip("/")
+            health_info = await client.health(agent_url)
+            if health_info:
+                agent_name = health_info.get("agent", "agent")
+
+        session = create_session(agent_name, agent_url)
+        result = await _stream_response(agent_url, message, session["id"], agent_name)
+
+        if result.total_tokens:
+            console.print(
+                f"\n[dim]tokens: {result.input_tokens} in / {result.output_tokens} out[/dim]"
+            )
 
     asyncio.run(_run())
