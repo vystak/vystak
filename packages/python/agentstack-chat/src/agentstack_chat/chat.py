@@ -161,8 +161,11 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
                 console.print(f"[dim]  > calling {event.tool}...[/dim]")
 
             elif event.type == "tool_result":
-                result_preview = event.result[:100] + "..." if len(event.result) > 100 else event.result
-                console.print(f"[dim]  > {event.tool}: {result_preview}[/dim]")
+                result_preview = event.result[:200] + "..." if len(event.result) > 200 else event.result
+                console.print(f"[dim]  > {event.tool}:[/dim]")
+                # Render tool result as markdown so **bold** etc works
+                from rich.padding import Padding
+                console.print(Padding(Markdown(result_preview), (0, 0, 0, 4)))
                 console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
                 status_line_shown = True
 
