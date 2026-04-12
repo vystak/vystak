@@ -143,7 +143,7 @@ class DockerProvider(PlatformProvider):
             self._resource_info = []
             if self._agent:
                 for resource in self._agent.resources:
-                    if isinstance(resource, SessionStore):
+                    if isinstance(resource, SessionStore) or resource.engine in ("postgres", "sqlite"):
                         info = provision_resource(
                             self._client, resource, network, SECRETS_PATH
                         )
