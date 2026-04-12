@@ -15,6 +15,7 @@ dev-dependencies = [
     "agentstack",
     "agentstack-cli",
     "agentstack-adapter-mastra",
+    "agentstack-adapter-langchain",
     "agentstack-provider-docker",
     "agentstack-channel-api",
 ]
@@ -23,6 +24,7 @@ dev-dependencies = [
 agentstack = { workspace = true }
 agentstack-cli = { workspace = true }
 agentstack-adapter-mastra = { workspace = true }
+agentstack-adapter-langchain = { workspace = true }
 agentstack-provider-docker = { workspace = true }
 agentstack-channel-api = { workspace = true }
 

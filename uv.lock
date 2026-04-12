@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 [manifest]
 members = [
     "agentstack",
+    "agentstack-adapter-langchain",
     "agentstack-adapter-mastra",
     "agentstack-channel-api",
     "agentstack-cli",
@@ -26,6 +27,17 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
+
+[[package]]
+name = "agentstack-adapter-langchain"
+version = "0.1.0"
+source = { editable = "packages/python/agentstack-adapter-langchain" }
+dependencies = [
+    { name = "agentstack" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agentstack", editable = "packages/python/agentstack" }]
 
 [[package]]
 name = "agentstack-adapter-mastra"
@@ -79,6 +91,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "agentstack" },
+    { name = "agentstack-adapter-langchain" },
     { name = "agentstack-adapter-mastra" },
     { name = "agentstack-channel-api" },
     { name = "agentstack-cli" },
@@ -93,6 +106,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "agentstack", editable = "packages/python/agentstack" },
+    { name = "agentstack-adapter-langchain", editable = "packages/python/agentstack-adapter-langchain" },
     { name = "agentstack-adapter-mastra", editable = "packages/python/agentstack-adapter-mastra" },
     { name = "agentstack-channel-api", editable = "packages/python/agentstack-channel-api" },
     { name = "agentstack-cli", editable = "packages/python/agentstack-cli" },
