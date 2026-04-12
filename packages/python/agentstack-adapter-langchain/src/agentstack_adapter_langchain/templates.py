@@ -22,6 +22,36 @@ PROVIDER_PACKAGES = {
     "openai": "langchain-openai>=0.3",
 }
 
+MEMORY_TOOLS_CODE = '''
+@tool
+def save_memory(content: str, scope: str = "user") -> str:
+    """Save a fact or preference to long-term memory.
+
+    Args:
+        content: The information to remember
+        scope: Where to store — "user" (personal), "project" (team), or "global" (everyone)
+    """
+    return f"__SAVE_MEMORY__|{scope}|{content}"
+
+
+@tool
+def forget_memory(memory_id: str) -> str:
+    """Forget a specific memory by its ID (shown in recalled memories).
+
+    Args:
+        memory_id: The ID of the memory to remove
+    """
+    return f"__FORGET_MEMORY__|{memory_id}"
+'''
+
+MEMORY_SYSTEM_PROMPT = """
+## Memory
+You have long-term memory that persists across conversations.
+At the start of each conversation, relevant memories are provided in context.
+Use save_memory to remember important facts, preferences, or instructions the user shares.
+Use forget_memory to remove incorrect or outdated memories when asked.
+"""
+
 
 def _generate_tool_stubs(agent: Agent) -> str:
     """Generate @tool stub functions from agent skills."""
@@ -44,13 +74,16 @@ def _generate_tool_stubs(agent: Agent) -> str:
 
 
 def _collect_system_prompt(agent: Agent) -> str:
-    """Collect system prompt from agent instructions and skill prompts."""
+    """Collect system prompt from agent instructions, skill prompts, and memory instructions."""
     prompts = []
     if agent.instructions:
         prompts.append(agent.instructions)
     for skill in agent.skills:
         if skill.prompt:
             prompts.append(skill.prompt)
+    session_store = _get_session_store(agent)
+    if session_store:
+        prompts.append(MEMORY_SYSTEM_PROMPT)
     return "\n\n".join(prompts)
 
 
@@ -108,15 +141,18 @@ def generate_agent_py(agent: Agent) -> str:
     lines.append(f'"""AgentStack generated agent: {agent.name}."""\n')
     lines.append(f"{model_import}")
 
-    if tool_names:
+    # Import tool decorator if needed (skill tools or memory tools)
+    if tool_names or session_store:
         lines.append("from langchain_core.tools import tool")
 
     if session_store and session_store.engine == "postgres":
         lines.append("import os")
         lines.append("")
         lines.append("from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver")
+        lines.append("from langgraph.store.postgres.aio import AsyncPostgresStore")
     elif session_store and session_store.engine == "sqlite":
         lines.append("from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver")
+        lines.append("from agentstack.stores.sqlite import AsyncSqliteStore")
     else:
         lines.append("from langgraph.checkpoint.memory import MemorySaver")
 
@@ -131,10 +167,16 @@ def generate_agent_py(agent: Agent) -> str:
         lines.append("# Session persistence (Postgres) — initialized at startup via lifespan")
         lines.append('DB_URI = os.environ["SESSION_STORE_URL"]')
         lines.append("memory = None  # set during server lifespan")
+        lines.append("")
+        lines.append("# Long-term memory store — initialized at startup via lifespan")
+        lines.append("store = None  # set during server lifespan")
     elif session_store and session_store.engine == "sqlite":
         lines.append("# Session persistence (SQLite) — initialized at startup via lifespan")
         lines.append(f'DB_URI = "/data/{session_store.name}.db"')
         lines.append("memory = None  # set during server lifespan")
+        lines.append("")
+        lines.append("# Long-term memory store — initialized at startup via lifespan")
+        lines.append("store = None  # set during server lifespan")
     else:
         lines.append("# Session memory (in-memory, not persisted)")
         lines.append("memory = MemorySaver()")
@@ -146,6 +188,9 @@ def generate_agent_py(agent: Agent) -> str:
         lines.append("# Tools")
         lines.append(tool_stubs)
 
+    if session_store:
+        lines.append(MEMORY_TOOLS_CODE)
+
     lines.append("")
     lines.append("# Agent")
 
@@ -154,23 +199,33 @@ def generate_agent_py(agent: Agent) -> str:
         lines.append(f'system_prompt = """{escaped_prompt}"""')
         lines.append("")
 
+    # Build tools list including memory tools if session_store is present
+    if session_store:
+        memory_tools = "save_memory, forget_memory"
+        if tools_list:
+            full_tools_list = f"{tools_list}, {memory_tools}"
+        else:
+            full_tools_list = memory_tools
+    else:
+        full_tools_list = tools_list
+
     # For persistent checkpointers, create agent via function (memory set at startup)
     if session_store and session_store.engine in ("postgres", "sqlite"):
         if system_prompt:
-            lines.append(f"def create_agent(checkpointer):")
-            lines.append(f"    return create_react_agent(model, [{tools_list}], checkpointer=checkpointer, prompt=system_prompt)")
+            lines.append(f"def create_agent(checkpointer, store=None):")
+            lines.append(f"    return create_react_agent(model, [{full_tools_list}], checkpointer=checkpointer, store=store, prompt=system_prompt)")
         else:
-            lines.append(f"def create_agent(checkpointer):")
-            lines.append(f"    return create_react_agent(model, [{tools_list}], checkpointer=checkpointer)")
+            lines.append(f"def create_agent(checkpointer, store=None):")
+            lines.append(f"    return create_react_agent(model, [{full_tools_list}], checkpointer=checkpointer, store=store)")
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
     else:
         if system_prompt:
             lines.append(
-                f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory, prompt=system_prompt)"
+                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory, prompt=system_prompt)"
             )
         else:
-            lines.append(f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory)")
+            lines.append(f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory)")
 
     lines.append("")
 
@@ -185,6 +240,11 @@ def generate_server_py(agent: Agent) -> str:
     if uses_persistent:
         saver_class = "AsyncPostgresSaver" if session_store.engine == "postgres" else "AsyncSqliteSaver"
         saver_module = "postgres.aio" if session_store.engine == "postgres" else "sqlite.aio"
+        store_class = "AsyncPostgresStore" if session_store.engine == "postgres" else "AsyncSqliteStore"
+        if session_store.engine == "postgres":
+            store_import = "from langgraph.store.postgres.aio import AsyncPostgresStore"
+        else:
+            store_import = "from agentstack.stores.sqlite import AsyncSqliteStore"
         agent_ref = "_agent"
     else:
         agent_ref = "agent"
@@ -204,19 +264,27 @@ def generate_server_py(agent: Agent) -> str:
     if uses_persistent:
         lines.append("from contextlib import asynccontextmanager")
         lines.append(f"from langgraph.checkpoint.{saver_module} import {saver_class}")
+        lines.append(store_import)
         lines.append("")
         lines.append("from agent import create_agent, DB_URI")
         lines.append("")
         lines.append("")
         lines.append("_agent = None")
+        lines.append("_store = None")
         lines.append("")
         lines.append("")
         lines.append("@asynccontextmanager")
         lines.append("async def lifespan(app):")
-        lines.append("    global _agent")
-        lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer:")
+        lines.append("    global _agent, _store")
+        if session_store.engine == "postgres":
+            lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+            lines.append(f"               {store_class}.from_conn_string(DB_URI) as store:")
+        else:
+            lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+            lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
         lines.append("        await checkpointer.setup()")
-        lines.append("        _agent = create_agent(checkpointer)")
+        lines.append("        _store = store")
+        lines.append("        _agent = create_agent(checkpointer, store=store)")
         lines.append("        yield")
         lines.append("")
         lines.append("")
@@ -235,6 +303,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("class InvokeRequest(BaseModel):")
     lines.append("    message: str")
     lines.append("    session_id: str | None = None")
+    if uses_persistent:
+        lines.append("    user_id: str | None = None")
+        lines.append("    project_id: str | None = None")
     lines.append("")
     lines.append("")
     lines.append("class InvokeResponse(BaseModel):")
@@ -242,6 +313,49 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    session_id: str")
     lines.append("")
     lines.append("")
+
+    if uses_persistent:
+        lines.append("async def recall_memories(store, message, user_id=None, project_id=None):")
+        lines.append("    memories = []")
+        lines.append("    if user_id:")
+        lines.append('        results = await store.asearch(("user", user_id, "memories"), query=message, limit=5)')
+        lines.append("        for item in results:")
+        lines.append('            memories.append(f"[{item.key}] {item.value.get(\'data\', \'\')} (scope: user)")')
+        lines.append("    if project_id:")
+        lines.append('        results = await store.asearch(("project", project_id, "memories"), query=message, limit=5)')
+        lines.append("        for item in results:")
+        lines.append('            memories.append(f"[{item.key}] {item.value.get(\'data\', \'\')} (scope: project)")')
+        lines.append('    results = await store.asearch(("global", "memories"), query=message, limit=5)')
+        lines.append("    for item in results:")
+        lines.append('        memories.append(f"[{item.key}] {item.value.get(\'data\', \'\')} (scope: global)")')
+        lines.append("    return memories")
+        lines.append("")
+        lines.append("")
+        lines.append("async def handle_memory_actions(store, messages, user_id=None, project_id=None):")
+        lines.append("    import uuid as _uuid")
+        lines.append("    for msg in messages:")
+        lines.append("        if hasattr(msg, 'content') and isinstance(msg.content, str):")
+        lines.append('            if msg.content.startswith("__SAVE_MEMORY__|"):')
+        lines.append('                parts = msg.content.split("|", 2)')
+        lines.append("                if len(parts) == 3:")
+        lines.append("                    scope, content = parts[1], parts[2]")
+        lines.append("                    memory_id = str(_uuid.uuid4())[:8]")
+        lines.append('                    if scope == "user" and user_id:')
+        lines.append('                        await store.aput(("user", user_id, "memories"), memory_id, {"data": content})')
+        lines.append('                    elif scope == "project" and project_id:')
+        lines.append('                        await store.aput(("project", project_id, "memories"), memory_id, {"data": content})')
+        lines.append('                    elif scope == "global":')
+        lines.append('                        await store.aput(("global", "memories"), memory_id, {"data": content})')
+        lines.append('            elif msg.content.startswith("__FORGET_MEMORY__|"):')
+        lines.append('                memory_id = msg.content.split("|", 1)[1]')
+        lines.append("                if user_id:")
+        lines.append('                    await store.adelete(("user", user_id, "memories"), memory_id)')
+        lines.append("                if project_id:")
+        lines.append('                    await store.adelete(("project", project_id, "memories"), memory_id)')
+        lines.append('                await store.adelete(("global", "memories"), memory_id)')
+        lines.append("")
+        lines.append("")
+
     lines.append('@app.get("/health")')
     lines.append("async def health():")
     lines.append('    return {"status": "ok", "agent": AGENT_NAME, "version": "0.1.0"}')
@@ -250,19 +364,45 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('@app.post("/invoke", response_model=InvokeResponse)')
     lines.append("async def invoke(request: InvokeRequest):")
     lines.append("    session_id = request.session_id or str(uuid.uuid4())")
-    lines.append(f"    result = await {agent_ref}.ainvoke(")
-    lines.append('        {"messages": [("user", request.message)]},')
-    lines.append('        config={"configurable": {"thread_id": session_id}},')
-    lines.append("    )")
-    lines.append('    content = result["messages"][-1].content')
-    lines.append("    if isinstance(content, list):")
-    lines.append("        response_text = ''.join(")
-    lines.append('            block.get("text", "") if isinstance(block, dict) else str(block)')
-    lines.append("            for block in content")
-    lines.append("        )")
-    lines.append("    else:")
-    lines.append("        response_text = str(content)")
-    lines.append("    return InvokeResponse(response=response_text, session_id=session_id)")
+
+    if uses_persistent:
+        lines.append("    user_id = request.user_id")
+        lines.append("    project_id = request.project_id")
+        lines.append("    memories = await recall_memories(_store, request.message, user_id=user_id, project_id=project_id)")
+        lines.append("    messages = []")
+        lines.append("    if memories:")
+        lines.append('        memory_text = "Relevant memories:\\n" + "\\n".join(memories)')
+        lines.append('        messages.append(("system", memory_text))')
+        lines.append('    messages.append(("user", request.message))')
+        lines.append(f"    result = await {agent_ref}.ainvoke(")
+        lines.append('        {"messages": messages},')
+        lines.append('        config={"configurable": {"thread_id": session_id}},')
+        lines.append("    )")
+        lines.append('    content = result["messages"][-1].content')
+        lines.append("    if isinstance(content, list):")
+        lines.append("        response_text = ''.join(")
+        lines.append('            block.get("text", "") if isinstance(block, dict) else str(block)')
+        lines.append("            for block in content")
+        lines.append("        )")
+        lines.append("    else:")
+        lines.append("        response_text = str(content)")
+        lines.append("    await handle_memory_actions(_store, result['messages'], user_id=user_id, project_id=project_id)")
+        lines.append("    return InvokeResponse(response=response_text, session_id=session_id)")
+    else:
+        lines.append(f"    result = await {agent_ref}.ainvoke(")
+        lines.append('        {"messages": [("user", request.message)]},')
+        lines.append('        config={"configurable": {"thread_id": session_id}},')
+        lines.append("    )")
+        lines.append('    content = result["messages"][-1].content')
+        lines.append("    if isinstance(content, list):")
+        lines.append("        response_text = ''.join(")
+        lines.append('            block.get("text", "") if isinstance(block, dict) else str(block)')
+        lines.append("            for block in content")
+        lines.append("        )")
+        lines.append("    else:")
+        lines.append("        response_text = str(content)")
+        lines.append("    return InvokeResponse(response=response_text, session_id=session_id)")
+
     lines.append("")
     lines.append("")
     lines.append('@app.post("/stream")')
@@ -303,7 +443,7 @@ def generate_requirements_txt(agent: Agent) -> str:
     if session_store and session_store.engine == "postgres":
         checkpoint_pkg = "\nlanggraph-checkpoint-postgres>=2.0\npsycopg[binary]>=3.0"
     elif session_store and session_store.engine == "sqlite":
-        checkpoint_pkg = "\nlanggraph-checkpoint-sqlite>=2.0"
+        checkpoint_pkg = "\nlanggraph-checkpoint-sqlite>=2.0\naiosqlite>=0.20"
 
     return dedent(f"""\
         langchain-core>=0.3
