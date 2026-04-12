@@ -108,7 +108,7 @@ def test_destroy_success(mock_provider_cls):
 
     assert result.exit_code == 0
     assert "Destroyed" in result.output
-    mock_provider.destroy.assert_called_once_with("test-bot")
+    mock_provider.destroy.assert_called_once_with("test-bot", include_resources=False)
 
 
 @patch("agentstack_cli.commands.status.DockerProvider")
