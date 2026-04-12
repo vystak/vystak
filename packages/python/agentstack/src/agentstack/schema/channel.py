@@ -8,3 +8,16 @@ class Channel(NamedModel):
 
     type: ChannelType
     config: dict = {}
+
+
+from agentstack.schema.gateway import ChannelProvider
+
+
+class SlackChannel(NamedModel):
+    """A Slack channel binding — routes Slack events to an agent."""
+
+    provider: ChannelProvider
+    channels: list[str] = []
+    listen: str = "mentions"
+    threads: bool = True
+    dm: bool = True
