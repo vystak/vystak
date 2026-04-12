@@ -3,6 +3,10 @@
 import asyncio
 import sys
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -23,6 +27,82 @@ from agentstack_chat.config import (
     list_sessions,
     remove_agent,
 )
+
+
+# Slash command definitions: (command, args_hint, description)
+COMMANDS = [
+    ("/connect", "<url>", "Connect to an agent by URL"),
+    ("/use", "<name>", "Connect to a saved agent"),
+    ("/agents", "", "List saved agents"),
+    ("/agents add", "<name> <url>", "Save an agent"),
+    ("/agents remove", "<name>", "Remove a saved agent"),
+    ("/sessions", "[agent]", "List sessions"),
+    ("/new", "", "New session (same agent)"),
+    ("/resume", "<id>", "Resume a session"),
+    ("/status", "", "Show connection info"),
+    ("/help", "", "Show commands"),
+    ("/exit", "", "Quit"),
+]
+
+
+class SlashCompleter(Completer):
+    """Autocomplete slash commands with descriptions."""
+
+    def __init__(self, repl: "ChatREPL"):
+        self._repl = repl
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+
+        if not text.startswith("/"):
+            return
+
+        # Complete agent names for /use and /agents remove
+        parts = text.split()
+        if len(parts) >= 2 and parts[0] in ("/use", "/resume"):
+            prefix = parts[1] if len(parts) == 2 else ""
+            if parts[0] == "/use":
+                for agent in list_agents():
+                    if agent["name"].startswith(prefix):
+                        yield Completion(
+                            agent["name"],
+                            start_position=-len(prefix),
+                            display=agent["name"],
+                            display_meta=agent["url"],
+                        )
+            elif parts[0] == "/resume":
+                for session in list_sessions():
+                    short_id = session["id"][:8]
+                    if short_id.startswith(prefix):
+                        yield Completion(
+                            short_id,
+                            start_position=-len(prefix),
+                            display=short_id,
+                            display_meta=session["agent_name"],
+                        )
+            return
+
+        if len(parts) >= 2 and parts[0] == "/agents" and parts[1] == "remove":
+            prefix = parts[2] if len(parts) == 3 else ""
+            for agent in list_agents():
+                if agent["name"].startswith(prefix):
+                    yield Completion(
+                        agent["name"],
+                        start_position=-len(prefix),
+                        display=agent["name"],
+                    )
+            return
+
+        # Complete commands
+        for cmd, args_hint, desc in COMMANDS:
+            if cmd.startswith(text):
+                display_text = f"{cmd} {args_hint}".strip()
+                yield Completion(
+                    cmd,
+                    start_position=-len(text),
+                    display=display_text,
+                    display_meta=desc,
+                )
 
 custom_theme = Theme({
     "user": "bold cyan",
@@ -283,9 +363,20 @@ class ChatREPL:
         """Run the REPL."""
         self._show_welcome()
 
+        session = PromptSession(
+            completer=SlashCompleter(self),
+            history=InMemoryHistory(),
+            complete_while_typing=True,
+        )
+
         while self._running:
             try:
-                line = console.input(f"[bold]{self._prompt()}[/bold]")
+                if self.connected:
+                    prompt_text = HTML(f"<b><style fg='cyan'>{self._agent_name}</style></b> &gt; ")
+                else:
+                    prompt_text = HTML("<style fg='gray'>&gt; </style>")
+
+                line = await session.prompt_async(prompt_text)
             except (KeyboardInterrupt, EOFError):
                 console.print("\n[system]Goodbye![/system]")
                 break
