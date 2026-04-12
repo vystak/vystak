@@ -347,7 +347,7 @@ class ChatREPL:
         agent = selected["agent"]
         await self._cmd_connect(agent["url"])
 
-    def _cmd_sessions(self, args: str):
+    async def _cmd_sessions(self, args: str):
         from agentstack_chat.picker import pick
 
         agent_filter = args.strip() or None
@@ -496,7 +496,7 @@ class ChatREPL:
             case "gateway":
                 await self._cmd_gateway(args)
             case "sessions":
-                self._cmd_sessions(args)
+                await self._cmd_sessions(args)
             case "resume":
                 self._cmd_resume(args)
             case "new":
