@@ -131,33 +131,66 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 
 async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
     """Stream response with live rendering. Returns usage info."""
+    from rich.spinner import Spinner
+    from rich.live import Live
+
     stream_result = client.StreamResult()
     console.print(f"\n[agent]{agent_name}[/agent]")
     has_output = False
+    spinner_live = None
 
     try:
+        # Start with a spinner while waiting for first token
+        spinner = Spinner("dots", text="Thinking...", style="dim")
+        spinner_live = Live(spinner, console=console, refresh_per_second=12)
+        spinner_live.start()
+
         async for event in client.stream_events(url, message, session_id, result=stream_result):
             if event.type == "token":
+                # Kill spinner on first token
+                if spinner_live is not None:
+                    spinner_live.stop()
+                    spinner_live = None
                 has_output = True
                 sys.stdout.write(event.token)
                 sys.stdout.flush()
 
             elif event.type == "tool_call_start":
+                # Update spinner to show tool call
+                if spinner_live is not None:
+                    spinner_live.stop()
+                    spinner_live = None
                 if has_output:
-                    console.print()  # newline before tool info
-                console.print(f"  [dim]> calling {event.tool}...[/dim]")
+                    console.print()
+                spinner = Spinner("dots", text=f"Calling {event.tool}...", style="dim")
+                spinner_live = Live(spinner, console=console, refresh_per_second=12)
+                spinner_live.start()
                 has_output = False
 
             elif event.type == "tool_result":
+                if spinner_live is not None:
+                    spinner_live.stop()
+                    spinner_live = None
                 result_preview = event.result[:100] + "..." if len(event.result) > 100 else event.result
                 console.print(f"  [dim]> {event.tool}: {result_preview}[/dim]")
+                # New spinner for next step
+                spinner = Spinner("dots", text="Thinking...", style="dim")
+                spinner_live = Live(spinner, console=console, refresh_per_second=12)
+                spinner_live.start()
 
             elif event.type == "done":
+                if spinner_live is not None:
+                    spinner_live.stop()
+                    spinner_live = None
                 if has_output:
-                    console.print()  # final newline after tokens
+                    console.print()
+
+        # Clean up spinner if still running
+        if spinner_live is not None:
+            spinner_live.stop()
+            spinner_live = None
 
         if not has_output:
-            # Streaming produced no text — fallback to invoke
             invoke_result = await client.invoke(url, message, session_id)
             console.print(Markdown(invoke_result.response))
             stream_result.input_tokens = invoke_result.input_tokens
@@ -165,6 +198,8 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
             stream_result.total_tokens = invoke_result.total_tokens
 
     except Exception:
+        if spinner_live is not None:
+            spinner_live.stop()
         console.print()
         invoke_result = await client.invoke(url, message, session_id)
         console.print(Markdown(invoke_result.response))
