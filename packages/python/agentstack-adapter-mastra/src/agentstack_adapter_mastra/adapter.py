@@ -1,0 +1,1 @@
+"""Mastra framework adapter implementation."""
