@@ -1,12 +1,13 @@
 name: hello-agent
 model:
-  name: claude
+  name: minimax
   provider:
     name: anthropic
     type: anthropic
-  model_name: claude-sonnet-4-20250514
+  model_name: MiniMax-M2.7
   parameters:
     temperature: 0.7
+    anthropic_api_url: https://api.minimax.io/anthropic
 skills:
   - name: assistant
     tools:
