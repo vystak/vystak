@@ -44,7 +44,7 @@ def read_tool_file(path: Path, expected_name: str) -> str:
     tree = python_ast.parse(content)
     function_names = [
         node.name for node in python_ast.walk(tree)
-        if isinstance(node, python_ast.FunctionDef)
+        if isinstance(node, (python_ast.FunctionDef, python_ast.AsyncFunctionDef))
     ]
 
     if expected_name not in function_names:
