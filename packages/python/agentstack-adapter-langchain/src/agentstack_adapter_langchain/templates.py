@@ -114,9 +114,9 @@ def generate_agent_py(agent: Agent) -> str:
     if session_store and session_store.engine == "postgres":
         lines.append("import os")
         lines.append("")
-        lines.append("from langgraph.checkpoint.postgres import PostgresSaver")
+        lines.append("from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver")
     elif session_store and session_store.engine == "sqlite":
-        lines.append("from langgraph.checkpoint.sqlite import SqliteSaver")
+        lines.append("from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver")
     else:
         lines.append("from langgraph.checkpoint.memory import MemorySaver")
 
@@ -128,11 +128,13 @@ def generate_agent_py(agent: Agent) -> str:
     lines.append("")
 
     if session_store and session_store.engine == "postgres":
-        lines.append("# Session persistence (Postgres)")
-        lines.append('memory = PostgresSaver.from_conn_string(os.environ["SESSION_STORE_URL"])')
+        lines.append("# Session persistence (Postgres) — initialized at startup via lifespan")
+        lines.append('DB_URI = os.environ["SESSION_STORE_URL"]')
+        lines.append("memory = None  # set during server lifespan")
     elif session_store and session_store.engine == "sqlite":
-        lines.append("# Session persistence (SQLite)")
-        lines.append(f'memory = SqliteSaver.from_conn_string("/data/{session_store.name}.db")')
+        lines.append("# Session persistence (SQLite) — initialized at startup via lifespan")
+        lines.append(f'DB_URI = "/data/{session_store.name}.db"')
+        lines.append("memory = None  # set during server lifespan")
     else:
         lines.append("# Session memory (in-memory, not persisted)")
         lines.append("memory = MemorySaver()")
@@ -151,11 +153,24 @@ def generate_agent_py(agent: Agent) -> str:
         escaped_prompt = system_prompt.replace('"""', '\\"\\"\\"')
         lines.append(f'system_prompt = """{escaped_prompt}"""')
         lines.append("")
-        lines.append(
-            f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory, prompt=system_prompt)"
-        )
+
+    # For persistent checkpointers, create agent via function (memory set at startup)
+    if session_store and session_store.engine in ("postgres", "sqlite"):
+        if system_prompt:
+            lines.append(f"def create_agent(checkpointer):")
+            lines.append(f"    return create_react_agent(model, [{tools_list}], checkpointer=checkpointer, prompt=system_prompt)")
+        else:
+            lines.append(f"def create_agent(checkpointer):")
+            lines.append(f"    return create_react_agent(model, [{tools_list}], checkpointer=checkpointer)")
+        lines.append("")
+        lines.append("agent = None  # created during server lifespan")
     else:
-        lines.append(f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory)")
+        if system_prompt:
+            lines.append(
+                f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory, prompt=system_prompt)"
+            )
+        else:
+            lines.append(f"agent = create_react_agent(model, [{tools_list}], checkpointer=memory)")
 
     lines.append("")
 
@@ -164,84 +179,118 @@ def generate_agent_py(agent: Agent) -> str:
 
 def generate_server_py(agent: Agent) -> str:
     """Generate a FastAPI harness server file."""
-    return dedent(f"""\
-        \"\"\"AgentStack harness server for {agent.name}.\"\"\"
+    session_store = _get_session_store(agent)
+    uses_persistent = session_store and session_store.engine in ("postgres", "sqlite")
 
-        import asyncio
-        import json
-        import os
-        import uuid
+    if uses_persistent:
+        saver_class = "AsyncPostgresSaver" if session_store.engine == "postgres" else "AsyncSqliteSaver"
+        saver_module = "postgres.aio" if session_store.engine == "postgres" else "sqlite.aio"
+        agent_ref = "_agent"
+    else:
+        agent_ref = "agent"
 
-        from fastapi import FastAPI
-        from pydantic import BaseModel
-        from sse_starlette.sse import EventSourceResponse
+    lines = []
+    lines.append(f'"""AgentStack harness server for {agent.name}."""')
+    lines.append("")
+    lines.append("import json")
+    lines.append("import os")
+    lines.append("import uuid")
+    lines.append("")
+    lines.append("from fastapi import FastAPI")
+    lines.append("from pydantic import BaseModel")
+    lines.append("from sse_starlette.sse import EventSourceResponse")
+    lines.append("")
 
-        from agent import agent
+    if uses_persistent:
+        lines.append("from contextlib import asynccontextmanager")
+        lines.append(f"from langgraph.checkpoint.{saver_module} import {saver_class}")
+        lines.append("")
+        lines.append("from agent import create_agent, DB_URI")
+        lines.append("")
+        lines.append("")
+        lines.append("_agent = None")
+        lines.append("")
+        lines.append("")
+        lines.append("@asynccontextmanager")
+        lines.append("async def lifespan(app):")
+        lines.append("    global _agent")
+        lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer:")
+        lines.append("        await checkpointer.setup()")
+        lines.append("        _agent = create_agent(checkpointer)")
+        lines.append("        yield")
+        lines.append("")
+        lines.append("")
+        lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
+    else:
+        lines.append("from agent import agent")
+        lines.append("")
+        lines.append(f'app = FastAPI(title="{agent.name}")')
 
-        app = FastAPI(title="{agent.name}")
+    lines.append("")
+    lines.append(f'AGENT_NAME = os.environ.get("AGENTSTACK_AGENT_NAME", "{agent.name}")')
+    lines.append('HOST = os.environ.get("HOST", "0.0.0.0")')
+    lines.append('PORT = int(os.environ.get("PORT", "8000"))')
+    lines.append("")
+    lines.append("")
+    lines.append("class InvokeRequest(BaseModel):")
+    lines.append("    message: str")
+    lines.append("    session_id: str | None = None")
+    lines.append("")
+    lines.append("")
+    lines.append("class InvokeResponse(BaseModel):")
+    lines.append("    response: str")
+    lines.append("    session_id: str")
+    lines.append("")
+    lines.append("")
+    lines.append('@app.get("/health")')
+    lines.append("async def health():")
+    lines.append('    return {"status": "ok", "agent": AGENT_NAME, "version": "0.1.0"}')
+    lines.append("")
+    lines.append("")
+    lines.append('@app.post("/invoke", response_model=InvokeResponse)')
+    lines.append("async def invoke(request: InvokeRequest):")
+    lines.append("    session_id = request.session_id or str(uuid.uuid4())")
+    lines.append(f"    result = await {agent_ref}.ainvoke(")
+    lines.append('        {"messages": [("user", request.message)]},')
+    lines.append('        config={"configurable": {"thread_id": session_id}},')
+    lines.append("    )")
+    lines.append('    content = result["messages"][-1].content')
+    lines.append("    if isinstance(content, list):")
+    lines.append("        response_text = ''.join(")
+    lines.append('            block.get("text", "") if isinstance(block, dict) else str(block)')
+    lines.append("            for block in content")
+    lines.append("        )")
+    lines.append("    else:")
+    lines.append("        response_text = str(content)")
+    lines.append("    return InvokeResponse(response=response_text, session_id=session_id)")
+    lines.append("")
+    lines.append("")
+    lines.append('@app.post("/stream")')
+    lines.append("async def stream(request: InvokeRequest):")
+    lines.append("    session_id = request.session_id or str(uuid.uuid4())")
+    lines.append("")
+    lines.append("    async def event_generator():")
+    lines.append(f"        async for event in {agent_ref}.astream_events(")
+    lines.append('            {"messages": [("user", request.message)]},')
+    lines.append('            config={"configurable": {"thread_id": session_id}},')
+    lines.append('            version="v2",')
+    lines.append("        ):")
+    lines.append('            if event["event"] == "on_chat_model_stream":')
+    lines.append('                token = event["data"]["chunk"].content')
+    lines.append("                if token:")
+    lines.append('                    yield {"data": json.dumps({"token": token, "session_id": session_id})}')
+    lines.append('        yield {"data": json.dumps({"done": True, "session_id": session_id})}')
+    lines.append("")
+    lines.append("    return EventSourceResponse(event_generator())")
+    lines.append("")
+    lines.append("")
+    lines.append('if __name__ == "__main__":')
+    lines.append("    import uvicorn")
+    lines.append("")
+    lines.append("    uvicorn.run(app, host=HOST, port=PORT)")
+    lines.append("")
 
-        AGENT_NAME = os.environ.get("AGENTSTACK_AGENT_NAME", "{agent.name}")
-        HOST = os.environ.get("HOST", "0.0.0.0")
-        PORT = int(os.environ.get("PORT", "8000"))
-
-
-        class InvokeRequest(BaseModel):
-            message: str
-            session_id: str | None = None
-
-
-        class InvokeResponse(BaseModel):
-            response: str
-            session_id: str
-
-
-        @app.get("/health")
-        async def health():
-            return {{"status": "ok", "agent": AGENT_NAME, "version": "0.1.0"}}
-
-
-        @app.post("/invoke", response_model=InvokeResponse)
-        async def invoke(request: InvokeRequest):
-            session_id = request.session_id or str(uuid.uuid4())
-            result = await agent.ainvoke(
-                {{"messages": [("user", request.message)]}},
-                config={{"configurable": {{"thread_id": session_id}}}},
-            )
-            content = result["messages"][-1].content
-            if isinstance(content, list):
-                response_text = "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
-                )
-            else:
-                response_text = str(content)
-            return InvokeResponse(response=response_text, session_id=session_id)
-
-
-        @app.post("/stream")
-        async def stream(request: InvokeRequest):
-            session_id = request.session_id or str(uuid.uuid4())
-
-            async def event_generator():
-                async for event in agent.astream_events(
-                    {{"messages": [("user", request.message)]}},
-                    config={{"configurable": {{"thread_id": session_id}}}},
-                    version="v2",
-                ):
-                    if event["event"] == "on_chat_model_stream":
-                        token = event["data"]["chunk"].content
-                        if token:
-                            yield {{"data": json.dumps({{"token": token, "session_id": session_id}})}}
-                yield {{"data": json.dumps({{"done": True, "session_id": session_id}})}}
-
-            return EventSourceResponse(event_generator())
-
-
-        if __name__ == "__main__":
-            import uvicorn
-
-            uvicorn.run(app, host=HOST, port=PORT)
-    """)
+    return "\n".join(lines)
 
 
 def generate_requirements_txt(agent: Agent) -> str:
