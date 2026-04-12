@@ -365,20 +365,19 @@ class ChatREPL:
             console.print(f"[error]{e}[/error]")
 
     def _bottom_toolbar(self):
-        """Status bar at the bottom of the screen."""
+        """Status line below the input — shows agent, session, context."""
         if self.connected:
             return HTML(
-                f'<style bg="#1a1a2e" fg="#e0e0e0">'
-                f' <b>{self._agent_name}</b>'
-                f' | session: {self._session_id[:8]}...'
-                f' | {self._agent_url}'
-                f' | /help for commands'
-                f'</style>'
+                f'  <style fg="#6a6a8a">{self._agent_name}</style>'
+                f' <style fg="#444444">|</style>'
+                f' <style fg="#6a6a8a">session: {self._session_id[:8]}</style>'
+                f' <style fg="#444444">|</style>'
+                f' <style fg="#6a6a8a">{self._agent_url}</style>'
             )
         return HTML(
-            '<style bg="#1a1a2e" fg="#888888">'
-            ' Not connected | /connect &lt;url&gt; or /use &lt;name&gt; | /help for commands'
-            '</style>'
+            '  <style fg="#6a6a8a">not connected</style>'
+            ' <style fg="#444444">|</style>'
+            ' <style fg="#6a6a8a">/connect &lt;url&gt; or /use &lt;name&gt;</style>'
         )
 
     async def run(self):
@@ -390,25 +389,13 @@ class ChatREPL:
             history=InMemoryHistory(),
             complete_while_typing=True,
             bottom_toolbar=self._bottom_toolbar,
-            multiline=False,
         )
 
         while self._running:
             try:
-                if self.connected:
-                    prompt_text = HTML(
-                        f'\n<style fg="#444444">╭─ </style>'
-                        f'<b><style fg="ansibrightcyan">{self._agent_name}</style></b>\n'
-                        f'<style fg="#444444">╰─ </style>'
-                    )
-                else:
-                    prompt_text = HTML(
-                        f'\n<style fg="#444444">╭─ </style>'
-                        f'<style fg="#888888">agentstack</style>\n'
-                        f'<style fg="#444444">╰─ </style>'
-                    )
-
-                line = await session.prompt_async(prompt_text)
+                line = await session.prompt_async(
+                    HTML('<b><style fg="ansibrightcyan">&gt; </style></b>'),
+                )
             except (KeyboardInterrupt, EOFError):
                 console.print("\n[system]Goodbye![/system]")
                 break
