@@ -1,4 +1,7 @@
 name: hello-agent
+instructions: |
+  You are a helpful assistant built with AgentStack.
+  Be concise, friendly, and always show your reasoning.
 model:
   name: minimax
   provider:
@@ -13,9 +16,6 @@ skills:
     tools:
       - get_weather
       - get_time
-    prompt: |
-      You are a helpful assistant. Be concise and friendly.
-      When asked about the weather or time, use the available tools.
 channels:
   - name: api
     type: api

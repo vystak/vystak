@@ -44,8 +44,10 @@ def _generate_tool_stubs(agent: Agent) -> str:
 
 
 def _collect_system_prompt(agent: Agent) -> str:
-    """Collect and concatenate system prompts from all skills."""
+    """Collect system prompt from agent instructions and skill prompts."""
     prompts = []
+    if agent.instructions:
+        prompts.append(agent.instructions)
     for skill in agent.skills:
         if skill.prompt:
             prompts.append(skill.prompt)
