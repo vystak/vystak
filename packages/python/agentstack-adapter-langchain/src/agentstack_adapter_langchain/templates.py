@@ -62,17 +62,6 @@ def generate_agent_py(agent: Agent) -> str:
     # Build model kwargs
     model_kwargs = [f'model="{agent.model.model_name}"']
 
-    # Inject API key from secrets if present
-    api_key_secret = None
-    for secret in agent.secrets:
-        if "key" in secret.name.lower() or "token" in secret.name.lower():
-            api_key_secret = secret.name
-            break
-    if api_key_secret is None and agent.secrets:
-        api_key_secret = agent.secrets[0].name
-    if api_key_secret:
-        model_kwargs.append(f'api_key=os.environ.get("{api_key_secret}")')
-
     for key, value in agent.model.parameters.items():
         if isinstance(value, str):
             model_kwargs.append(f'{key}="{value}"')
@@ -100,9 +89,6 @@ def generate_agent_py(agent: Agent) -> str:
     # Build the agent code
     lines = []
     lines.append(f'"""AgentStack generated agent: {agent.name}."""\n')
-    if api_key_secret:
-        lines.append("import os")
-        lines.append("")
     lines.append(f"{model_import}")
 
     if tool_names:
@@ -183,7 +169,14 @@ def generate_server_py(agent: Agent) -> str:
                 {{"messages": [("user", request.message)]}},
                 config={{"configurable": {{"thread_id": session_id}}}},
             )
-            response_text = result["messages"][-1].content
+            content = result["messages"][-1].content
+            if isinstance(content, list):
+                response_text = "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            else:
+                response_text = str(content)
             return InvokeResponse(response=response_text, session_id=session_id)
 
 
