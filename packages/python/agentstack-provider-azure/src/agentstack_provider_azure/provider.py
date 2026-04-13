@@ -211,7 +211,7 @@ class AzureProvider(PlatformProvider):
                 message=f"Deployment failed: {e}",
             )
 
-    def destroy(self, agent_name: str) -> None:
+    def destroy(self, agent_name: str, include_resources: bool = False) -> None:
         cfg = self._platform_config()
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
