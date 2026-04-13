@@ -11,6 +11,12 @@ model:
   parameters:
     temperature: 0.3
     anthropic_api_url: https://api.minimax.io/anthropic
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
 skills:
   - name: time
     tools:
