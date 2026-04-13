@@ -92,3 +92,19 @@ class TestQdrant:
         qd = Qdrant(name="vectors", provider=docker)
         assert qd.engine == "qdrant"
         assert isinstance(qd, Service)
+
+
+class TestServiceDependsOn:
+    def test_default_empty(self, docker):
+        pg = Postgres(provider=docker)
+        assert pg.depends_on == []
+
+    def test_explicit_depends_on(self, docker):
+        rd = Redis(name="cache", provider=docker, depends_on=["sessions"])
+        assert rd.depends_on == ["sessions"]
+
+    def test_serialization_with_depends_on(self, docker):
+        rd = Redis(name="cache", provider=docker, depends_on=["sessions", "memory"])
+        data = rd.model_dump()
+        restored = Redis.model_validate(data)
+        assert restored.depends_on == ["sessions", "memory"]
