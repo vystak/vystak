@@ -247,8 +247,24 @@ class DockerProvider(PlatformProvider):
                 file_path = build_dir / filename
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_path.write_text(content)
-            dockerfile_content = DOCKERFILE_TEMPLATE.format(
-                entrypoint=self._generated_code.entrypoint
+            # Build Dockerfile with optional MCP install commands
+            mcp_installs = ""
+            if self._agent and self._agent.mcp_servers:
+                install_cmds = []
+                for mcp in self._agent.mcp_servers:
+                    if mcp.install:
+                        install_cmds.append(f"RUN {mcp.install}")
+                if install_cmds:
+                    mcp_installs = "\n".join(install_cmds) + "\n"
+
+            dockerfile_content = (
+                "FROM python:3.11-slim\n"
+                "WORKDIR /app\n"
+                f"{mcp_installs}"
+                "COPY requirements.txt .\n"
+                "RUN pip install --no-cache-dir -r requirements.txt\n"
+                "COPY . .\n"
+                f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
             )
             (build_dir / "Dockerfile").write_text(dockerfile_content)
             image_tag = f"{self._container_name(plan.agent_name)}:latest"
