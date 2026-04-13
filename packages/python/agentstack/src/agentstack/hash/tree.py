@@ -18,6 +18,9 @@ class AgentHashTree:
     workspace: str
     resources: str
     secrets: str
+    sessions: str
+    memory: str
+    services: str
     root: str
 
 
@@ -44,11 +47,18 @@ def hash_agent(agent: Agent) -> AgentHashTree:
     workspace = _hash_optional(agent.workspace)
     resources = _hash_list(agent.resources)
     secrets = _hash_list(agent.secrets)
+    sessions = _hash_optional(agent.sessions)
+    memory = _hash_optional(agent.memory)
+    services = _hash_list(agent.services)
 
-    sections = "|".join([brain, skills, mcp_servers, channels, workspace, resources, secrets])
+    sections = "|".join([
+        brain, skills, mcp_servers, channels, workspace,
+        resources, secrets, sessions, memory, services,
+    ])
     root = hashlib.sha256(sections.encode()).hexdigest()
 
     return AgentHashTree(
         brain=brain, skills=skills, mcp_servers=mcp_servers, channels=channels,
-        workspace=workspace, resources=resources, secrets=secrets, root=root,
+        workspace=workspace, resources=resources, secrets=secrets,
+        sessions=sessions, memory=memory, services=services, root=root,
     )
