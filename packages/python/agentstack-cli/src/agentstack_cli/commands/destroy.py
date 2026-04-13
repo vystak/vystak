@@ -3,7 +3,7 @@
 import click
 
 from agentstack_cli.loader import find_agent_file, load_agent_from_file
-from agentstack_provider_docker import DockerProvider
+from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
@@ -24,7 +24,11 @@ def destroy(file_path, agent_name, include_resources):
         agent_name = agent.name
 
     click.echo(f"Destroying: {agent_name}")
-    provider = DockerProvider()
+    if agent:
+        provider = get_provider(agent)
+    else:
+        from agentstack_provider_docker import DockerProvider
+        provider = DockerProvider()
 
     if agent:
         provider.set_agent(agent)

@@ -3,7 +3,7 @@
 import click
 
 from agentstack_cli.loader import find_agent_file, load_agent_from_file
-from agentstack_provider_docker import DockerProvider
+from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
@@ -13,12 +13,24 @@ from agentstack_provider_docker import DockerProvider
 @click.option("--tail", "-n", "tail_lines", default=50, help="Number of lines to show")
 def logs(file_path, agent_name, follow, tail_lines):
     """Tail agent container logs."""
+    agent = None
     if agent_name is None:
         path = find_agent_file(file=file_path)
         agent = load_agent_from_file(path)
         agent_name = agent.name
 
-    provider = DockerProvider()
+    # Determine provider type — logs currently only supported for Docker
+    if agent:
+        provider = get_provider(agent)
+    else:
+        from agentstack_provider_docker import DockerProvider
+        provider = DockerProvider()
+
+    from agentstack_provider_docker import DockerProvider as _DockerType
+    if not isinstance(provider, _DockerType):
+        click.echo(f"Logs are not yet supported for {agent.platform.provider.type} provider.", err=True)
+        raise SystemExit(1)
+
     container = provider._get_container(agent_name)
 
     if container is None:

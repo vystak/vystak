@@ -5,7 +5,7 @@ import click
 from agentstack.hash import hash_agent
 from agentstack_adapter_langchain import LangChainAdapter
 from agentstack_cli.loader import find_agent_file, load_agent_from_file
-from agentstack_provider_docker import DockerProvider
+from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
@@ -30,7 +30,7 @@ def plan(file_path):
     click.echo()
 
     try:
-        provider = DockerProvider()
+        provider = get_provider(agent)
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
 
