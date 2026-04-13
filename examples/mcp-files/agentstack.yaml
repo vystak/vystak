@@ -1,0 +1,31 @@
+name: mcp-files-agent
+instructions: |
+  You are a file analysis agent. You can read files from the /docs directory
+  using your MCP tools. When asked about files, use your tools to read and
+  analyze them. List files before reading to know what's available.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.3
+    anthropic_api_url: https://api.minimax.io/anthropic
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
+mcp_servers:
+  - name: filesystem
+    transport: stdio
+    command: npx -y @modelcontextprotocol/server-filesystem /docs
+    install: npm install -g @modelcontextprotocol/server-filesystem
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8093

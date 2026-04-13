@@ -125,8 +125,15 @@ def _generate_mcp_config(agent: Agent) -> str:
         transport = transport_map.get(mcp.transport.value, mcp.transport.value)
         lines.append(f'        "transport": "{transport}",')
         if mcp.command:
-            lines.append(f'        "command": "{mcp.command}",')
-        if mcp.args:
+            # Split command string into executable + args for langchain_mcp_adapters
+            parts = mcp.command.split()
+            lines.append(f'        "command": "{parts[0]}",')
+            # Merge explicit args after any args parsed from command string
+            all_args = parts[1:] + list(mcp.args or [])
+            if all_args:
+                args_str = ", ".join(f'"{a}"' for a in all_args)
+                lines.append(f'        "args": [{args_str}],')
+        elif mcp.args:
             args_str = ", ".join(f'"{a}"' for a in mcp.args)
             lines.append(f'        "args": [{args_str}],')
         if mcp.url:
@@ -369,19 +376,19 @@ def generate_server_py(agent: Agent) -> str:
         else:
             lines.append("    global _agent, _store")
         if has_mcp:
-            lines.append("    async with MultiServerMCPClient(MCP_SERVERS) as mcp_client:")
-            lines.append("        _mcp_client = mcp_client")
+            lines.append("    _mcp_client = MultiServerMCPClient(MCP_SERVERS)")
+            lines.append("    mcp_tools = await _mcp_client.get_tools()")
             if session_store.engine == "postgres":
-                lines.append(f"        async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-                lines.append(f"                   {store_class}.from_conn_string(DB_URI) as store:")
+                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"               {store_class}.from_conn_string(DB_URI) as store:")
             else:
-                lines.append(f"        async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-                lines.append(f"                   {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
-            lines.append("            await checkpointer.setup()")
-            lines.append("            await store.setup()")
-            lines.append("            _store = store")
-            lines.append("            _agent = create_agent(checkpointer, store=store, mcp_tools=await mcp_client.get_tools())")
-            lines.append("            yield")
+                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
+            lines.append("        await checkpointer.setup()")
+            lines.append("        await store.setup()")
+            lines.append("        _store = store")
+            lines.append("        _agent = create_agent(checkpointer, store=store, mcp_tools=mcp_tools)")
+            lines.append("        yield")
         else:
             if session_store.engine == "postgres":
                 lines.append("    import asyncio as _asyncio")
@@ -425,10 +432,9 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("@asynccontextmanager")
         lines.append("async def lifespan(app):")
         lines.append("    global _agent, _mcp_client")
-        lines.append("    async with MultiServerMCPClient(MCP_SERVERS) as mcp_client:")
-        lines.append("        _mcp_client = mcp_client")
-        lines.append("        _agent = create_agent(mcp_tools=await mcp_client.get_tools())")
-        lines.append("        yield")
+        lines.append("    _mcp_client = MultiServerMCPClient(MCP_SERVERS)")
+        lines.append("    _agent = create_agent(mcp_tools=await _mcp_client.get_tools())")
+        lines.append("    yield")
         lines.append("")
         lines.append("")
         lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
