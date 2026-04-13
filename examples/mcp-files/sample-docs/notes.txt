@@ -1,0 +1,13 @@
+Meeting Notes - April 2026
+
+Attendees: Alice, Bob, Charlie
+
+Action Items:
+- Alice: Review the API design doc by Friday
+- Bob: Set up staging environment for load testing
+- Charlie: Update the onboarding guide with new MCP examples
+
+Decisions:
+- Agreed to use Azure Container Apps for production deployment
+- Will migrate from SQLite to Postgres for session storage
+- MCP filesystem server approved for document analysis use case

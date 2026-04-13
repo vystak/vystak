@@ -272,17 +272,30 @@ class DockerProvider(PlatformProvider):
                 file_path.write_text(content)
             # Build Dockerfile with optional MCP install commands
             mcp_installs = ""
+            needs_node = False
             if self._agent and self._agent.mcp_servers:
                 install_cmds = []
                 for mcp in self._agent.mcp_servers:
                     if mcp.install:
                         install_cmds.append(f"RUN {mcp.install}")
+                    # Detect if any MCP server needs Node.js (npm/npx)
+                    for field in (mcp.install or "", mcp.command or ""):
+                        if "npm" in field or "npx" in field:
+                            needs_node = True
                 if install_cmds:
                     mcp_installs = "\n".join(install_cmds) + "\n"
+
+            node_install = ""
+            if needs_node:
+                node_install = (
+                    "RUN apt-get update && apt-get install -y nodejs npm "
+                    "&& rm -rf /var/lib/apt/lists/*\n"
+                )
 
             dockerfile_content = (
                 "FROM python:3.11-slim\n"
                 "WORKDIR /app\n"
+                f"{node_install}"
                 f"{mcp_installs}"
                 "COPY requirements.txt .\n"
                 "RUN pip install --no-cache-dir -r requirements.txt\n"
