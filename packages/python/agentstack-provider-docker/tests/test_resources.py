@@ -8,7 +8,9 @@ from agentstack.schema.resource import SessionStore
 
 @pytest.fixture()
 def mock_docker_client():
-    with patch("agentstack_provider_docker.resources.docker") as mock_docker:
+    with patch("agentstack_provider_docker.resources.docker") as mock_docker, \
+         patch("agentstack_provider_docker.resources._wait_for_postgres") as mock_wait, \
+         patch("agentstack_provider_docker.resources._sync_postgres_password") as mock_sync:
         client = MagicMock()
         mock_docker.from_env.return_value = client
         mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
