@@ -243,6 +243,15 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Shared cache across agents — common tool results available to all agents on the network
 - [ ] Cache configuration in agent schema (`cache: {strategy: semantic, ttl: 300}`)
 
+**Workspaces:**
+- [ ] Sandbox workspace — isolated execution environment (e2b, Daytona, Docker) for code execution agents
+- [ ] Persistent workspace — survives across sessions, agent accumulates work (S3, GCS, local volume)
+- [ ] Mounted workspace — connect to existing storage (Google Drive, SharePoint, S3)
+- [ ] Workspace capabilities: filesystem, terminal, browser, network, GPU
+- [ ] Skill validation against workspace — skills declare what they need, `agentstack plan` validates
+- [ ] Workspace lifecycle management (per-session, per-request, persistent, shared)
+- [ ] Workspace providers: e2b, Daytona, Docker volumes, cloud storage
+
 ### Medium Term
 
 **Observability:**
