@@ -352,6 +352,51 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Workspace lifecycle management (per-session, per-request, persistent, shared)
 - [ ] Workspace providers: e2b, Daytona, Docker volumes, cloud storage
 
+**Testing & Evaluation:**
+- [ ] `agentstack test` — run test fixtures against a deployed or local agent
+- [ ] Test fixture format — YAML files with input/expected output pairs
+- [ ] Replay testing — replay production conversations against a new config, compare results
+- [ ] Regression detection — catch when a prompt/model/tool change makes the agent worse
+- [ ] Evaluation metrics — response quality scoring (LLM-as-judge, keyword matching, semantic similarity)
+- [ ] Benchmark suite — standard test cases per agent, tracked over time
+- [ ] CI integration — `agentstack test` in GitHub Actions before deploy
+
+**Reliability & Resilience:**
+- [ ] Model fallback — if primary model provider is down, fall back to secondary (`fallback_model` in schema)
+- [ ] Retry strategies — configurable retry with exponential backoff for model and tool failures
+- [ ] Graceful degradation — if a tool fails, agent continues without it (optional per tool)
+- [ ] Health check retries — agent marked healthy only after N consecutive successes
+- [ ] Circuit breaker — disable a tool/model after repeated failures, auto-recover
+
+**Environment Management:**
+- [ ] Dev / staging / prod environments — `agentstack apply --env production`
+- [ ] Environment-specific config — different models, secrets, resources per environment
+- [ ] Promotion flow — `agentstack promote staging production` (verified deploy)
+- [ ] Environment variables in YAML — `${ENV_VAR}` substitution in agent definitions
+- [ ] Lock files — pin exact versions of models, tools, deps for reproducible deploys
+
+**Scheduling & Triggers:**
+- [ ] Cron-triggered agents — agents that run on a schedule (`schedule: "0 9 * * *"` in schema)
+- [ ] Webhook-triggered agents — wake up on external events (GitHub push, Stripe payment, etc.)
+- [ ] Event-driven patterns — agent subscribes to a topic, processes events as they arrive
+- [ ] One-shot mode — agent runs once and exits (for batch jobs, reports)
+
+**Compliance & Safety:**
+- [ ] PII detection — flag/mask personal data before it reaches the model
+- [ ] Content filtering — block harmful/inappropriate outputs before returning to user
+- [ ] Output validation — enforce structured output schemas, response format constraints
+- [ ] Conversation audit trail — immutable, append-only log of all interactions
+- [ ] Data retention policies — auto-delete conversations/memories after configurable TTL
+- [ ] Model output logging — optionally log all LLM inputs/outputs for compliance review
+
+**Developer Tooling:**
+- [ ] Agent debugging — step-through execution, inspect state at each graph node
+- [ ] Time-travel debugging — rewind to any checkpoint and re-run from that point
+- [ ] Hot reload in dev mode — change tools/prompts, agent restarts automatically
+- [ ] `agentstack diff` — show what changed between two agent versions (prompt, tools, model)
+- [ ] `agentstack inspect` — show generated code without deploying
+- [ ] Agent REPL — interactive mode where you can test tools individually
+
 ### Medium Term
 
 **Observability:**
