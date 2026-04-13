@@ -91,7 +91,7 @@ class ContainerAppNode(Provisionable):
                 )
 
             dockerfile_content = (
-                "FROM python:3.11-slim\n"
+                "FROM --platform=linux/amd64 python:3.11-slim\n"
                 "WORKDIR /app\n"
                 f"{node_install}"
                 f"{mcp_installs}"
@@ -106,19 +106,25 @@ class ContainerAppNode(Provisionable):
             # 2. Build and push Docker image to ACR
             # ----------------------------------------------------------
             image_tag = f"{login_server}/{self._agent.name}:{self._plan.target_hash}"
-            image, _ = self._docker_client.images.build(
-                path=str(build_dir), tag=image_tag
-            )
 
-            self._docker_client.login(
-                registry=login_server,
-                username=acr_username,
-                password=acr_password,
+            # Use docker buildx for cross-platform build + push in one step
+            import subprocess
+            subprocess.run(
+                ["docker", "login", login_server,
+                 "--username", acr_username, "--password-stdin"],
+                input=acr_password, text=True, check=True,
+                capture_output=True,
             )
-            self._docker_client.images.push(
-                repository=f"{login_server}/{self._agent.name}",
-                tag=self._plan.target_hash,
+            result = subprocess.run(
+                ["docker", "buildx", "build",
+                 "--platform", "linux/amd64",
+                 "--tag", image_tag,
+                 "--push",
+                 str(build_dir)],
+                capture_output=True, text=True,
             )
+            if result.returncode != 0:
+                raise RuntimeError(f"Docker buildx failed: {result.stderr}")
 
             # ----------------------------------------------------------
             # 3. Collect secrets from environment
@@ -148,7 +154,7 @@ class ContainerAppNode(Provisionable):
                 self._rg_name,
                 self._agent.name,
                 ContainerApp(
-                    location=self._rg_name,  # resolved from RG
+                    location=cfg.get("location", "eastus2"),
                     managed_environment_id=env_info["environment_id"],
                     configuration=Configuration(
                         ingress=Ingress(
