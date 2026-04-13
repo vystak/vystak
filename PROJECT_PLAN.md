@@ -255,6 +255,19 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Knowledge sync — `agentstack sync` re-indexes changed documents
 - [ ] Hybrid search — combine vector similarity with keyword search (BM25)
 
+**Queue-Based Transport:**
+- [ ] Agent-to-agent communication via message queues (SQS, RabbitMQ, Redis Streams, Kafka)
+- [ ] Async task dispatch — fire-and-forget agent calls that don't block the caller
+- [ ] Task result delivery — callee posts result back via queue or callback URL
+- [ ] Dead letter queues — failed tasks routed for retry or human review
+- [ ] Priority queues — urgent tasks processed before background work
+- [ ] Fan-out patterns — one message triggers multiple agents in parallel
+- [ ] Queue resource type — declare queues in agent schema (`engine: sqs/rabbitmq/redis/kafka`)
+- [ ] Auto-provisioning — Docker provider spins up RabbitMQ/Redis container
+- [ ] Backpressure handling — agents signal when overloaded, queue throttles
+- [ ] Queue monitoring — message depth, processing rate, error rate in `agentstack status`
+- [ ] Durable workflows — multi-step agent pipelines with guaranteed delivery (retry, exactly-once)
+
 **Workspaces:**
 - [ ] Sandbox workspace — isolated execution environment (e2b, Daytona, Docker) for code execution agents
 - [ ] Persistent workspace — survives across sessions, agent accumulates work (S3, GCS, local volume)
