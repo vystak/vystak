@@ -290,6 +290,29 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Intermediate findings streamed to client
 - [ ] Can delegate sub-research to specialist agents
 
+*Guardrails & Loop Protection:*
+- [ ] Max tool calls per request — hard limit to prevent infinite loops (configurable, default 25)
+- [ ] Max iterations per plan step — cap retries before escalating or failing
+- [ ] Stuck detection — if agent calls the same tool with the same args N times, force a different approach or abort
+- [ ] Timeout per request — wall-clock limit for entire agent invocation
+- [ ] Timeout per tool call — individual tool execution timeout
+- [ ] Cost circuit breaker — abort if estimated token cost exceeds budget for a single request
+- [ ] Escalation on stuck — agent can escalate to user (via `input_required`) when it can't make progress
+- [ ] Dead-end detection — if agent produces the same response N times, interrupt with "I'm unable to solve this"
+- [ ] Configurable in schema:
+  ```yaml
+  guardrails:
+    max_tool_calls: 25
+    max_iterations: 10
+    request_timeout: 120
+    tool_timeout: 30
+    max_cost_per_request: 0.50
+    stuck_threshold: 3
+  ```
+- [ ] Generated code enforces limits — adapter generates loop counters and timeout wrappers
+- [ ] Streaming visibility — client sees guardrail events (`{"type": "guardrail", "reason": "max_tool_calls_reached"}`)
+- [ ] Metrics — track how often guardrails trigger per agent for tuning
+
 *Streaming & Visibility:*
 - [ ] Streaming plan updates — client sees plan creation, step progress, completion via SSE
 - [ ] Multi-agent delegation visible in stream events
