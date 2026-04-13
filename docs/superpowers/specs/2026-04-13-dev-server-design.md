@@ -15,7 +15,7 @@ The goal is fast iteration: edit your agent definition or tools, see the change 
 | Hot reload | File watcher → regenerate code → restart uvicorn |
 | Resource lifecycle | Persistent across restarts; `--clean` to tear down |
 | A2A endpoints | Exposed (included in generated server.py) |
-| Gateway registration | Auto-register via new `POST /register` API |
+| Gateway registration | Auto-register via existing `POST /register-route` |
 | Local gateway | `--gateway` flag runs gateway without Docker |
 | Port strategy | Use `agent.port` field from schema, default 8000 |
 | Code output | `.agentstack/dev/<agent-name>/` (gitignored, inspectable) |
@@ -88,36 +88,37 @@ Resources are persistent across dev restarts:
 
 ## Gateway Registration
 
-### Registration API (new gateway endpoints)
-
-Two new endpoints on the gateway:
+Uses the existing gateway endpoints — no new API needed:
 
 ```
-POST   /register          — register an agent
-DELETE /register/{name}   — deregister an agent
+POST   /register-route        — register agent as a route
+DELETE /routes/{agent_name}    — remove agent route on shutdown
 ```
 
 **Register request:**
 ```json
 {
-  "name": "hello-agent",
-  "url": "http://localhost:8000",
-  "card": { ... }
+  "provider_name": "",
+  "agent_name": "hello-agent",
+  "agent_url": "http://localhost:8000",
+  "channels": [],
+  "listen": "messages",
+  "threads": false,
+  "dm": false
 }
 ```
 
 **Behavior:**
-- Registered agents appear in `GET /agents` alongside static `routes.json` agents
-- Gateway proxies to registered agents identically to Docker agents (`/proxy/{name}/invoke`, `/proxy/{name}/stream`, `/a2a/{name}`)
-- Registrations include a TTL (60 seconds). The dev server sends heartbeats every 30 seconds to keep the registration alive. If a dev server crashes without deregistering, the registration expires.
-- Static routes in `routes.json` take precedence over dynamic registrations with the same name
+- Registered agents appear in `GET /agents` and are proxyable via `/proxy/{name}/invoke`, `/proxy/{name}/stream`, `/a2a/{name}`
+- Routes persist until explicitly removed — no TTL or heartbeat needed
+- Static routes in `routes.json` are loaded first; dynamic registrations add to them
 
 ### Dev Server Behavior
 
 - On startup, check for a gateway at `http://localhost:8080` (default) or `AGENTSTACK_GATEWAY_URL` env var
-- If found, register and start heartbeat loop
+- If found, register via `POST /register-route`
 - If not found, print: `No gateway detected — running standalone. Use --gateway to start one.`
-- On shutdown, send `DELETE /register/{name}` and stop heartbeat
+- On shutdown, deregister via `DELETE /routes/{agent_name}`
 
 ### Local Gateway (`--gateway` flag)
 
@@ -202,4 +203,4 @@ This command lives in `agentstack-cli` alongside the existing commands (`init`, 
 
 New dependencies for the CLI:
 - `watchfiles` — file watching (async, cross-platform, used by uvicorn itself)
-- No new dependencies for the gateway registration endpoints (FastAPI already available)
+- `httpx` — HTTP client for gateway registration

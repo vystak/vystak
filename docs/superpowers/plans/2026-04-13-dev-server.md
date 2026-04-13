@@ -4,9 +4,9 @@
 
 **Goal:** Add an `agentstack dev` command that runs an agent locally with uvicorn for fast iteration, while provisioning resource containers (Postgres, Redis, Qdrant) in Docker.
 
-**Architecture:** The dev command reuses the existing adapter for code generation and Docker provider for resource provisioning. It generates code to `.agentstack/dev/<name>/`, installs deps, starts uvicorn, watches files for changes, and auto-restarts. Agents auto-register with the gateway for multi-agent dev.
+**Architecture:** The dev command reuses the existing adapter for code generation and Docker provider for resource provisioning. It generates code to `.agentstack/dev/<name>/`, installs deps, starts uvicorn, watches files for changes, and auto-restarts. Agents auto-register with the gateway using the existing `POST /register-route` endpoint for multi-agent dev.
 
-**Tech Stack:** Click (CLI), watchfiles (file watching), uvicorn (ASGI server), subprocess (process management), httpx (gateway registration), asyncio (heartbeat loop)
+**Tech Stack:** Click (CLI), watchfiles (file watching), uvicorn (ASGI server), subprocess (process management), httpx (gateway registration)
 
 ---
 
@@ -16,348 +16,29 @@
 packages/python/agentstack-cli/
 ├── src/agentstack_cli/
 │   ├── cli.py                          # Modify: register dev command
-│   └── commands/
-│       └── dev.py                      # Create: dev command implementation
+│   ├── commands/
+│   │   └── dev.py                      # Create: dev command + run_dev_server
+│   ├── dev_resources.py                # Create: resource provisioning for dev
+│   ├── dev_codegen.py                  # Create: code generation to .agentstack/dev/
+│   ├── dev_process.py                  # Create: uvicorn process manager
+│   ├── dev_watcher.py                  # Create: file watcher
+│   ├── dev_gateway.py                  # Create: gateway registration client
+│   └── dev_local_gateway.py            # Create: local gateway process
 ├── tests/
-│   ├── test_dev.py                     # Create: dev command tests
+│   ├── test_dev.py                     # Create: dev command + integration tests
 │   ├── test_dev_resources.py           # Create: resource provisioning tests
 │   ├── test_dev_codegen.py             # Create: code generation tests
 │   ├── test_dev_process.py             # Create: uvicorn process tests
 │   ├── test_dev_watcher.py             # Create: file watcher tests
 │   ├── test_dev_gateway.py             # Create: gateway registration tests
 │   └── test_dev_local_gateway.py       # Create: local gateway tests
-
-packages/python/agentstack-gateway/
-├── src/agentstack_gateway/
-│   ├── server.py                       # Modify: add /register, /register/{name} endpoints
-│   └── registry.py                     # Create: in-memory agent registry with TTL
-├── tests/
-│   └── test_registry.py               # Create: registry tests
 ```
+
+No gateway changes needed — the existing `POST /register-route` and `DELETE /routes/{agent_name}` endpoints are sufficient for dev mode registration.
 
 ---
 
-### Task 1: Agent Registry for Gateway
-
-Add an in-memory agent registry to the gateway that stores dynamically registered agents (name, URL, card) with TTL-based expiration. This is separate from the existing route-based channel system — it handles agent discovery and proxying for dev mode and future auto-registration.
-
-**Files:**
-- Create: `packages/python/agentstack-gateway/src/agentstack_gateway/registry.py`
-- Test: `packages/python/agentstack-gateway/tests/test_registry.py`
-
-- [ ] **Step 1: Write failing tests for AgentRegistry**
-
-```python
-# packages/python/agentstack-gateway/tests/test_registry.py
-import time
-from agentstack_gateway.registry import AgentRegistry
-
-
-class TestAgentRegistry:
-    def setup_method(self):
-        self.registry = AgentRegistry(default_ttl=60)
-
-    def test_register_agent(self):
-        self.registry.register("test-agent", "http://localhost:8000", {"name": "test-agent"})
-        agent = self.registry.get("test-agent")
-        assert agent is not None
-        assert agent["name"] == "test-agent"
-        assert agent["url"] == "http://localhost:8000"
-        assert agent["card"] == {"name": "test-agent"}
-
-    def test_get_nonexistent_returns_none(self):
-        assert self.registry.get("missing") is None
-
-    def test_deregister_agent(self):
-        self.registry.register("test-agent", "http://localhost:8000", {})
-        self.registry.deregister("test-agent")
-        assert self.registry.get("test-agent") is None
-
-    def test_deregister_nonexistent_is_noop(self):
-        self.registry.deregister("missing")  # should not raise
-
-    def test_list_agents(self):
-        self.registry.register("a", "http://localhost:8000", {})
-        self.registry.register("b", "http://localhost:8001", {})
-        agents = self.registry.list_agents()
-        names = [a["name"] for a in agents]
-        assert "a" in names
-        assert "b" in names
-
-    def test_ttl_expiration(self):
-        registry = AgentRegistry(default_ttl=1)
-        registry.register("ephemeral", "http://localhost:8000", {})
-        assert registry.get("ephemeral") is not None
-        time.sleep(1.1)
-        assert registry.get("ephemeral") is None
-
-    def test_heartbeat_refreshes_ttl(self):
-        registry = AgentRegistry(default_ttl=2)
-        registry.register("agent", "http://localhost:8000", {})
-        time.sleep(1.0)
-        registry.heartbeat("agent")
-        time.sleep(1.5)
-        assert registry.get("agent") is not None
-
-    def test_heartbeat_nonexistent_returns_false(self):
-        assert self.registry.heartbeat("missing") is False
-
-    def test_list_excludes_expired(self):
-        registry = AgentRegistry(default_ttl=1)
-        registry.register("alive", "http://localhost:8000", {})
-        registry.register("dying", "http://localhost:8001", {})
-        time.sleep(1.1)
-        registry.register("alive", "http://localhost:8000", {})  # re-register
-        agents = registry.list_agents()
-        names = [a["name"] for a in agents]
-        assert "alive" in names
-        assert "dying" not in names
-
-    def test_register_overwrites_existing(self):
-        self.registry.register("agent", "http://localhost:8000", {"v": 1})
-        self.registry.register("agent", "http://localhost:9000", {"v": 2})
-        agent = self.registry.get("agent")
-        assert agent["url"] == "http://localhost:9000"
-        assert agent["card"] == {"v": 2}
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `cd packages/python/agentstack-gateway && uv run pytest tests/test_registry.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'agentstack_gateway.registry'`
-
-- [ ] **Step 3: Implement AgentRegistry**
-
-```python
-# packages/python/agentstack-gateway/src/agentstack_gateway/registry.py
-"""In-memory agent registry with TTL-based expiration."""
-
-import time
-from dataclasses import dataclass, field
-
-
-@dataclass
-class _RegistryEntry:
-    name: str
-    url: str
-    card: dict
-    expires_at: float
-
-
-class AgentRegistry:
-    """Stores dynamically registered agents with TTL expiration."""
-
-    def __init__(self, default_ttl: int = 60):
-        self._agents: dict[str, _RegistryEntry] = {}
-        self._default_ttl = default_ttl
-
-    def register(self, name: str, url: str, card: dict) -> None:
-        self._agents[name] = _RegistryEntry(
-            name=name,
-            url=url,
-            card=card,
-            expires_at=time.monotonic() + self._default_ttl,
-        )
-
-    def deregister(self, name: str) -> None:
-        self._agents.pop(name, None)
-
-    def get(self, name: str) -> dict | None:
-        entry = self._agents.get(name)
-        if entry is None:
-            return None
-        if time.monotonic() > entry.expires_at:
-            del self._agents[name]
-            return None
-        return {"name": entry.name, "url": entry.url, "card": entry.card}
-
-    def heartbeat(self, name: str) -> bool:
-        entry = self._agents.get(name)
-        if entry is None:
-            return False
-        entry.expires_at = time.monotonic() + self._default_ttl
-        return True
-
-    def list_agents(self) -> list[dict]:
-        now = time.monotonic()
-        expired = [k for k, v in self._agents.items() if now > v.expires_at]
-        for k in expired:
-            del self._agents[k]
-        return [
-            {"name": e.name, "url": e.url, "card": e.card}
-            for e in self._agents.values()
-        ]
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cd packages/python/agentstack-gateway && uv run pytest tests/test_registry.py -v`
-Expected: All 10 tests PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/python/agentstack-gateway/src/agentstack_gateway/registry.py packages/python/agentstack-gateway/tests/test_registry.py
-git commit -m "feat: add AgentRegistry with TTL-based expiration for dynamic agent registration"
-```
-
----
-
-### Task 2: Gateway Registration Endpoints
-
-Add `POST /register`, `DELETE /register/{name}`, and `POST /register/{name}/heartbeat` endpoints to the gateway. Registered agents appear in `GET /agents` and are accessible via existing proxy endpoints.
-
-**Files:**
-- Modify: `packages/python/agentstack-gateway/src/agentstack_gateway/server.py`
-- Test: `packages/python/agentstack-gateway/tests/test_server.py` (add to existing)
-
-- [ ] **Step 1: Write failing tests for registration endpoints**
-
-Add these tests to the existing test file:
-
-```python
-# Add to packages/python/agentstack-gateway/tests/test_server.py
-
-class TestRegistrationEndpoints:
-    def test_register_agent(self, client):
-        resp = client.post("/register", json={
-            "name": "dev-agent",
-            "url": "http://localhost:9000",
-            "card": {"name": "dev-agent", "version": "0.1.0"},
-        })
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "registered"
-
-    def test_deregister_agent(self, client):
-        client.post("/register", json={
-            "name": "dev-agent",
-            "url": "http://localhost:9000",
-            "card": {},
-        })
-        resp = client.delete("/register/dev-agent")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "deregistered"
-
-    def test_deregister_nonexistent_is_ok(self, client):
-        resp = client.delete("/register/nonexistent")
-        assert resp.status_code == 200
-
-    def test_heartbeat(self, client):
-        client.post("/register", json={
-            "name": "dev-agent",
-            "url": "http://localhost:9000",
-            "card": {},
-        })
-        resp = client.post("/register/dev-agent/heartbeat")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "ok"
-
-    def test_heartbeat_nonexistent_returns_404(self, client):
-        resp = client.post("/register/missing/heartbeat")
-        assert resp.status_code == 404
-
-    def test_registered_agent_appears_in_routes_for_proxy(self, client):
-        """Registered agents should be proxied via /proxy/{name}/* endpoints."""
-        client.post("/register", json={
-            "name": "dev-agent",
-            "url": "http://localhost:9000",
-            "card": {"name": "dev-agent"},
-        })
-        # Verify the agent is listed in routes
-        resp = client.get("/routes")
-        assert resp.status_code == 200
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `cd packages/python/agentstack-gateway && uv run pytest tests/test_server.py::TestRegistrationEndpoints -v`
-Expected: FAIL — 404 for `/register` endpoint
-
-- [ ] **Step 3: Implement registration endpoints**
-
-Add to `packages/python/agentstack-gateway/src/agentstack_gateway/server.py`:
-
-1. Import and instantiate registry at module level:
-```python
-from agentstack_gateway.registry import AgentRegistry
-
-agent_registry = AgentRegistry(default_ttl=60)
-```
-
-2. Add three new endpoints:
-```python
-@app.post("/register")
-async def register_agent(body: dict):
-    """Register an agent for discovery and proxying."""
-    name = body["name"]
-    url = body["url"]
-    card = body.get("card", {})
-    agent_registry.register(name, url, card)
-    return {"status": "registered", "name": name}
-
-
-@app.delete("/register/{agent_name}")
-async def deregister_agent(agent_name: str):
-    """Deregister an agent."""
-    agent_registry.deregister(agent_name)
-    return {"status": "deregistered", "name": agent_name}
-
-
-@app.post("/register/{agent_name}/heartbeat")
-async def heartbeat_agent(agent_name: str):
-    """Refresh agent registration TTL."""
-    if not agent_registry.heartbeat(agent_name):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not registered")
-    return {"status": "ok", "name": agent_name}
-```
-
-3. Update `_find_route()` to also check the agent registry:
-```python
-def _find_route(agent_name: str):
-    # Check static routes first
-    for route in router.list_routes():
-        if route.agent_name == agent_name:
-            return route
-    # Fall back to dynamic registry
-    agent = agent_registry.get(agent_name)
-    if agent:
-        return Route(
-            provider_name="",
-            agent_name=agent["name"],
-            agent_url=agent["url"],
-            channels=[],
-            listen="messages",
-            threads=False,
-            dm=False,
-        )
-    return None
-```
-
-4. Update `GET /agents` to include registered agents:
-```python
-# In the agents() endpoint, after collecting route-based agents:
-for agent in agent_registry.list_agents():
-    # Skip if already listed from static routes
-    if agent["name"] not in seen_names:
-        cards.append({**agent["card"], "_route": {"agent_name": agent["name"], "agent_url": agent["url"]}})
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cd packages/python/agentstack-gateway && uv run pytest tests/test_server.py -v`
-Expected: All tests PASS (existing + new)
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/python/agentstack-gateway/src/agentstack_gateway/server.py packages/python/agentstack-gateway/tests/test_server.py
-git commit -m "feat: add agent registration endpoints to gateway for dynamic discovery"
-```
-
----
-
-### Task 3: Dev Command Skeleton
+### Task 1: Dev Command Skeleton
 
 Create the `agentstack dev` CLI command with all flags, agent loading, and the main structure. This task wires up the command but stubs out the core functionality (resource provisioning, code gen, uvicorn, watcher) — those are filled in by subsequent tasks.
 
@@ -516,7 +197,7 @@ git commit -m "feat: add agentstack dev command skeleton with CLI flags"
 
 ---
 
-### Task 4: Resource Provisioning for Dev
+### Task 2: Resource Provisioning for Dev
 
 Extract resource provisioning from the Docker provider so the dev command can start Postgres/Redis/Qdrant containers without building a Docker image for the agent itself. Reuse `DockerServiceNode` and `DockerNetworkNode` from the provision graph.
 
@@ -710,7 +391,7 @@ git commit -m "feat: add dev resource provisioning for Postgres/SQLite container
 
 ---
 
-### Task 5: Code Generation and Dependency Installation
+### Task 3: Code Generation and Dependency Installation
 
 Generate agent code to `.agentstack/dev/<name>/` and install dependencies into the active Python environment.
 
@@ -892,7 +573,7 @@ git commit -m "feat: add dev code generation to .agentstack/dev/<name>/"
 
 ---
 
-### Task 6: Uvicorn Process Manager
+### Task 4: Uvicorn Process Manager
 
 Manage a uvicorn subprocess — start, stop, restart. The process manager runs the generated `server.py` with the correct environment variables and port.
 
@@ -1088,7 +769,7 @@ git commit -m "feat: add DevProcess for managing uvicorn subprocess in dev mode"
 
 ---
 
-### Task 7: File Watcher
+### Task 5: File Watcher
 
 Watch agent definition file and tools/ directory for changes. On change, call a callback (which will trigger code regeneration and process restart).
 
@@ -1221,9 +902,9 @@ git commit -m "feat: add file watcher for dev mode auto-reload"
 
 ---
 
-### Task 8: Gateway Registration Client
+### Task 6: Gateway Registration Client
 
-Client-side logic for the dev server to register/deregister with a gateway and send heartbeats.
+Client-side logic for the dev server to register/deregister with a gateway using the existing `POST /register-route` and `DELETE /routes/{agent_name}` endpoints. No heartbeat needed — gateway routes persist until explicitly removed.
 
 **Files:**
 - Create: `packages/python/agentstack-cli/src/agentstack_cli/dev_gateway.py`
@@ -1233,8 +914,7 @@ Client-side logic for the dev server to register/deregister with a gateway and s
 
 ```python
 # packages/python/agentstack-cli/tests/test_dev_gateway.py
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 from agentstack.schema.agent import Agent
 from agentstack.schema.model import Model, ModelProvider
@@ -1283,7 +963,13 @@ class TestDevGateway:
         agent = self._make_agent()
         result = register_with_gateway("http://localhost:8080", agent, 9000)
         assert result is True
-        mock_client.post.assert_called_once()
+
+        # Verify it calls /register-route with correct payload
+        call_args = mock_client.post.call_args
+        assert "/register-route" in call_args[0][0]
+        payload = call_args[1]["json"]
+        assert payload["agent_name"] == "test-agent"
+        assert payload["agent_url"] == "http://localhost:9000"
 
     @patch("agentstack_cli.dev_gateway.httpx.Client")
     def test_deregister_from_gateway(self, mock_client_cls):
@@ -1295,7 +981,10 @@ class TestDevGateway:
         mock_client.delete.return_value = MagicMock(status_code=200)
 
         deregister_from_gateway("http://localhost:8080", "test-agent")
-        mock_client.delete.assert_called_once()
+
+        # Verify it calls DELETE /routes/{agent_name}
+        call_args = mock_client.delete.call_args
+        assert "/routes/test-agent" in call_args[0][0]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1307,18 +996,20 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'agentstack_cli.dev_gat
 
 ```python
 # packages/python/agentstack-cli/src/agentstack_cli/dev_gateway.py
-"""Gateway registration client for dev mode."""
+"""Gateway registration client for dev mode.
+
+Uses the existing gateway endpoints:
+  POST /register-route — register agent as a route
+  DELETE /routes/{agent_name} — remove agent route on shutdown
+"""
 
 import os
-import threading
-import time
 
 import httpx
 
 from agentstack.schema.agent import Agent
 
 DEFAULT_GATEWAY_URL = "http://localhost:8080"
-HEARTBEAT_INTERVAL = 30  # seconds
 
 
 def detect_gateway(gateway_url: str | None = None) -> str | None:
@@ -1335,21 +1026,18 @@ def detect_gateway(gateway_url: str | None = None) -> str | None:
 
 
 def register_with_gateway(gateway_url: str, agent: Agent, port: int) -> bool:
-    """Register the dev agent with the gateway."""
+    """Register the dev agent with the gateway via POST /register-route."""
     agent_url = f"http://localhost:{port}"
-    card = {
-        "name": agent.name,
-        "description": agent.description or f"Agent {agent.name}",
-        "url": agent_url,
-        "version": "dev",
-        "capabilities": {"streaming": True, "pushNotifications": False},
-    }
     try:
         with httpx.Client(timeout=5) as client:
-            resp = client.post(f"{gateway_url}/register", json={
-                "name": agent.name,
-                "url": agent_url,
-                "card": card,
+            resp = client.post(f"{gateway_url}/register-route", json={
+                "provider_name": "",
+                "agent_name": agent.name,
+                "agent_url": agent_url,
+                "channels": [],
+                "listen": "messages",
+                "threads": False,
+                "dm": False,
             })
             return resp.status_code == 200
     except Exception:
@@ -1357,39 +1045,12 @@ def register_with_gateway(gateway_url: str, agent: Agent, port: int) -> bool:
 
 
 def deregister_from_gateway(gateway_url: str, agent_name: str) -> None:
-    """Deregister the agent from the gateway."""
+    """Deregister the agent from the gateway via DELETE /routes/{agent_name}."""
     try:
         with httpx.Client(timeout=3) as client:
-            client.delete(f"{gateway_url}/register/{agent_name}")
+            client.delete(f"{gateway_url}/routes/{agent_name}")
     except Exception:
         pass  # Best effort — gateway may already be down
-
-
-class HeartbeatThread:
-    """Background thread that sends heartbeats to keep the registration alive."""
-
-    def __init__(self, gateway_url: str, agent_name: str):
-        self._gateway_url = gateway_url
-        self._agent_name = agent_name
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-
-    def _run(self) -> None:
-        while not self._stop_event.wait(timeout=HEARTBEAT_INTERVAL):
-            try:
-                with httpx.Client(timeout=3) as client:
-                    client.post(f"{self._gateway_url}/register/{self._agent_name}/heartbeat")
-            except Exception:
-                pass  # Best effort
 ```
 
 - [ ] **Step 4: Add httpx dependency if not already present**
@@ -1410,7 +1071,7 @@ git commit -m "feat: add gateway registration client for dev mode"
 
 ---
 
-### Task 9: Wire Up run_dev_server
+### Task 7: Wire Up run_dev_server
 
 Connect all the pieces: resource provisioning, code generation, dependency installation, uvicorn process, file watcher, gateway registration, and signal handling into the `run_dev_server` function.
 
@@ -1543,7 +1204,6 @@ from agentstack_cli.dev_gateway import (
     detect_gateway,
     register_with_gateway,
     deregister_from_gateway,
-    HeartbeatThread,
 )
 
 
@@ -1593,15 +1253,12 @@ def run_dev_server(
 
     # 5. Detect and register with gateway
     gateway_url = None
-    heartbeat = None
-    # TODO: --gateway flag for local gateway handled in Task 10
+    # --gateway flag handled in Task 8 (LocalGateway)
 
     gateway_url = detect_gateway()
     if gateway_url:
         if register_with_gateway(gateway_url, agent, port):
             click.echo(f"Gateway: registered at {gateway_url}")
-            heartbeat = HeartbeatThread(gateway_url, agent.name)
-            heartbeat.start()
         else:
             click.echo("Gateway: registration failed, running standalone")
             gateway_url = None
@@ -1650,8 +1307,6 @@ def run_dev_server(
     finally:
         click.echo(f'\nStopping agent "{agent.name}"...')
         process.stop()
-        if heartbeat:
-            heartbeat.stop()
         if gateway_url:
             deregister_from_gateway(gateway_url, agent.name)
         click.echo(f'Agent "{agent.name}" stopped. Resources still running — use --clean to tear down.')
@@ -1704,7 +1359,7 @@ git commit -m "feat: wire up run_dev_server with resources, codegen, uvicorn, wa
 
 ---
 
-### Task 10: Local Gateway Mode (`--gateway` flag)
+### Task 8: Local Gateway Mode (`--gateway` flag)
 
 When `--gateway` is passed, start the gateway as a local process alongside the agent. Other `agentstack dev` instances will auto-register with it.
 
@@ -1769,9 +1424,9 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'agentstack_cli.dev_loc
 # packages/python/agentstack-cli/src/agentstack_cli/dev_local_gateway.py
 """Run the gateway as a local process for dev mode."""
 
+import os
 import subprocess
 import sys
-from pathlib import Path
 
 
 class LocalGateway:
@@ -1793,13 +1448,11 @@ class LocalGateway:
             "--host", "0.0.0.0",
             "--port", str(self._port),
         ]
-        env_overrides = {
+        env = {
+            **os.environ,
             "PORT": str(self._port),
             "ROUTES_FILE": "",  # No static routes needed
         }
-
-        import os
-        env = {**os.environ, **env_overrides}
 
         self._process = subprocess.Popen(
             cmd,
@@ -1828,7 +1481,7 @@ class LocalGateway:
 
 - [ ] **Step 4: Integrate --gateway flag into run_dev_server**
 
-In `packages/python/agentstack-cli/src/agentstack_cli/commands/dev.py`, add the import and update the gateway section:
+In `packages/python/agentstack-cli/src/agentstack_cli/commands/dev.py`, add the import:
 
 ```python
 from agentstack_cli.dev_local_gateway import LocalGateway
@@ -1839,7 +1492,6 @@ Replace the gateway detection section (step 5 in run_dev_server) with:
 ```python
     # 5. Gateway: start local or detect existing
     gateway_url = None
-    heartbeat = None
     local_gw = None
 
     if gateway:
@@ -1856,8 +1508,6 @@ Replace the gateway detection section (step 5 in run_dev_server) with:
     if gateway_url:
         if register_with_gateway(gateway_url, agent, port):
             click.echo(f"Gateway: registered at {gateway_url}")
-            heartbeat = HeartbeatThread(gateway_url, agent.name)
-            heartbeat.start()
         else:
             click.echo("Gateway: registration failed, running standalone")
             gateway_url = None
@@ -1871,8 +1521,6 @@ Update the finally block to also stop the local gateway:
     finally:
         click.echo(f'\nStopping agent "{agent.name}"...')
         process.stop()
-        if heartbeat:
-            heartbeat.stop()
         if gateway_url:
             deregister_from_gateway(gateway_url, agent.name)
         if local_gw:
@@ -1904,7 +1552,7 @@ git commit -m "feat: add --gateway flag for local gateway in dev mode"
 
 ---
 
-### Task 11: Add .agentstack/dev/ to .gitignore
+### Task 9: Add .agentstack/dev/ to .gitignore
 
 Ensure generated dev code is not committed to the repo.
 
@@ -1932,7 +1580,7 @@ git commit -m "chore: gitignore .agentstack/dev/ generated code"
 
 ---
 
-### Task 12: End-to-End Smoke Test
+### Task 10: End-to-End Smoke Test
 
 Manually verify the full flow works with the `minimal` example.
 
