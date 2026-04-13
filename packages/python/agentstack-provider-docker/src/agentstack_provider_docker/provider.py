@@ -23,11 +23,6 @@ from agentstack_provider_docker.gateway import (
     write_gateway_source,
     write_routes_file,
 )
-from agentstack_provider_docker.network import ensure_network
-from agentstack_provider_docker.resources import (
-    destroy_resource,
-    provision_resource,
-)
 
 
 DOCKERFILE_TEMPLATE = """\
@@ -49,7 +44,6 @@ class DockerProvider(PlatformProvider):
         self._client = self._create_client()
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
-        self._resource_info: list[dict] = []
 
     @staticmethod
     def _create_client():
@@ -92,32 +86,6 @@ class DockerProvider(PlatformProvider):
                     if resource.engine in ("postgres", "sqlite"):
                         result.append(resource)
         return result
-
-    def _build_env(self) -> dict[str, str]:
-        env = {}
-        if self._agent:
-            for secret in self._agent.secrets:
-                value = os.environ.get(secret.name)
-                if value:
-                    env[secret.name] = value
-            # Connection strings from provisioned resources
-            for info in self._resource_info:
-                if info["engine"] in ("postgres", "sqlite"):
-                    env["SESSION_STORE_URL"] = info["connection_string"]
-            # BYO connection strings from services
-            for svc in self._all_services():
-                if hasattr(svc, "connection_string_env") and svc.connection_string_env:
-                    value = os.environ.get(svc.connection_string_env)
-                    if value:
-                        env["SESSION_STORE_URL"] = value
-        return env
-
-    def _build_volumes(self) -> dict:
-        volumes = {}
-        for info in self._resource_info:
-            if info["engine"] == "sqlite":
-                volumes[info["volume_name"]] = {"bind": "/data", "mode": "rw"}
-        return volumes
 
     def _collect_gateway_info(self) -> dict:
         """Extract gateway/provider/route info from agent channels."""
@@ -241,99 +209,59 @@ class DockerProvider(PlatformProvider):
             )
 
         try:
-            # 1. Ensure network
-            network = ensure_network(self._client)
+            from agentstack.provisioning import ProvisionGraph
+            from agentstack_provider_docker.nodes import (
+                DockerAgentNode,
+                DockerGatewayNode,
+                DockerNetworkNode,
+                DockerServiceNode,
+            )
 
-            # 2. Provision services (sessions, memory, etc.)
-            self._resource_info = []
-            if self._agent:
-                for svc in self._all_services():
-                    if svc.engine in ("postgres", "sqlite"):
-                        info = provision_resource(
-                            self._client, svc, network, SECRETS_PATH
-                        )
-                        self._resource_info.append(info)
+            graph = ProvisionGraph()
 
-            # 2.5. Provision gateways
-            self.provision_gateways(network)
+            # Network
+            graph.add(DockerNetworkNode(self._client))
 
-            # 3. Stop existing agent container
-            existing = self._get_container(plan.agent_name)
-            if existing is not None:
-                existing.stop()
-                existing.remove()
+            # Services (sessions, memory, services list)
+            for svc in self._all_services():
+                if svc.engine in ("postgres", "sqlite"):
+                    node = DockerServiceNode(self._client, svc, SECRETS_PATH)
+                    graph.add(node)
 
-            # 4. Build image
-            build_dir = Path(".agentstack") / plan.agent_name
-            build_dir.mkdir(parents=True, exist_ok=True)
-            for filename, content in self._generated_code.files.items():
-                file_path = build_dir / filename
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(content)
-            # Build Dockerfile with optional MCP install commands
-            mcp_installs = ""
-            needs_node = False
-            if self._agent and self._agent.mcp_servers:
-                install_cmds = []
-                for mcp in self._agent.mcp_servers:
-                    if mcp.install:
-                        install_cmds.append(f"RUN {mcp.install}")
-                    # Detect if any MCP server needs Node.js (npm/npx)
-                    for field in (mcp.install or "", mcp.command or ""):
-                        if "npm" in field or "npx" in field:
-                            needs_node = True
-                if install_cmds:
-                    mcp_installs = "\n".join(install_cmds) + "\n"
+            # Agent container
+            agent_node = DockerAgentNode(
+                self._client, self._agent, self._generated_code, plan,
+            )
+            graph.add(agent_node)
 
-            node_install = ""
-            if needs_node:
-                node_install = (
-                    "RUN apt-get update && apt-get install -y nodejs npm "
-                    "&& rm -rf /var/lib/apt/lists/*\n"
+            # Gateways
+            for gw_name, gw_info in self._collect_gateway_info().items():
+                gw_node = DockerGatewayNode(
+                    self._client, gw_name, gw_info, self._agent.name,
                 )
+                graph.add(gw_node)
 
-            dockerfile_content = (
-                "FROM python:3.11-slim\n"
-                "WORKDIR /app\n"
-                f"{node_install}"
-                f"{mcp_installs}"
-                "COPY requirements.txt .\n"
-                "RUN pip install --no-cache-dir -r requirements.txt\n"
-                "COPY . .\n"
-                f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
-            )
-            (build_dir / "Dockerfile").write_text(dockerfile_content)
-            image_tag = f"{self._container_name(plan.agent_name)}:latest"
-            self._client.images.build(path=str(build_dir), tag=image_tag)
+            # Execute the graph
+            results = graph.execute()
 
-            # 5. Run agent container on network
-            container_name = self._container_name(plan.agent_name)
-            host_port = self._agent.port if self._agent and self._agent.port else None
-            self._client.containers.run(
-                image_tag,
-                name=container_name,
-                detach=True,
-                ports={"8000/tcp": host_port},
-                environment=self._build_env(),
-                volumes=self._build_volumes(),
-                network=network.name,
-                labels={
-                    "agentstack.hash": plan.target_hash,
-                    "agentstack.agent": plan.agent_name,
-                },
-            )
-
-            # Get the actual port
-            container = self._client.containers.get(container_name)
-            port_info = container.ports.get("8000/tcp")
-            actual_port = port_info[0]["HostPort"] if port_info else "?"
+            # Extract result from agent node
+            agent_result = results.get(f"agent:{plan.agent_name}")
+            if agent_result and agent_result.success:
+                url = agent_result.info.get("url", "?")
+                return DeployResult(
+                    agent_name=plan.agent_name,
+                    success=True,
+                    hash=plan.target_hash,
+                    message=f"Deployed {plan.agent_name} at {url}",
+                )
 
             return DeployResult(
                 agent_name=plan.agent_name,
-                success=True,
+                success=False,
                 hash=plan.target_hash,
-                message=f"Deployed {plan.agent_name} at http://localhost:{actual_port}",
+                message="Agent node not found in provision results",
             )
+
         except Exception as e:
             return DeployResult(
                 agent_name=plan.agent_name,
@@ -349,8 +277,10 @@ class DockerProvider(PlatformProvider):
             container.remove()
 
         if include_resources and self._agent:
+            from agentstack_provider_docker.nodes.service import DockerServiceNode
             for svc in self._all_services():
-                destroy_resource(self._client, svc.name)
+                node = DockerServiceNode(self._client, svc, SECRETS_PATH)
+                node.destroy()
             self.destroy_gateways()
 
     def status(self, agent_name: str) -> AgentStatus:

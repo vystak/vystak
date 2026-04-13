@@ -3,24 +3,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agentstack.providers.base import DeployPlan, GeneratedCode
+from agentstack.provisioning.node import ProvisionResult
 from agentstack.schema.agent import Agent
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
-from agentstack.schema.service import Postgres
 
 from agentstack_provider_docker.provider import DockerProvider
 
 
 @pytest.fixture()
 def mock_docker_client():
-    with patch("agentstack_provider_docker.provider.docker") as mock_docker, \
-         patch("agentstack_provider_docker.provider.ensure_network") as mock_network, \
-         patch("agentstack_provider_docker.provider.provision_resource") as mock_provision:
+    with patch("agentstack_provider_docker.provider.docker") as mock_docker:
         client = MagicMock()
         mock_docker.from_env.return_value = client
         mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
         mock_docker.errors.DockerException = type("DockerException", (Exception,), {})
-        mock_network.return_value = MagicMock(name="agentstack-net")
         yield client, mock_docker.errors
 
 
@@ -107,32 +104,61 @@ class TestPlan:
 
 
 class TestApply:
-    def test_builds_and_runs(self, provider, mock_docker_client, sample_code, not_found_error):
-        client, _ = mock_docker_client
-        # First call: no existing container. After run: return a container with ports.
-        deployed_container = MagicMock()
-        deployed_container.ports = {"8000/tcp": [{"HostPort": "8080"}]}
-        client.containers.get.side_effect = [not_found_error("not found"), deployed_container]
-        client.images.build.return_value = (MagicMock(), [])
+    def test_builds_and_runs(self, provider, mock_docker_client, sample_agent, sample_code):
+        """Graph-based apply returns success when agent node succeeds."""
         provider.set_generated_code(sample_code)
+        provider.set_agent(sample_agent)
         plan = DeployPlan(agent_name="test-bot", actions=["Create"], current_hash=None, target_hash="abc123", changes={})
-        result = provider.apply(plan)
+
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "agent:test-bot": ProvisionResult(
+                name="agent:test-bot",
+                success=True,
+                info={"url": "http://localhost:8080", "container_name": "agentstack-test-bot", "port": "8080"},
+            ),
+        }
+
+        with patch("agentstack.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
         assert result.success is True
         assert "localhost" in result.message
-        client.images.build.assert_called_once()
-        client.containers.run.assert_called_once()
+        mock_graph.add.assert_called()
+        mock_graph.execute.assert_called_once()
 
-    def test_replaces_existing(self, provider, mock_docker_client, sample_code):
-        client, _ = mock_docker_client
-        existing = MagicMock()
-        client.containers.get.return_value = existing
-        client.images.build.return_value = (MagicMock(), [])
+    def test_replaces_existing(self, provider, mock_docker_client, sample_agent, sample_code):
+        """Graph-based apply handles update plans."""
         provider.set_generated_code(sample_code)
+        provider.set_agent(sample_agent)
         plan = DeployPlan(agent_name="test-bot", actions=["Update"], current_hash="old", target_hash="new", changes={})
-        result = provider.apply(plan)
+
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "agent:test-bot": ProvisionResult(
+                name="agent:test-bot",
+                success=True,
+                info={"url": "http://localhost:9090", "container_name": "agentstack-test-bot", "port": "9090"},
+            ),
+        }
+
+        with patch("agentstack.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
         assert result.success is True
-        existing.stop.assert_called_once()
-        existing.remove.assert_called_once()
+
+    def test_no_generated_code(self, provider, mock_docker_client):
+        """apply() returns failure when no generated code is set."""
+        plan = DeployPlan(agent_name="test-bot", actions=["Create"], current_hash=None, target_hash="abc123", changes={})
+        result = provider.apply(plan)
+        assert result.success is False
+        assert "set_generated_code" in result.message
 
 
 class TestDestroy:
@@ -149,23 +175,18 @@ class TestDestroy:
         client.containers.get.side_effect = not_found_error("not found")
         provider.destroy("test-bot")  # should not raise
 
-
-class TestBuildEnvWithServices:
-    def test_sessions_connection_string(self, provider, mock_docker_client):
-        docker_prov = Provider(name="docker", type="docker")
-        agent = Agent(
-            name="test-bot",
-            model=Model(
-                name="claude",
-                provider=Provider(name="anthropic", type="anthropic"),
-                model_name="claude-sonnet-4-20250514",
-            ),
-            sessions=Postgres(provider=docker_prov),
-        )
-        provider.set_agent(agent)
-        provider._resource_info = [{"engine": "postgres", "connection_string": "postgresql://test"}]
-        env = provider._build_env()
-        assert env.get("SESSION_STORE_URL") == "postgresql://test"
+    def test_include_resources(self, provider, mock_docker_client, sample_agent):
+        """destroy with include_resources uses DockerServiceNode.destroy()."""
+        client, _ = mock_docker_client
+        container = MagicMock()
+        client.containers.get.return_value = container
+        # Empty containers list for service destroy
+        client.containers.list.return_value = []
+        provider.set_agent(sample_agent)
+        with patch("agentstack_provider_docker.provider.DockerProvider.destroy_gateways"):
+            provider.destroy("test-bot", include_resources=True)
+        container.stop.assert_called_once()
+        container.remove.assert_called_once()
 
 
 class TestStatus:
