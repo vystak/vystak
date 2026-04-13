@@ -244,26 +244,56 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Cache configuration in agent schema (`cache: {strategy: semantic, ttl: 300}`)
 
 **Agentic Workflows (Claude Code-style):**
-- [ ] Agent mode: `reactive` (current — respond to single messages) vs `autonomous` (plan-execute loop)
+
+Agent modes beyond simple react (respond to message → call tools → respond):
+
+*Plan-and-Execute:*
+- [ ] Agent mode: `reactive` (current) vs `planner` (plan-execute loop)
 - [ ] Task planning — agent decomposes complex requests into a step-by-step plan before executing
 - [ ] Plan approval — agent presents plan to user, waits for approval via `interrupt()` / `input_required`
-- [ ] Clarification questions — agent asks follow-up questions when requirements are ambiguous (maps to A2A `input_required`)
-- [ ] Step-by-step execution — agent executes plan items sequentially, reporting progress via streaming
-- [ ] Checkpoint gates — configurable pause points between steps for user review/approval
+- [ ] Clarification questions — agent asks follow-up questions when ambiguous (maps to A2A `input_required`)
+- [ ] Step-by-step execution — execute plan items sequentially, reporting progress via streaming
+- [ ] Checkpoint gates — configurable pause points between steps for user review
 - [ ] Plan revision — user can modify the plan mid-execution, agent adapts
-- [ ] Parallel step execution — independent plan steps run concurrently (reuse parallel tool call infra)
+- [ ] Parallel step execution — independent steps run concurrently
 - [ ] Progress tracking — plan state persisted in checkpointer (survives restarts)
 - [ ] Configurable autonomy levels:
-  - `full` — agent plans and executes without pausing (fire-and-forget)
-  - `plan-approval` — agent plans, pauses for approval, then executes autonomously
-  - `step-approval` — agent pauses before each step for approval
-  - `supervised` — agent pauses after each step showing results, waits for "continue"
-- [ ] Generated workflow graph — adapter generates a LangGraph StateGraph with planner → executor → reviewer nodes (instead of simple `create_react_agent`)
-- [ ] Task decomposition tools — built-in `create_plan`, `update_plan`, `mark_step_complete` tools
-- [ ] Agent schema field: `mode: autonomous` with `autonomy: plan-approval` configuration
-- [ ] Streaming plan updates — client sees plan creation, step progress, and completion via SSE events
-- [ ] Multi-agent delegation — autonomous agent can delegate sub-tasks to specialist agents via A2A
-- [ ] Failure recovery — if a step fails, agent can retry, skip, or revise the plan
+  - `full` — plan and execute without pausing
+  - `plan-approval` — pause after planning, execute autonomously
+  - `step-approval` — pause before each step
+  - `supervised` — pause after each step showing results
+- [ ] Generated workflow graph — adapter generates LangGraph StateGraph with planner → executor → reviewer nodes
+- [ ] Built-in tools: `create_plan`, `update_plan`, `mark_step_complete`
+- [ ] Schema: `mode: planner` with `autonomy: plan-approval`
+
+*Supervisor (using `langgraph-supervisor`):*
+- [ ] Agent mode: `supervisor` — orchestrates multiple specialist agents
+- [ ] `create_supervisor` integration — adapter generates supervisor graph from agent definition
+- [ ] Sub-agents defined in YAML:
+  ```yaml
+  mode: supervisor
+  agents:
+    - name: researcher
+      url: http://agentstack-researcher:8000
+    - name: math-expert  
+      url: http://agentstack-math:8000
+  ```
+- [ ] Handoff tools auto-generated — supervisor can delegate to any sub-agent
+- [ ] Custom handoff descriptions — control how the LLM routes tasks
+- [ ] Combined with A2A — supervisor calls sub-agents via A2A protocol on Docker network
+- [ ] Hierarchical teams — supervisors can manage other supervisors
+
+*Deep Research Agent:*
+- [ ] Agent mode: `researcher` — multi-step research with iterative refinement
+- [ ] Search → analyze → synthesize loop with configurable depth
+- [ ] Source tracking and citation
+- [ ] Intermediate findings streamed to client
+- [ ] Can delegate sub-research to specialist agents
+
+*Streaming & Visibility:*
+- [ ] Streaming plan updates — client sees plan creation, step progress, completion via SSE
+- [ ] Multi-agent delegation visible in stream events
+- [ ] Failure recovery — retry, skip, or revise plan on step failure
 
 **Knowledge / RAG:**
 - [ ] Knowledge resource type — declare vector stores as agent resources (`engine: pinecone/chroma/qdrant/pgvector`)
