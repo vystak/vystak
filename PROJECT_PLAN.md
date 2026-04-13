@@ -428,6 +428,40 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Voice (Twilio) channel adapter
 - [ ] Webhook (generic) channel adapter
 
+**Agent Versioning & Deployment Strategies:**
+- [ ] Immutable agent versions — each deploy creates a version tag (content hash as version)
+- [ ] `agentstack rollback <version>` — instant rollback to any previous version
+- [ ] A/B testing — route percentage of traffic to a new version (`traffic_split: {v1: 80, v2: 20}`)
+- [ ] Canary deployments — gradual rollout with automatic rollback on error spike
+- [ ] Blue-green deployments — swap between two identical environments
+- [ ] Deploy history — `agentstack history` shows all deploys with hashes and timestamps
+
+**SDK & Client Libraries:**
+- [ ] Python client — `from agentstack import AgentClient; client.invoke("hello")`
+- [ ] TypeScript/JS client — for web apps and Node.js backends
+- [ ] OpenAPI spec auto-generated from agent endpoints — any language can codegen a client
+- [ ] A2A client SDK — typed wrapper for calling agents via A2A protocol
+- [ ] Webhook client — receive agent responses asynchronously via callback URL
+
+**Composability:**
+- [ ] `agentstack compose` — single YAML defining multiple agents, gateway, routing, and resources
+- [ ] Agent templates — `agentstack init --template customer-support` (pre-built archetypes)
+- [ ] Shared skill library — reusable skill packages across agents (`agentstack-skill-*`)
+- [ ] Agent inheritance — base agent with shared config, specialized agents extend it
+- [ ] Import agents — reference other agent definitions (`agents: [./weather-agent, ./time-agent]`)
+
+**Internationalization:**
+- [ ] Multi-language system prompts — agents respond in the user's detected language
+- [ ] Built-in translation tool — auto-translate between agent and user when needed
+- [ ] Locale-aware formatting — dates, numbers, currencies adapted to user's locale
+
+**Agent Analytics:**
+- [ ] Conversation analytics — success rate, drop-off points, common failure patterns
+- [ ] User satisfaction — thumbs up/down feedback, integrated into chat CLI and API response
+- [ ] Tool usage analytics — which tools are called most, which fail most, avg latency
+- [ ] Cost analytics — token usage and estimated cost per agent/user/project over time
+- [ ] Dashboard views — `agentstack dashboard` or web UI for visual analytics
+
 ### Long Term
 
 **Fleet Management:**
