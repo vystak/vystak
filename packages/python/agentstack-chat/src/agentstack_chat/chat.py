@@ -140,30 +140,20 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
         async for event in client.stream_events(url, message, session_id, result=stream_result):
             if event.type == "token":
                 if status_line_shown:
-                    # Clear the status line
                     console.print(" " * 60, end="\r")
-                    console.print(f"[agent]{agent_name}[/agent]")
                     status_line_shown = False
                 has_output = True
                 tokens_buf.append(event.token)
-                # Write raw token to stdout for real-time feel
-                sys.stdout.write(event.token)
-                sys.stdout.flush()
 
             elif event.type == "tool_call_start":
                 if status_line_shown:
                     console.print(" " * 60, end="\r")
                     status_line_shown = False
-                if has_output:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-                    has_output = False
                 console.print(f"[dim]  > calling {event.tool}...[/dim]")
 
             elif event.type == "tool_result":
                 result_preview = event.result[:200] + "..." if len(event.result) > 200 else event.result
                 console.print(f"[dim]  > {event.tool}:[/dim]")
-                # Render tool result as markdown so **bold** etc works
                 from rich.padding import Padding
                 console.print(Padding(Markdown(result_preview), (0, 0, 0, 4)))
                 console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
@@ -174,8 +164,8 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
                     console.print(" " * 60, end="\r")
                     status_line_shown = False
                 if has_output:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
+                    console.print(f"[agent]{agent_name}[/agent]")
+                    console.print(Markdown("".join(tokens_buf)))
 
         if not has_output:
             if status_line_shown:
