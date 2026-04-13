@@ -6,6 +6,7 @@ from agentstack.schema.mcp import McpServer
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
 from agentstack.schema.secret import Secret
+from agentstack.schema.service import Postgres, Redis
 from agentstack.schema.skill import Skill
 from agentstack.schema.workspace import Workspace
 
@@ -84,3 +85,40 @@ class TestAgentHashTree:
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
         assert tree1.secrets != tree2.secrets
+
+
+class TestAgentHashTreeServices:
+    def test_sessions_change_detected(self):
+        docker = Provider(name="docker", type="docker")
+        agent1 = make_agent()
+        agent2 = make_agent(sessions=Postgres(provider=docker))
+        tree1 = hash_agent(agent1)
+        tree2 = hash_agent(agent2)
+        assert tree1.sessions != tree2.sessions
+        assert tree1.root != tree2.root
+
+    def test_memory_change_detected(self):
+        docker = Provider(name="docker", type="docker")
+        agent1 = make_agent()
+        agent2 = make_agent(memory=Postgres(provider=docker))
+        tree1 = hash_agent(agent1)
+        tree2 = hash_agent(agent2)
+        assert tree1.memory != tree2.memory
+        assert tree1.root != tree2.root
+
+    def test_services_change_detected(self):
+        docker = Provider(name="docker", type="docker")
+        agent1 = make_agent()
+        agent2 = make_agent(services=[Redis(name="cache", provider=docker)])
+        tree1 = hash_agent(agent1)
+        tree2 = hash_agent(agent2)
+        assert tree1.services != tree2.services
+        assert tree1.root != tree2.root
+
+    def test_sessions_vs_memory_different_hashes(self):
+        docker = Provider(name="docker", type="docker")
+        agent1 = make_agent(sessions=Postgres(provider=docker))
+        agent2 = make_agent(memory=Postgres(provider=docker))
+        tree1 = hash_agent(agent1)
+        tree2 = hash_agent(agent2)
+        assert tree1.root != tree2.root
