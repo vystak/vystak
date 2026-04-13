@@ -51,6 +51,17 @@ model:
   model_name: claude-sonnet-4-20250514
   parameters:
     temperature: 0.7
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
+sessions:
+  type: postgres
+  provider:
+    name: docker
+    type: docker
 skills:
   - name: support
     tools: [lookup_order, process_refund]
@@ -58,12 +69,6 @@ skills:
 channels:
   - name: api
     type: api
-resources:
-  - name: sessions
-    provider:
-      name: docker
-      type: docker
-    engine: postgres
 secrets:
   - name: ANTHROPIC_API_KEY
 ```
@@ -74,12 +79,15 @@ secrets:
 import agentstack as ast
 
 anthropic = ast.Provider(name="anthropic", type="anthropic")
+docker = ast.Provider(name="docker", type="docker")
 model = ast.Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
 
 agent = ast.Agent(
     name="support-bot",
     instructions="You are a helpful support agent.",
     model=model,
+    platform=ast.Platform(name="docker", type="docker", provider=docker),
+    sessions=ast.Postgres(provider=docker),
     skills=[ast.Skill(name="support", tools=["lookup_order", "process_refund"])],
     channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
 )
@@ -138,7 +146,7 @@ Features: streaming responses, tool call visibility, tab completion, persistent 
 
 ## Features
 
-- **Schema-driven** — Pydantic models for Agent, Skill, Channel, Resource, Workspace, Provider, Platform, McpServer, Secret
+- **Schema-driven** — Pydantic models for Agent, Skill, Channel, Service, Workspace, Provider, Platform, McpServer, Secret
 - **Hash-based change detection** — content-addressable hashing detects what changed, enables partial deploys
 - **LangChain/LangGraph adapter** — generates native LangGraph react agents with FastAPI harness
 - **Docker provider** — builds images, manages containers, provisions Postgres/SQLite resources
