@@ -1,6 +1,8 @@
 """Service models — typed infrastructure services for agents."""
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Discriminator, Tag
 
 from agentstack.schema.provider import Provider
 
@@ -22,22 +24,41 @@ class Service(BaseModel):
 class Postgres(Service):
     """PostgreSQL database service."""
 
+    type: Literal["postgres"] = "postgres"
     engine: str = "postgres"
 
 
 class Sqlite(Service):
     """SQLite database service."""
 
+    type: Literal["sqlite"] = "sqlite"
     engine: str = "sqlite"
 
 
 class Redis(Service):
     """Redis cache/store service."""
 
+    type: Literal["redis"] = "redis"
     engine: str = "redis"
 
 
 class Qdrant(Service):
     """Qdrant vector database service."""
 
+    type: Literal["qdrant"] = "qdrant"
     engine: str = "qdrant"
+
+
+def _service_discriminator(v):
+    if isinstance(v, dict):
+        return v.get("type", "postgres")
+    return getattr(v, "type", "postgres")
+
+
+ServiceType = Annotated[
+    Annotated[Postgres, Tag("postgres")]
+    | Annotated[Sqlite, Tag("sqlite")]
+    | Annotated[Redis, Tag("redis")]
+    | Annotated[Qdrant, Tag("qdrant")],
+    Discriminator(_service_discriminator),
+]

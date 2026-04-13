@@ -11,7 +11,7 @@ from agentstack.schema.model import Model
 from agentstack.schema.platform import Platform
 from agentstack.schema.resource import Resource
 from agentstack.schema.secret import Secret
-from agentstack.schema.service import Service
+from agentstack.schema.service import Service, ServiceType
 from agentstack.schema.skill import Skill
 from agentstack.schema.workspace import Workspace
 
@@ -31,11 +31,11 @@ class Agent(NamedModel):
     port: int | None = None
 
     # First-class agent concerns
-    sessions: Service | None = None
-    memory: Service | None = None
+    sessions: ServiceType | None = None
+    memory: ServiceType | None = None
 
     # Additional infrastructure services
-    services: list[Service] = []
+    services: list[ServiceType] = []
 
     # Deprecated: kept for backward compatibility
     resources: list[Resource] = []
