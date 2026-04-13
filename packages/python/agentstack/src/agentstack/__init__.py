@@ -6,8 +6,9 @@ __version__ = "0.1.0"
 from agentstack.schema import (
     Agent, Cache, Channel, ChannelProvider, ChannelType, Database, Embedding,
     Gateway, McpServer, McpTransport, Model, NamedModel, ObjectStore, Platform,
-    Provider, Queue, Resource, Secret, SessionStore, Skill, SkillRequirements,
-    SlackChannel, VectorStore, Workspace, WorkspaceType,
+    Postgres, Provider, Qdrant, Queue, Redis, Resource, Secret, Service,
+    SessionStore, Skill, SkillRequirements, SlackChannel, Sqlite, VectorStore,
+    Workspace, WorkspaceType,
 )
 
 # Hash engine
@@ -26,8 +27,9 @@ __all__ = [
     "__version__",
     "Agent", "Cache", "Channel", "ChannelProvider", "ChannelType", "Database",
     "Embedding", "Gateway", "McpServer", "McpTransport", "Model", "NamedModel",
-    "ObjectStore", "Platform", "Provider", "Queue", "Resource", "Secret",
-    "SessionStore", "Skill", "SkillRequirements", "SlackChannel", "VectorStore",
+    "ObjectStore", "Platform", "Postgres", "Provider", "Qdrant", "Queue",
+    "Redis", "Resource", "Secret", "Service", "SessionStore", "Skill",
+    "SkillRequirements", "SlackChannel", "Sqlite", "VectorStore",
     "Workspace", "WorkspaceType",
     "AgentHashTree", "hash_agent", "hash_dict", "hash_model",
     "dump_agent", "load_agent",

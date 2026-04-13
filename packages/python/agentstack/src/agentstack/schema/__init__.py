@@ -18,13 +18,15 @@ from agentstack.schema.resource import (
     VectorStore,
 )
 from agentstack.schema.secret import Secret
+from agentstack.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from agentstack.schema.skill import Skill, SkillRequirements
 from agentstack.schema.workspace import Workspace
 
 __all__ = [
     "Agent", "Cache", "Channel", "ChannelProvider", "ChannelType", "Database",
     "Embedding", "Gateway", "McpServer", "McpTransport", "Model", "NamedModel",
-    "ObjectStore", "Platform", "Provider", "Queue", "Resource", "Secret",
-    "SessionStore", "Skill", "SkillRequirements", "SlackChannel", "VectorStore",
+    "ObjectStore", "Platform", "Postgres", "Provider", "Qdrant", "Queue",
+    "Redis", "Resource", "Secret", "Service", "SessionStore", "Skill",
+    "SkillRequirements", "SlackChannel", "Sqlite", "VectorStore",
     "Workspace", "WorkspaceType",
 ]
