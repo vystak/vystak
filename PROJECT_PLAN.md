@@ -243,6 +243,18 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Shared cache across agents — common tool results available to all agents on the network
 - [ ] Cache configuration in agent schema (`cache: {strategy: semantic, ttl: 300}`)
 
+**Knowledge / RAG:**
+- [ ] Knowledge resource type — declare vector stores as agent resources (`engine: pinecone/chroma/qdrant/pgvector`)
+- [ ] Auto-provisioning — Docker provider spins up Chroma/Qdrant container or pgvector extension
+- [ ] Document ingestion — `agentstack ingest` CLI command to load docs into the knowledge base
+- [ ] Generated retrieval tool — adapter generates a `search_knowledge` tool wired to the vector store
+- [ ] Embedding model configuration — specify embedding provider/model in the knowledge resource
+- [ ] Chunking strategies — configurable chunk size, overlap, splitter (recursive, semantic)
+- [ ] Source tracking — retrieved chunks include source metadata (file, page, URL)
+- [ ] Multi-knowledge support — agent can have multiple knowledge bases (e.g., docs + codebase)
+- [ ] Knowledge sync — `agentstack sync` re-indexes changed documents
+- [ ] Hybrid search — combine vector similarity with keyword search (BM25)
+
 **Workspaces:**
 - [ ] Sandbox workspace — isolated execution environment (e2b, Daytona, Docker) for code execution agents
 - [ ] Persistent workspace — survives across sessions, agent accumulates work (S3, GCS, local volume)
