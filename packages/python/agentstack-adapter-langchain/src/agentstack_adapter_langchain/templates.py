@@ -99,8 +99,53 @@ def _get_session_store(agent: Agent):
     return None
 
 
+def _has_mcp_servers(agent: Agent) -> bool:
+    """Check if the agent has MCP servers configured."""
+    return bool(agent.mcp_servers)
+
+
+def _generate_mcp_config(agent: Agent) -> str:
+    """Generate MCP_SERVERS dict for MultiServerMCPClient."""
+    if not agent.mcp_servers:
+        return ""
+
+    lines = []
+    lines.append("")
+    lines.append("# MCP Server connections")
+    lines.append("MCP_SERVERS = {")
+
+    for mcp in agent.mcp_servers:
+        lines.append(f'    "{mcp.name}": {{')
+        transport_map = {"stdio": "stdio", "sse": "sse", "streamable_http": "http"}
+        transport = transport_map.get(mcp.transport.value, mcp.transport.value)
+        lines.append(f'        "transport": "{transport}",')
+        if mcp.command:
+            lines.append(f'        "command": "{mcp.command}",')
+        if mcp.args:
+            args_str = ", ".join(f'"{a}"' for a in mcp.args)
+            lines.append(f'        "args": [{args_str}],')
+        if mcp.url:
+            lines.append(f'        "url": "{mcp.url}",')
+        if mcp.env:
+            lines.append('        "env": {')
+            for k, v in mcp.env.items():
+                lines.append(f'            "{k}": "{v}",')
+            lines.append('        },')
+        if mcp.headers:
+            lines.append('        "headers": {')
+            for k, v in mcp.headers.items():
+                lines.append(f'            "{k}": "{v}",')
+            lines.append('        },')
+        lines.append('    },')
+
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, stub_tool_names: list[str] | None = None) -> str:
     """Generate a LangGraph agent definition file."""
+    has_mcp = _has_mcp_servers(agent)
     provider_type = agent.model.provider.type
     model_import, model_class = MODEL_PROVIDERS.get(
         provider_type, MODEL_PROVIDERS["anthropic"]
@@ -164,6 +209,9 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
         lines.append("from langgraph.checkpoint.memory import MemorySaver")
 
     lines.append("from langgraph.prebuilt import create_react_agent")
+    if has_mcp:
+        lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
+        lines.append(_generate_mcp_config(agent))
     lines.append("")
     lines.append("")
     lines.append(f"# Model")
@@ -225,12 +273,25 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
 
     # For persistent checkpointers, create agent via function (memory set at startup)
     if session_store and session_store.engine in ("postgres", "sqlite"):
+        lines.append(f"def create_agent(checkpointer, store=None, mcp_tools=None):")
+        lines.append(f"    all_tools = [{full_tools_list}]")
+        lines.append(f"    if mcp_tools:")
+        lines.append(f"        all_tools.extend(mcp_tools)")
         if system_prompt:
-            lines.append(f"def create_agent(checkpointer, store=None):")
-            lines.append(f"    return create_react_agent(model, [{full_tools_list}], checkpointer=checkpointer, store=store, prompt=system_prompt)")
+            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=system_prompt)")
         else:
-            lines.append(f"def create_agent(checkpointer, store=None):")
-            lines.append(f"    return create_react_agent(model, [{full_tools_list}], checkpointer=checkpointer, store=store)")
+            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store)")
+        lines.append("")
+        lines.append("agent = None  # created during server lifespan")
+    elif has_mcp:
+        lines.append(f"def create_agent(mcp_tools=None):")
+        lines.append(f"    all_tools = [{full_tools_list}]")
+        lines.append(f"    if mcp_tools:")
+        lines.append(f"        all_tools.extend(mcp_tools)")
+        if system_prompt:
+            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=memory, prompt=system_prompt)")
+        else:
+            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=memory)")
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
     else:
@@ -250,6 +311,7 @@ def generate_server_py(agent: Agent) -> str:
     """Generate a FastAPI harness server file."""
     session_store = _get_session_store(agent)
     uses_persistent = session_store and session_store.engine in ("postgres", "sqlite")
+    has_mcp = _has_mcp_servers(agent)
 
     if uses_persistent:
         saver_class = "AsyncPostgresSaver" if session_store.engine == "postgres" else "AsyncSqliteSaver"
@@ -261,7 +323,7 @@ def generate_server_py(agent: Agent) -> str:
             store_import = "from store import AsyncSqliteStore"
         agent_ref = "_agent"
     else:
-        agent_ref = "agent"
+        agent_ref = "_agent"
 
     lines = []
     lines.append(f'"""AgentStack harness server for {agent.name}."""')
@@ -276,34 +338,82 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
 
     if uses_persistent:
+        # Case 1: persistent + MCP  or  Case 2: persistent + no MCP
         lines.append("from contextlib import asynccontextmanager")
         lines.append(f"from langgraph.checkpoint.{saver_module} import {saver_class}")
         lines.append(store_import)
+        if has_mcp:
+            lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
         lines.append("")
-        lines.append("from agent import create_agent, DB_URI")
+        if has_mcp:
+            lines.append("from agent import create_agent, DB_URI, MCP_SERVERS")
+        else:
+            lines.append("from agent import create_agent, DB_URI")
         lines.append("")
         lines.append("")
         lines.append("_agent = None")
         lines.append("_store = None")
+        if has_mcp:
+            lines.append("_mcp_client = None")
         lines.append("")
         lines.append("")
         lines.append("@asynccontextmanager")
         lines.append("async def lifespan(app):")
-        lines.append("    global _agent, _store")
-        if session_store.engine == "postgres":
-            lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-            lines.append(f"               {store_class}.from_conn_string(DB_URI) as store:")
+        if has_mcp:
+            lines.append("    global _agent, _store, _mcp_client")
         else:
-            lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-            lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
-        lines.append("        await checkpointer.setup()")
-        lines.append("        _store = store")
-        lines.append("        _agent = create_agent(checkpointer, store=store)")
+            lines.append("    global _agent, _store")
+        if has_mcp:
+            lines.append("    async with MultiServerMCPClient(MCP_SERVERS) as mcp_client:")
+            lines.append("        _mcp_client = mcp_client")
+            if session_store.engine == "postgres":
+                lines.append(f"        async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"                   {store_class}.from_conn_string(DB_URI) as store:")
+            else:
+                lines.append(f"        async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"                   {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
+            lines.append("            await checkpointer.setup()")
+            lines.append("            _store = store")
+            lines.append("            _agent = create_agent(checkpointer, store=store, mcp_tools=await mcp_client.get_tools())")
+            lines.append("            yield")
+        else:
+            if session_store.engine == "postgres":
+                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"               {store_class}.from_conn_string(DB_URI) as store:")
+            else:
+                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
+            lines.append("        await checkpointer.setup()")
+            lines.append("        _store = store")
+            lines.append("        _agent = create_agent(checkpointer, store=store)")
+            lines.append("        yield")
+        lines.append("")
+        lines.append("")
+        lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
+    elif has_mcp:
+        # Case 3: not persistent + MCP — needs new lifespan
+        lines.append("from contextlib import asynccontextmanager")
+        lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
+        lines.append("")
+        lines.append("from agent import create_agent, MCP_SERVERS")
+        lines.append("")
+        lines.append("")
+        lines.append("_agent = None")
+        lines.append("_mcp_client = None")
+        lines.append("")
+        lines.append("")
+        lines.append("@asynccontextmanager")
+        lines.append("async def lifespan(app):")
+        lines.append("    global _agent, _mcp_client")
+        lines.append("    async with MultiServerMCPClient(MCP_SERVERS) as mcp_client:")
+        lines.append("        _mcp_client = mcp_client")
+        lines.append("        _agent = create_agent(mcp_tools=await mcp_client.get_tools())")
         lines.append("        yield")
         lines.append("")
         lines.append("")
         lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
     else:
+        # Case 4: not persistent + no MCP — unchanged
         lines.append("from agent import agent")
         lines.append("_agent = agent  # alias for A2A handlers")
         lines.append("")
@@ -543,13 +653,17 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     if tool_reqs:
         tool_deps = "\n" + tool_reqs
 
+    mcp_pkg = ""
+    if agent.mcp_servers:
+        mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
+
     return dedent(f"""\
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
-        sse-starlette>=2.0{checkpoint_pkg}{tool_deps}
+        sse-starlette>=2.0{checkpoint_pkg}{mcp_pkg}{tool_deps}
     """)
 
 
