@@ -14,6 +14,7 @@ class Service(BaseModel):
     provider: Provider | None = None
     connection_string_env: str | None = None
     config: dict = {}
+    depends_on: list[str] = []
 
     @property
     def is_managed(self) -> bool:
