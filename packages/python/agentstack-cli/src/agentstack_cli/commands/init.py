@@ -12,6 +12,17 @@ model:
     name: anthropic
     type: anthropic
   model_name: claude-sonnet-4-20250514
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
+sessions:
+  type: postgres
+  provider:
+    name: docker
+    type: docker
 skills:
   - name: assistant
     tools: []
@@ -19,6 +30,8 @@ skills:
 channels:
   - name: api
     type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
 """
 
 
