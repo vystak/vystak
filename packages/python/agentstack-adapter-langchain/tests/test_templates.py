@@ -4,7 +4,8 @@ import pytest
 
 from agentstack.schema.agent import Agent
 from agentstack.schema.channel import Channel
-from agentstack.schema.common import ChannelType
+from agentstack.schema.common import ChannelType, McpTransport
+from agentstack.schema.mcp import McpServer
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
 from agentstack.schema.resource import SessionStore
@@ -320,3 +321,82 @@ class TestA2AInServer:
     def test_server_a2a_sqlite_parseable(self, sqlite_agent):
         code = generate_server_py(sqlite_agent)
         python_ast.parse(code)
+
+
+@pytest.fixture()
+def mcp_agent(anthropic_provider):
+    return Agent(
+        name="mcp-bot",
+        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        mcp_servers=[
+            McpServer(name="filesystem", transport=McpTransport.STDIO, command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/data"]),
+            McpServer(name="remote", transport=McpTransport.STREAMABLE_HTTP, url="http://example.com/mcp", headers={"Authorization": "Bearer token"}),
+        ],
+    )
+
+
+@pytest.fixture()
+def mcp_agent_with_resources(anthropic_provider):
+    docker_provider = Provider(name="docker", type="docker")
+    return Agent(
+        name="mcp-pg-bot",
+        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        mcp_servers=[
+            McpServer(name="filesystem", transport=McpTransport.STDIO, command="npx", args=["-y", "@modelcontextprotocol/server-filesystem"]),
+        ],
+        resources=[SessionStore(name="sessions", provider=docker_provider, engine="postgres")],
+    )
+
+
+class TestMCPIntegration:
+    def test_mcp_config_generated(self, mcp_agent):
+        code = generate_agent_py(mcp_agent)
+        assert "MCP_SERVERS" in code
+        assert '"filesystem"' in code
+        assert '"remote"' in code
+
+    def test_mcp_transport_mapping(self, mcp_agent):
+        code = generate_agent_py(mcp_agent)
+        assert '"transport": "stdio"' in code
+        assert '"transport": "http"' in code
+
+    def test_mcp_import(self, mcp_agent):
+        code = generate_agent_py(mcp_agent)
+        assert "MultiServerMCPClient" in code
+
+    def test_mcp_tools_in_create_agent(self, mcp_agent):
+        code = generate_agent_py(mcp_agent)
+        assert "mcp_tools" in code
+
+    def test_mcp_lifespan_in_server(self, mcp_agent):
+        code = generate_server_py(mcp_agent)
+        assert "MultiServerMCPClient" in code
+        assert "mcp_tools" in code
+
+    def test_mcp_requirements(self, mcp_agent):
+        reqs = generate_requirements_txt(mcp_agent)
+        assert "langchain-mcp-adapters" in reqs
+
+    def test_no_mcp_unchanged(self, openai_agent):
+        code = generate_agent_py(openai_agent)
+        assert "MCP_SERVERS" not in code
+        assert "MultiServerMCPClient" not in code
+
+    def test_mcp_agent_parseable(self, mcp_agent):
+        code = generate_agent_py(mcp_agent)
+        python_ast.parse(code)
+
+    def test_mcp_server_parseable(self, mcp_agent):
+        code = generate_server_py(mcp_agent)
+        python_ast.parse(code)
+
+    def test_mcp_with_resources_agent_parseable(self, mcp_agent_with_resources):
+        code = generate_agent_py(mcp_agent_with_resources)
+        python_ast.parse(code)
+        assert "MCP_SERVERS" in code
+        assert "mcp_tools" in code
+
+    def test_mcp_with_resources_server_parseable(self, mcp_agent_with_resources):
+        code = generate_server_py(mcp_agent_with_resources)
+        python_ast.parse(code)
+        assert "MultiServerMCPClient" in code
