@@ -3,7 +3,7 @@
 import click
 
 from agentstack_cli.loader import find_agent_file, load_agent_from_file
-from agentstack_provider_docker import DockerProvider
+from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
@@ -11,12 +11,17 @@ from agentstack_provider_docker import DockerProvider
 @click.option("--name", "agent_name", default=None, help="Agent name (alternative to --file)")
 def status(file_path, agent_name):
     """Show the status of a deployed agent."""
+    agent = None
     if agent_name is None:
         path = find_agent_file(file=file_path)
         agent = load_agent_from_file(path)
         agent_name = agent.name
 
-    provider = DockerProvider()
+    if agent:
+        provider = get_provider(agent)
+    else:
+        from agentstack_provider_docker import DockerProvider
+        provider = DockerProvider()
     agent_status = provider.status(agent_name)
 
     click.echo(f"Agent: {agent_name}")

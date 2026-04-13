@@ -16,8 +16,8 @@ SAMPLE_AGENT_YAML = {
 }
 
 
-@patch("agentstack_cli.commands.plan.DockerProvider")
-def test_plan_new(mock_provider_cls, tmp_path):
+@patch("agentstack_cli.commands.plan.get_provider")
+def test_plan_new(mock_get_provider, tmp_path):
     from agentstack.providers.base import DeployPlan
 
     mock_provider = MagicMock()
@@ -29,7 +29,7 @@ def test_plan_new(mock_provider_cls, tmp_path):
         target_hash="abc123",
         changes={},
     )
-    mock_provider_cls.return_value = mock_provider
+    mock_get_provider.return_value = mock_provider
 
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
@@ -42,8 +42,8 @@ def test_plan_new(mock_provider_cls, tmp_path):
     assert "Create new deployment" in result.output
 
 
-@patch("agentstack_cli.commands.plan.DockerProvider")
-def test_plan_up_to_date(mock_provider_cls, tmp_path):
+@patch("agentstack_cli.commands.plan.get_provider")
+def test_plan_up_to_date(mock_get_provider, tmp_path):
     from agentstack.providers.base import DeployPlan
 
     mock_provider = MagicMock()
@@ -55,7 +55,7 @@ def test_plan_up_to_date(mock_provider_cls, tmp_path):
         target_hash="abc123",
         changes={},
     )
-    mock_provider_cls.return_value = mock_provider
+    mock_get_provider.return_value = mock_provider
 
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
@@ -67,8 +67,8 @@ def test_plan_up_to_date(mock_provider_cls, tmp_path):
     assert "up to date" in result.output.lower()
 
 
-@patch("agentstack_cli.commands.apply.DockerProvider")
-def test_apply_success(mock_provider_cls, tmp_path):
+@patch("agentstack_cli.commands.apply.get_provider")
+def test_apply_success(mock_get_provider, tmp_path):
     from agentstack.providers.base import DeployPlan, DeployResult
 
     mock_provider = MagicMock()
@@ -86,7 +86,7 @@ def test_apply_success(mock_provider_cls, tmp_path):
         hash="abc123",
         message="Deployed",
     )
-    mock_provider_cls.return_value = mock_provider
+    mock_get_provider.return_value = mock_provider
 
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
@@ -98,7 +98,7 @@ def test_apply_success(mock_provider_cls, tmp_path):
     assert "Deployed" in result.output
 
 
-@patch("agentstack_cli.commands.destroy.DockerProvider")
+@patch("agentstack_provider_docker.DockerProvider")
 def test_destroy_success(mock_provider_cls):
     mock_provider = MagicMock()
     mock_provider_cls.return_value = mock_provider
@@ -111,7 +111,7 @@ def test_destroy_success(mock_provider_cls):
     mock_provider.destroy.assert_called_once_with("test-bot", include_resources=False)
 
 
-@patch("agentstack_cli.commands.status.DockerProvider")
+@patch("agentstack_provider_docker.DockerProvider")
 def test_status_running(mock_provider_cls):
     from agentstack.providers.base import AgentStatus
 
@@ -132,7 +132,7 @@ def test_status_running(mock_provider_cls):
     assert "32768" in result.output
 
 
-@patch("agentstack_cli.commands.status.DockerProvider")
+@patch("agentstack_provider_docker.DockerProvider")
 def test_status_not_found(mock_provider_cls):
     from agentstack.providers.base import AgentStatus
 
