@@ -11,7 +11,7 @@ from agentstack.schema.model import Model
 from agentstack.schema.platform import Platform
 from agentstack.schema.resource import Resource
 from agentstack.schema.secret import Secret
-from agentstack.schema.service import Service, ServiceType
+from agentstack.schema.service import ServiceType
 from agentstack.schema.skill import Skill
 from agentstack.schema.workspace import Workspace
 
