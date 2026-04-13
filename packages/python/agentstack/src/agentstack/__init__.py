@@ -23,6 +23,13 @@ from agentstack.providers import (
     FrameworkAdapter, GeneratedCode, PlatformProvider, ValidationError,
 )
 
+# Provisioning engine
+from agentstack.provisioning import (
+    CommandHealthCheck, CycleError, HealthCheck, HttpHealthCheck,
+    NoopHealthCheck, Provisionable, ProvisionError, ProvisionGraph,
+    ProvisionResult, TcpHealthCheck,
+)
+
 __all__ = [
     "__version__",
     "Agent", "Cache", "Channel", "ChannelProvider", "ChannelType", "Database",
@@ -35,4 +42,7 @@ __all__ = [
     "dump_agent", "load_agent",
     "AgentStatus", "ChannelAdapter", "DeployPlan", "DeployResult",
     "FrameworkAdapter", "GeneratedCode", "PlatformProvider", "ValidationError",
+    "CommandHealthCheck", "CycleError", "HealthCheck", "HttpHealthCheck",
+    "NoopHealthCheck", "Provisionable", "ProvisionError", "ProvisionGraph",
+    "ProvisionResult", "TcpHealthCheck",
 ]
