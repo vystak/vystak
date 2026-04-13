@@ -6,6 +6,7 @@ from agentstack.providers.base import DeployPlan, GeneratedCode
 from agentstack.schema.agent import Agent
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
+from agentstack.schema.service import Postgres
 
 from agentstack_provider_docker.provider import DockerProvider
 
@@ -147,6 +148,24 @@ class TestDestroy:
         client, _ = mock_docker_client
         client.containers.get.side_effect = not_found_error("not found")
         provider.destroy("test-bot")  # should not raise
+
+
+class TestBuildEnvWithServices:
+    def test_sessions_connection_string(self, provider, mock_docker_client):
+        docker_prov = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="test-bot",
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
+            sessions=Postgres(provider=docker_prov),
+        )
+        provider.set_agent(agent)
+        provider._resource_info = [{"engine": "postgres", "connection_string": "postgresql://test"}]
+        env = provider._build_env()
+        assert env.get("SESSION_STORE_URL") == "postgresql://test"
 
 
 class TestStatus:
