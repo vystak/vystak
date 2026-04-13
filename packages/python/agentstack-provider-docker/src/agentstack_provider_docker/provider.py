@@ -16,7 +16,6 @@ from agentstack.providers.base import (
 )
 from agentstack.schema.agent import Agent
 from agentstack.schema.channel import SlackChannel
-from agentstack.schema.resource import SessionStore
 from agentstack_provider_docker.gateway import (
     build_gateway_image,
     destroy_gateway,
@@ -77,6 +76,23 @@ class DockerProvider(PlatformProvider):
         except docker.errors.NotFound:
             return None
 
+    def _all_services(self) -> list:
+        """Collect all services from sessions, memory, services, and legacy resources."""
+        from agentstack.schema.service import Service
+        result = []
+        if self._agent:
+            if self._agent.sessions and isinstance(self._agent.sessions, Service):
+                result.append(self._agent.sessions)
+            if self._agent.memory and isinstance(self._agent.memory, Service):
+                result.append(self._agent.memory)
+            result.extend(self._agent.services)
+            # Legacy fallback: if no new-style services, use resources
+            if not result:
+                for resource in self._agent.resources:
+                    if resource.engine in ("postgres", "sqlite"):
+                        result.append(resource)
+        return result
+
     def _build_env(self) -> dict[str, str]:
         env = {}
         if self._agent:
@@ -84,9 +100,16 @@ class DockerProvider(PlatformProvider):
                 value = os.environ.get(secret.name)
                 if value:
                     env[secret.name] = value
+            # Connection strings from provisioned resources
             for info in self._resource_info:
                 if info["engine"] in ("postgres", "sqlite"):
                     env["SESSION_STORE_URL"] = info["connection_string"]
+            # BYO connection strings from services
+            for svc in self._all_services():
+                if hasattr(svc, "connection_string_env") and svc.connection_string_env:
+                    value = os.environ.get(svc.connection_string_env)
+                    if value:
+                        env["SESSION_STORE_URL"] = value
         return env
 
     def _build_volumes(self) -> dict:
@@ -221,13 +244,13 @@ class DockerProvider(PlatformProvider):
             # 1. Ensure network
             network = ensure_network(self._client)
 
-            # 2. Provision resources
+            # 2. Provision services (sessions, memory, etc.)
             self._resource_info = []
             if self._agent:
-                for resource in self._agent.resources:
-                    if isinstance(resource, SessionStore) or resource.engine in ("postgres", "sqlite"):
+                for svc in self._all_services():
+                    if svc.engine in ("postgres", "sqlite"):
                         info = provision_resource(
-                            self._client, resource, network, SECRETS_PATH
+                            self._client, svc, network, SECRETS_PATH
                         )
                         self._resource_info.append(info)
 
@@ -313,8 +336,8 @@ class DockerProvider(PlatformProvider):
             container.remove()
 
         if include_resources and self._agent:
-            for resource in self._agent.resources:
-                destroy_resource(self._client, resource.name)
+            for svc in self._all_services():
+                destroy_resource(self._client, svc.name)
             self.destroy_gateways()
 
     def status(self, agent_name: str) -> AgentStatus:
