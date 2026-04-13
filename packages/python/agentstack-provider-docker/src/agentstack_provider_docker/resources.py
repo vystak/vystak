@@ -29,20 +29,57 @@ def provision_resource(
         raise ValueError(f"Unsupported session store engine: {resource.engine}")
 
 
+def _wait_for_postgres(client, container_name: str, timeout: int = 60) -> None:
+    """Wait until postgres is ready to accept connections."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            container = client.containers.get(container_name)
+            result = container.exec_run(
+                ["pg_isready", "-U", "agentstack", "-d", "agentstack"],
+                demux=False,
+            )
+            if result.exit_code == 0:
+                return
+        except Exception:
+            pass
+        time.sleep(1)
+    raise TimeoutError(f"Postgres container {container_name} did not become ready within {timeout}s")
+
+
+def _sync_postgres_password(client, container_name: str, password: str) -> None:
+    """Ensure the postgres user password matches the stored secret."""
+    try:
+        container = client.containers.get(container_name)
+        sql = f"ALTER USER agentstack WITH PASSWORD '{password}';"
+        container.exec_run(
+            ["psql", "-U", "agentstack", "-d", "agentstack", "-c", sql],
+            demux=False,
+        )
+    except Exception:
+        pass
+
+
 def _provision_postgres(client, resource: Resource, network, secrets_path: Path) -> dict:
     container_name = _resource_container_name(resource.name)
     volume_name = _volume_name(resource.name)
 
+    password = get_resource_password(resource.name, secrets_path)
+
     existing = client.containers.list(filters={"name": container_name}, all=True)
     if existing:
-        password = get_resource_password(resource.name, secrets_path)
+        container = existing[0]
+        if container.status != "running":
+            container.start()
+        _wait_for_postgres(client, container_name)
+        _sync_postgres_password(client, container_name, password)
         return {
             "engine": "postgres",
             "container_name": container_name,
             "connection_string": _postgres_conn_string(resource.name, password),
         }
 
-    password = get_resource_password(resource.name, secrets_path)
     client.containers.run(
         "postgres:16-alpine",
         name=container_name,
@@ -59,6 +96,8 @@ def _provision_postgres(client, resource: Resource, network, secrets_path: Path)
             "agentstack.engine": "postgres",
         },
     )
+
+    _wait_for_postgres(client, container_name)
 
     return {
         "engine": "postgres",
