@@ -9,6 +9,7 @@ from agentstack.schema.mcp import McpServer
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
 from agentstack.schema.resource import SessionStore
+from agentstack.schema.service import Postgres, Sqlite
 from agentstack.schema.skill import Skill
 
 from agentstack_adapter_langchain.templates import (
@@ -346,6 +347,39 @@ def mcp_agent_with_resources(anthropic_provider):
         ],
         resources=[SessionStore(name="sessions", provider=docker_provider, engine="postgres")],
     )
+
+
+class TestSessionsField:
+    """Tests that the adapter reads from agent.sessions (new API)."""
+
+    def test_postgres_from_sessions_field(self, anthropic_provider):
+        docker = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="bot",
+            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            sessions=Postgres(provider=docker),
+        )
+        code = generate_server_py(agent)
+        assert "PostgresSaver" in code
+
+    def test_sqlite_from_sessions_field(self, anthropic_provider):
+        docker = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="bot",
+            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            sessions=Sqlite(provider=docker),
+        )
+        code = generate_server_py(agent)
+        assert "SqliteSaver" in code or "store" in code.lower()
+
+    def test_bring_your_own_sessions(self, anthropic_provider):
+        agent = Agent(
+            name="bot",
+            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            sessions=Postgres(connection_string_env="DATABASE_URL"),
+        )
+        code = generate_server_py(agent)
+        assert "PostgresSaver" in code
 
 
 class TestMCPIntegration:

@@ -88,12 +88,17 @@ def _collect_system_prompt(agent: Agent) -> str:
 
 
 def _get_session_store(agent: Agent):
-    """Find a SessionStore resource in the agent, if any."""
+    """Find the session store for the agent.
+
+    Prefers agent.sessions (new API), falls back to agent.resources (deprecated).
+    """
+    if agent.sessions is not None:
+        return agent.sessions
+
     from agentstack.schema.resource import SessionStore
     for resource in agent.resources:
         if isinstance(resource, SessionStore):
             return resource
-        # YAML-loaded resources are base Resource — match by engine
         if resource.engine in ("postgres", "sqlite", "redis"):
             return resource
     return None
