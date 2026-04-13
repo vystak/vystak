@@ -12,3 +12,4 @@ class McpServer(NamedModel):
     args: list[str] | None = None
     env: dict | None = None
     headers: dict | None = None
+    install: str | None = None
