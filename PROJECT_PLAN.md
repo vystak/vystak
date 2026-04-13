@@ -243,6 +243,28 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Shared cache across agents — common tool results available to all agents on the network
 - [ ] Cache configuration in agent schema (`cache: {strategy: semantic, ttl: 300}`)
 
+**Agentic Workflows (Claude Code-style):**
+- [ ] Agent mode: `reactive` (current — respond to single messages) vs `autonomous` (plan-execute loop)
+- [ ] Task planning — agent decomposes complex requests into a step-by-step plan before executing
+- [ ] Plan approval — agent presents plan to user, waits for approval via `interrupt()` / `input_required`
+- [ ] Clarification questions — agent asks follow-up questions when requirements are ambiguous (maps to A2A `input_required`)
+- [ ] Step-by-step execution — agent executes plan items sequentially, reporting progress via streaming
+- [ ] Checkpoint gates — configurable pause points between steps for user review/approval
+- [ ] Plan revision — user can modify the plan mid-execution, agent adapts
+- [ ] Parallel step execution — independent plan steps run concurrently (reuse parallel tool call infra)
+- [ ] Progress tracking — plan state persisted in checkpointer (survives restarts)
+- [ ] Configurable autonomy levels:
+  - `full` — agent plans and executes without pausing (fire-and-forget)
+  - `plan-approval` — agent plans, pauses for approval, then executes autonomously
+  - `step-approval` — agent pauses before each step for approval
+  - `supervised` — agent pauses after each step showing results, waits for "continue"
+- [ ] Generated workflow graph — adapter generates a LangGraph StateGraph with planner → executor → reviewer nodes (instead of simple `create_react_agent`)
+- [ ] Task decomposition tools — built-in `create_plan`, `update_plan`, `mark_step_complete` tools
+- [ ] Agent schema field: `mode: autonomous` with `autonomy: plan-approval` configuration
+- [ ] Streaming plan updates — client sees plan creation, step progress, and completion via SSE events
+- [ ] Multi-agent delegation — autonomous agent can delegate sub-tasks to specialist agents via A2A
+- [ ] Failure recovery — if a step fails, agent can retry, skip, or revise the plan
+
 **Knowledge / RAG:**
 - [ ] Knowledge resource type — declare vector stores as agent resources (`engine: pinecone/chroma/qdrant/pgvector`)
 - [ ] Auto-provisioning — Docker provider spins up Chroma/Qdrant container or pgvector extension
