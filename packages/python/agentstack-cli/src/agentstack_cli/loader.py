@@ -4,8 +4,16 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from agentstack.schema.agent import Agent
-from agentstack.schema.loader import load_agent
+# Ensure the real agentstack package (not a local agentstack.py) is imported
+# first by temporarily stripping the cwd sentinel from sys.path.
+_cwd_entries = [p for p in sys.path if p in ("", ".")]
+for _e in _cwd_entries:
+    sys.path.remove(_e)
+try:
+    from agentstack.schema.agent import Agent
+    from agentstack.schema.loader import load_agent
+finally:
+    sys.path = _cwd_entries + sys.path
 
 CONVENTION_FILES = ["agentstack.yaml", "agentstack.yml", "agentstack.py"]
 
@@ -41,7 +49,17 @@ def load_agent_from_file(path: Path) -> Agent:
         spec = importlib.util.spec_from_file_location("_agentstack_def", str(path))
         module = importlib.util.module_from_spec(spec)
         sys.modules["_agentstack_def"] = module
-        spec.loader.exec_module(module)
+        # Temporarily remove the file's directory from sys.path so that a file
+        # named agentstack.py does not shadow the real agentstack package.
+        file_dir = str(path.parent.resolve())
+        removed = file_dir in sys.path
+        if removed:
+            sys.path.remove(file_dir)
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            if removed:
+                sys.path.insert(0, file_dir)
         del sys.modules["_agentstack_def"]
 
         if not hasattr(module, "agent"):
