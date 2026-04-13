@@ -10,6 +10,7 @@ from agentstack.schema.common import ChannelType
 from agentstack.schema.loader import dump_agent, load_agent
 from agentstack.schema.model import Model
 from agentstack.schema.provider import Provider
+from agentstack.schema.service import Postgres, Redis, Sqlite
 from agentstack.schema.skill import Skill
 
 
@@ -92,3 +93,124 @@ class TestDumpAgent:
         dump_agent(agent, path)
         restored = load_agent(path)
         assert restored == agent
+
+
+class TestLoadAgentWithServices:
+    def test_load_sessions_postgres(self, tmp_path):
+        data = {
+            "name": "bot",
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
+            "sessions": {
+                "type": "postgres",
+                "provider": {"name": "docker", "type": "docker"},
+            },
+        }
+        path = tmp_path / "agent.yaml"
+        path.write_text(yaml.dump(data))
+        agent = load_agent(path)
+        assert agent.sessions is not None
+        assert isinstance(agent.sessions, Postgres)
+        assert agent.sessions.engine == "postgres"
+        assert agent.sessions.name == "sessions"
+
+    def test_load_sessions_sqlite(self, tmp_path):
+        data = {
+            "name": "bot",
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
+            "sessions": {
+                "type": "sqlite",
+                "provider": {"name": "docker", "type": "docker"},
+            },
+        }
+        path = tmp_path / "agent.yaml"
+        path.write_text(yaml.dump(data))
+        agent = load_agent(path)
+        assert isinstance(agent.sessions, Sqlite)
+
+    def test_load_bring_your_own(self, tmp_path):
+        data = {
+            "name": "bot",
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
+            "sessions": {
+                "type": "postgres",
+                "connection_string_env": "DATABASE_URL",
+            },
+        }
+        path = tmp_path / "agent.yaml"
+        path.write_text(yaml.dump(data))
+        agent = load_agent(path)
+        assert agent.sessions is not None
+        assert agent.sessions.is_managed is False
+        assert agent.sessions.connection_string_env == "DATABASE_URL"
+
+    def test_load_services_list(self, tmp_path):
+        data = {
+            "name": "bot",
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
+            "services": [
+                {
+                    "name": "cache",
+                    "type": "redis",
+                    "provider": {"name": "docker", "type": "docker"},
+                },
+            ],
+        }
+        path = tmp_path / "agent.yaml"
+        path.write_text(yaml.dump(data))
+        agent = load_agent(path)
+        assert len(agent.services) == 1
+        assert isinstance(agent.services[0], Redis)
+
+    def test_load_old_format_still_works(self, tmp_path):
+        data = {
+            "name": "bot",
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
+            "resources": [
+                {
+                    "name": "sessions",
+                    "provider": {"name": "docker", "type": "docker"},
+                    "engine": "postgres",
+                },
+            ],
+        }
+        path = tmp_path / "agent.yaml"
+        path.write_text(yaml.dump(data))
+        agent = load_agent(path)
+        assert len(agent.resources) == 1
+        assert agent.resources[0].engine == "postgres"
+
+    def test_roundtrip_with_sessions(self, tmp_path):
+        anthropic = Provider(name="anthropic", type="anthropic")
+        model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
+        docker = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="bot",
+            model=model,
+            sessions=Postgres(provider=docker),
+        )
+        path = tmp_path / "agent.yaml"
+        dump_agent(agent, path)
+        restored = load_agent(path)
+        assert restored.sessions is not None
+        assert restored.sessions.engine == "postgres"
+        assert restored.sessions.name == "sessions"
