@@ -9,11 +9,12 @@ from azure.mgmt.loganalytics.models import Workspace, WorkspaceSku
 class LogAnalyticsNode(Provisionable):
     """Creates a Log Analytics workspace and retrieves shared keys."""
 
-    def __init__(self, client, rg_name: str, workspace_name: str, location: str):
+    def __init__(self, client, rg_name: str, workspace_name: str, location: str, tags: dict | None = None):
         self._client = client
         self._rg_name = rg_name
         self._workspace_name = workspace_name
         self._location = location
+        self._tags = tags or {}
 
     @property
     def name(self) -> str:
@@ -31,6 +32,7 @@ class LogAnalyticsNode(Provisionable):
                 Workspace(
                     location=self._location,
                     sku=WorkspaceSku(name="PerGB2018"),
+                    tags=self._tags,
                 ),
             ).result()
 

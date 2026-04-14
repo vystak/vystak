@@ -237,14 +237,12 @@ class TestContainerAppNode:
         assert node.depends_on == ["aca-environment", "acr"]
 
     @patch.dict(os.environ, {"API_KEY": "key-val", "DB_PASS": "db-val"})
-    def test_provision(self, tmp_path):
+    @patch("agentstack_provider_azure.nodes.aca_app.subprocess.run")
+    def test_provision(self, mock_subprocess, tmp_path):
         node = self._make_node()
 
-        # Mock image build
-        mock_image = MagicMock()
-        mock_image.tag.return_value = True
-        node._docker_client.images.build.return_value = (mock_image, [])
-        node._docker_client.images.push.return_value = []
+        # Mock subprocess (docker login + docker buildx)
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
 
         # Mock ACA client
         app_result = MagicMock()
@@ -282,6 +280,8 @@ class TestContainerAppNode:
         assert result.info["fqdn"] == "my-agent.eastus.azurecontainerapps.io"
         assert result.info["url"] == "https://my-agent.eastus.azurecontainerapps.io"
         assert result.info["app_name"] == "my-agent"
+        # Verify subprocess was called for docker login and buildx
+        assert mock_subprocess.call_count == 2
 
     def test_health_check(self):
         node = self._make_node()

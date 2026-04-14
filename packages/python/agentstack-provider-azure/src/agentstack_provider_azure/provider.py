@@ -156,6 +156,7 @@ class AzureProvider(PlatformProvider):
                 rg_name=rg_name,
                 workspace_name=f"{agent_name}-logs",
                 location=location,
+                tags=tags,
             ))
 
             graph.add(ACRNode(
@@ -164,6 +165,7 @@ class AzureProvider(PlatformProvider):
                 registry_name=acr_name,
                 location=location,
                 existing=acr_existing,
+                tags=tags,
             ))
 
             graph.add(ACAEnvironmentNode(
@@ -172,6 +174,7 @@ class AzureProvider(PlatformProvider):
                 env_name=env_name,
                 location=location,
                 existing=env_existing,
+                tags=tags,
             ))
 
             graph.add(ContainerAppNode(
@@ -211,17 +214,113 @@ class AzureProvider(PlatformProvider):
                 message=f"Deployment failed: {e}",
             )
 
+    def list_resources(self, agent_name: str) -> list[dict]:
+        """List all Azure resources tagged for this agent. Returns list of {name, type, id}."""
+        cfg = self._platform_config()
+        credential = get_credential()
+        subscription_id = get_subscription_id(cfg)
+        rg_name = self._rg_name(agent_name)
+
+        from azure.mgmt.resource import ResourceManagementClient
+
+        resource_client = ResourceManagementClient(credential, subscription_id)
+
+        try:
+            tag_filter = f"tagName eq 'agentstack:agent' and tagValue eq '{agent_name}'"
+            resources = list(resource_client.resources.list_by_resource_group(
+                rg_name, filter=tag_filter,
+            ))
+        except Exception:
+            resources = []
+
+        result = []
+        for r in resources:
+            result.append({
+                "name": r.name,
+                "type": r.type,
+                "id": r.id,
+            })
+
+        # Include the RG itself if auto-created
+        if not cfg.get("resource_group"):
+            result.append({
+                "name": rg_name,
+                "type": "Microsoft.Resources/resourceGroups",
+                "id": f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}",
+            })
+
+        return result
+
     def destroy(self, agent_name: str, include_resources: bool = False) -> None:
         cfg = self._platform_config()
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
+        rg_name = self._rg_name(agent_name)
 
         from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
         aca_client = ContainerAppsAPIClient(credential, subscription_id)
-        rg_name = self._rg_name(agent_name)
 
-        aca_client.container_apps.begin_delete(rg_name, agent_name).result()
+        # Always delete the Container App
+        try:
+            aca_client.container_apps.begin_delete(rg_name, agent_name).result()
+        except Exception:
+            pass
+
+        if not include_resources:
+            return
+
+        # Tag-based cleanup: find and delete all tagged resources
+        from azure.mgmt.resource import ResourceManagementClient
+
+        resource_client = ResourceManagementClient(credential, subscription_id)
+
+        tag_filter = f"tagName eq 'agentstack:agent' and tagValue eq '{agent_name}'"
+        resources = list(resource_client.resources.list_by_resource_group(
+            rg_name, filter=tag_filter,
+        ))
+
+        # Delete in reverse dependency order
+        type_order = {
+            "microsoft.app/containerapps": 0,
+            "microsoft.app/managedenvironments": 1,
+            "microsoft.containerregistry/registries": 2,
+            "microsoft.operationalinsights/workspaces": 3,
+            "microsoft.network/virtualnetworks": 4,
+            "microsoft.dbforpostgresql/flexibleservers": 5,
+            "microsoft.keyvault/vaults": 6,
+        }
+
+        resources.sort(key=lambda r: type_order.get(r.type.lower(), 99))
+
+        for resource in resources:
+            try:
+                resource_client.resources.begin_delete_by_id(
+                    resource.id, api_version=self._api_version(resource.type),
+                ).result()
+            except Exception:
+                pass
+
+        # Delete auto-created RG
+        if not cfg.get("resource_group"):
+            try:
+                resource_client.resource_groups.begin_delete(rg_name).result()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _api_version(resource_type: str) -> str:
+        """Get the API version for a given Azure resource type."""
+        versions = {
+            "microsoft.app/containerapps": "2024-03-01",
+            "microsoft.app/managedenvironments": "2024-03-01",
+            "microsoft.containerregistry/registries": "2023-07-01",
+            "microsoft.operationalinsights/workspaces": "2023-09-01",
+            "microsoft.network/virtualnetworks": "2024-01-01",
+            "microsoft.dbforpostgresql/flexibleservers": "2023-12-01-preview",
+            "microsoft.keyvault/vaults": "2023-07-01",
+        }
+        return versions.get(resource_type.lower(), "2024-01-01")
 
     def status(self, agent_name: str) -> AgentStatus:
         try:
