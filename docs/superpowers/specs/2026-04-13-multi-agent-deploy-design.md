@@ -22,48 +22,133 @@ assistant = ast.Agent(name="assistant-agent", model=model, platform=platform, ..
 
 `id(weather.platform) == id(time_agent.platform)` → same infra.
 
-### YAML: Config Equality
+### YAML: Named References
+
+A single YAML file declares providers, platforms, and models at the top, then agents reference them by name:
+
+```yaml
+# agentstack.yaml — multi-agent definition
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: agentstack-multi-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure      # references providers.azure by name
+
+models:
+  minimax:
+    provider: anthropic  # references providers.anthropic by name
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.7
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    model: minimax       # references models.minimax by name
+    platform: aca        # references platforms.aca by name
+    skills:
+      - name: weather
+        tools: [get_weather]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
+
+  - name: time-agent
+    model: minimax
+    platform: aca
+    skills:
+      - name: time
+        tools: [get_time]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
+
+  - name: assistant-agent
+    model: minimax
+    platform: aca
+    skills:
+      - name: assistant
+        tools: [ask_weather_agent, ask_time_agent]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
+```
+
+Agents referencing the same platform name share infrastructure. The loader resolves string references to objects before building the provision graph.
+
+### YAML: Multiple Files
+
+Multiple YAML files can also be merged via CLI:
 
 ```bash
 agentstack apply weather/agentstack.yaml time/agentstack.yaml assistant/agentstack.yaml
 ```
 
-Each YAML declares its own provider/platform. The system groups agents whose provider+platform configs are structurally equal:
+When merging separate files, agents with structurally equal provider+platform configs are grouped together (same type, same config values → same infra).
+
+### YAML: Backward Compatibility
+
+The old single-agent YAML still works — no `providers`, `platforms`, `models`, or `agents` blocks needed:
 
 ```yaml
-# weather/agentstack.yaml
+# Old format — still valid
+name: my-bot
+model:
+  name: claude
+  provider: { name: anthropic, type: anthropic }
+  model_name: claude-sonnet-4-20250514
 platform:
-  name: aca
-  type: container-apps
-  provider:
-    name: azure
-    type: azure
-    config:
-      location: eastus2
-      resource_group: multi-rg
+  name: docker
+  type: docker
+  provider: { name: docker, type: docker }
+channels:
+  - name: api
+    type: api
 ```
 
-```yaml
-# time/agentstack.yaml — same provider+platform config
-platform:
-  name: aca
-  type: container-apps
-  provider:
-    name: azure
-    type: azure
-    config:
-      location: eastus2
-      resource_group: multi-rg
-```
-
-These two agents share infra because their platform provider configs are equal (same type, same location, same resource_group).
+The loader detects the format: if `agents` key exists → multi-agent. If `name` key exists at top level → single agent (legacy).
 
 ### Cross-Platform Deployment
 
-Agents in the same apply can target different platforms:
+Agents in the same file can target different platforms:
 
-```bash
-agentstack apply azure-bot/agentstack.yaml docker-bot/agentstack.yaml
+```yaml
+providers:
+  azure:
+    type: azure
+    config: { location: eastus2 }
+  docker:
+    type: docker
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+  local:
+    type: docker
+    provider: docker
+
+agents:
+  - name: cloud-bot
+    platform: aca
+    ...
+  - name: local-bot
+    platform: local
+    ...
 ```
 
 The system creates two groups — one for Azure, one for Docker — and deploys each independently.
@@ -119,16 +204,63 @@ Services also deduplicate. If two agents share the same sessions Postgres (same 
 
 ## Loader Changes
 
+### YAML Reference Resolution
+
+When the loader detects a multi-agent YAML (has `agents` key), it:
+
+1. Parses `providers` map → creates `Provider` objects keyed by name
+2. Parses `platforms` map → creates `Platform` objects, resolving `provider: azure` to the Provider object from step 1
+3. Parses `models` map → creates `Model` objects, resolving `provider: anthropic` to the Provider object from step 1
+4. Parses `agents` list → creates `Agent` objects, resolving `model: minimax` and `platform: aca` to objects from steps 2-3
+
+String references are resolved by name lookup. Unknown names raise a clear error: `"Unknown platform 'aca'. Defined platforms: docker, aca"`.
+
+Agents that reference the same platform name get the **same Python object** — so Python-side dedup via `id()` works identically for both Python and YAML definitions.
+
+```python
+def load_multi_agent_yaml(data: dict) -> list[Agent]:
+    """Load multi-agent YAML with named references."""
+    # 1. Providers
+    providers = {}
+    for name, cfg in data.get("providers", {}).items():
+        providers[name] = Provider(name=name, **cfg)
+
+    # 2. Platforms
+    platforms = {}
+    for name, cfg in data.get("platforms", {}).items():
+        provider_ref = cfg.pop("provider")
+        platforms[name] = Platform(name=name, provider=providers[provider_ref], **cfg)
+
+    # 3. Models
+    models = {}
+    for name, cfg in data.get("models", {}).items():
+        provider_ref = cfg.pop("provider")
+        models[name] = Model(name=name, provider=providers[provider_ref], **cfg)
+
+    # 4. Agents — resolve string refs to objects
+    agents = []
+    for agent_data in data.get("agents", []):
+        if isinstance(agent_data.get("model"), str):
+            agent_data["model"] = models[agent_data["model"]]
+        if isinstance(agent_data.get("platform"), str):
+            agent_data["platform"] = platforms[agent_data["platform"]]
+        agents.append(Agent.model_validate(agent_data))
+
+    return agents
+```
+
 ### Python Loader
 
 Currently finds one `agent` variable. Change to find **all** `Agent` instances:
 
 ```python
 def load_agents_from_file(path: Path) -> list[Agent]:
-    """Load all Agent instances from a Python file."""
+    """Load all Agent instances from a Python or YAML file."""
     if path.suffix in (".yaml", ".yml", ".json"):
-        agent = load_agent(path)
-        return [agent]
+        data = yaml.safe_load(path.read_text())
+        if "agents" in data:
+            return load_multi_agent_yaml(data)
+        return [Agent.model_validate(data)]
 
     if path.suffix == ".py":
         module = _import_module(path)
@@ -152,7 +284,10 @@ The old `load_agent_from_file()` stays for backward compat (returns the first ag
 # Single file (backward compat)
 agentstack apply
 
-# Multiple files
+# Single multi-agent YAML
+agentstack apply   # detects agents: list in agentstack.yaml
+
+# Multiple files (merged)
 agentstack apply weather/agentstack.yaml time/agentstack.yaml assistant/agentstack.yaml
 
 # Multiple directories (looks for agentstack.yaml in each)
@@ -308,23 +443,81 @@ agentstack apply
 # → Creates 1 RG, 1 ACR, 1 Log Analytics, 1 ACA Environment, 3 Container Apps
 ```
 
-## Example: Azure Multi-Agent (YAML)
+## Example: Azure Multi-Agent (Single YAML)
 
-```
-examples/azure-multi-agent-yaml/
-  weather/agentstack.yaml
-  weather/tools/get_weather.py
-  time/agentstack.yaml
-  time/tools/get_time.py
-  assistant/agentstack.yaml
-  assistant/tools/ask_weather_agent.py
-  assistant/tools/ask_time_agent.py
+```yaml
+# examples/azure-multi-agent/agentstack.yaml
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: agentstack-multi-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.7
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist. Use get_weather for real data.
+    model: minimax
+    platform: aca
+    skills:
+      - name: weather
+        tools: [get_weather]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist. Use get_time for current time.
+    model: minimax
+    platform: aca
+    skills:
+      - name: time
+        tools: [get_time]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
+
+  - name: assistant-agent
+    instructions: |
+      You are a helpful assistant.
+      Use ask_weather_agent for weather, ask_time_agent for time.
+    model: minimax
+    platform: aca
+    skills:
+      - name: assistant
+        tools: [ask_weather_agent, ask_time_agent]
+    channels:
+      - name: api
+        type: api
+    secrets:
+      - name: ANTHROPIC_API_KEY
 ```
 
 ```bash
-cd examples/azure-multi-agent-yaml
-agentstack apply weather/ time/ assistant/
-# → Detects matching provider+platform config, shares infra
+cd examples/azure-multi-agent
+agentstack apply
+# → Creates 1 RG, 1 ACR, 1 Log Analytics, 1 ACA Environment, 3 Container Apps
 ```
 
 ## A2A Agent Discovery
