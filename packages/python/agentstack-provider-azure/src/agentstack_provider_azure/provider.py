@@ -61,12 +61,18 @@ class AzureProvider(PlatformProvider):
         raw = cfg.get("registry", "")
         if raw:
             return raw.replace(".azurecr.io", "")
-        digest = hashlib.md5(agent_name.encode()).hexdigest()[:8]
+        # Derive from RG name so agents in the same RG share one registry
+        rg = self._rg_name(agent_name)
+        digest = hashlib.md5(rg.encode()).hexdigest()[:8]
         return f"agentstack{digest}"
 
     def _env_name(self, agent_name: str) -> str:
         cfg = self._platform_config()
-        return cfg.get("environment", f"agentstack-{agent_name}-env")
+        if cfg.get("environment"):
+            return cfg["environment"]
+        # Derive from RG name so agents in the same RG share an environment
+        rg = self._rg_name(agent_name)
+        return f"{rg}-env"
 
     def _tags(self, agent_name: str) -> dict:
         tags = {
@@ -154,7 +160,7 @@ class AzureProvider(PlatformProvider):
             graph.add(LogAnalyticsNode(
                 client=la_client,
                 rg_name=rg_name,
-                workspace_name=f"{agent_name}-logs",
+                workspace_name=f"{rg_name}-logs",
                 location=location,
                 tags=tags,
             ))
