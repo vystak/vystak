@@ -47,6 +47,7 @@ def apply(files, file_path):
         click.echo("OK")
 
         provider = get_provider(agent)
+        provider.set_agent(agent)
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
 
