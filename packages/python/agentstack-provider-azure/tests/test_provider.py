@@ -196,7 +196,7 @@ class TestAzureProviderConfigHelpers:
         provider = AzureProvider()
         agent = _make_agent("test-agent")
         provider.set_agent(agent)
-        assert provider._env_name("test-agent") == "agentstack-test-agent-env"
+        assert provider._env_name("test-agent") == "agentstack-test-agent-rg-env"
 
     def test_acr_name_strips_suffix(self):
         provider = AzureProvider()
