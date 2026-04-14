@@ -20,12 +20,14 @@ class ACAEnvironmentNode(Provisionable):
         env_name: str,
         location: str,
         existing: bool = False,
+        tags: dict | None = None,
     ):
         self._client = client
         self._rg_name = rg_name
         self._env_name = env_name
         self._location = location
         self._existing = existing
+        self._tags = tags or {}
 
     @property
     def name(self) -> str:
@@ -48,6 +50,7 @@ class ACAEnvironmentNode(Provisionable):
                     self._env_name,
                     ManagedEnvironment(
                         location=self._location,
+                        tags=self._tags,
                         app_logs_configuration=AppLogsConfiguration(
                             destination="log-analytics",
                             log_analytics_configuration=LogAnalyticsConfiguration(

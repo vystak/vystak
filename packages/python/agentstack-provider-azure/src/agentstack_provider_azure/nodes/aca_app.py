@@ -1,6 +1,7 @@
 """ContainerAppNode — builds, pushes, and deploys an agent as an Azure Container App."""
 
 import os
+import subprocess
 from pathlib import Path
 
 from agentstack.provisioning.health import HealthCheck, HttpHealthCheck, NoopHealthCheck
@@ -108,7 +109,6 @@ class ContainerAppNode(Provisionable):
             image_tag = f"{login_server}/{self._agent.name}:{self._plan.target_hash}"
 
             # Use docker buildx for cross-platform build + push in one step
-            import subprocess
             subprocess.run(
                 ["docker", "login", login_server,
                  "--username", acr_username, "--password-stdin"],

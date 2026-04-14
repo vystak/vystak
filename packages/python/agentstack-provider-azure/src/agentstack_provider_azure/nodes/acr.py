@@ -16,12 +16,14 @@ class ACRNode(Provisionable):
         registry_name: str,
         location: str,
         existing: bool = False,
+        tags: dict | None = None,
     ):
         self._client = client
         self._rg_name = rg_name
         self._registry_name = registry_name
         self._location = location
         self._existing = existing
+        self._tags = tags or {}
 
     @property
     def name(self) -> str:
@@ -45,6 +47,7 @@ class ACRNode(Provisionable):
                         location=self._location,
                         sku=Sku(name="Basic"),
                         admin_user_enabled=True,
+                        tags=self._tags,
                     ),
                 ).result()
 

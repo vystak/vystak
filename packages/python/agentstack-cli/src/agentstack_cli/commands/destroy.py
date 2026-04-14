@@ -13,7 +13,7 @@ from agentstack_cli.provider_factory import get_provider
     "--include-resources",
     is_flag=True,
     default=False,
-    help="Also remove resource containers (keeps volumes)",
+    help="Also remove backing resources (Postgres, ACR, etc.)",
 )
 def destroy(file_path, agent_name, include_resources):
     """Stop and remove a deployed agent."""
@@ -33,12 +33,23 @@ def destroy(file_path, agent_name, include_resources):
     if agent:
         provider.set_agent(agent)
 
-    click.echo(f"Stopping container agentstack-{agent_name}... ", nl=False)
+    # List resources that will be affected
+    if include_resources and hasattr(provider, "list_resources"):
+        resources = provider.list_resources(agent_name)
+        if resources:
+            click.echo("Resources to delete:")
+            for r in resources:
+                click.echo(f"  - {r['type']}: {r['name']}")
+        else:
+            click.echo("No tagged resources found.")
+    else:
+        click.echo(f"  Container: agentstack-{agent_name}")
+
     try:
         provider.destroy(agent_name, include_resources=include_resources)
         click.echo("OK")
         if include_resources:
-            click.echo("Resource and gateway containers removed (volumes preserved)")
+            click.echo("All tagged resources removed.")
         click.echo(f"Destroyed: {agent_name}")
     except Exception as e:
         click.echo("FAILED")
