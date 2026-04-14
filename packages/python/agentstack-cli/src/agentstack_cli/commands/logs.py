@@ -1,36 +1,34 @@
 """agentstack logs — tail agent container logs."""
 
+from pathlib import Path
+
 import click
 
-from agentstack_cli.loader import find_agent_file, load_agent_from_file
+from agentstack_cli.loader import find_agent_file, load_agents
 from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
 @click.option("--file", "file_path", default=None, help="Path to agent definition file")
-@click.option("--name", "agent_name", default=None, help="Agent name (alternative to --file)")
+@click.option("--name", "agent_name", default=None, help="Agent name")
 @click.option("--follow", "-f", is_flag=True, default=False, help="Follow log output")
 @click.option("--tail", "-n", "tail_lines", default=50, help="Number of lines to show")
 def logs(file_path, agent_name, follow, tail_lines):
     """Tail agent container logs."""
-    agent = None
     if agent_name is None:
         path = find_agent_file(file=file_path)
-        agent = load_agent_from_file(path)
-        agent_name = agent.name
+        agents = load_agents([path])
+        if len(agents) == 1:
+            agent_name = agents[0].name
+        else:
+            click.echo("Multiple agents found. Use --name to specify which one.", err=True)
+            for a in agents:
+                click.echo(f"  {a.name}")
+            raise SystemExit(1)
 
-    # Determine provider type — logs currently only supported for Docker
-    if agent:
-        provider = get_provider(agent)
-    else:
-        from agentstack_provider_docker import DockerProvider
-        provider = DockerProvider()
-
-    from agentstack_provider_docker import DockerProvider as _DockerType
-    if not isinstance(provider, _DockerType):
-        click.echo(f"Logs are not yet supported for {agent.platform.provider.type} provider.", err=True)
-        raise SystemExit(1)
-
+    # Logs is Docker-specific for now
+    from agentstack_provider_docker import DockerProvider
+    provider = DockerProvider()
     container = provider._get_container(agent_name)
 
     if container is None:
