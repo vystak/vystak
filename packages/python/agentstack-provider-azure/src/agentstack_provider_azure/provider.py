@@ -98,17 +98,51 @@ class AzureProvider(PlatformProvider):
     # ------------------------------------------------------------------
 
     def get_hash(self, agent_name: str) -> str | None:
-        # Phase 2a — no remote hash storage yet
+        """Read the deployed hash from Container App tags."""
+        try:
+            cfg = self._platform_config()
+            credential = get_credential()
+            subscription_id = get_subscription_id(cfg)
+            rg_name = self._rg_name(agent_name)
+
+            from azure.mgmt.appcontainers import ContainerAppsAPIClient
+            aca_client = ContainerAppsAPIClient(credential, subscription_id)
+
+            app = aca_client.container_apps.get(rg_name, agent_name)
+            if app.tags:
+                return app.tags.get("agentstack:hash")
+        except Exception:
+            pass
         return None
 
     def plan(self, agent: Agent, current_hash: str | None) -> DeployPlan:
         tree = hash_agent(agent)
+        target_hash = tree.root
+
+        if current_hash == target_hash:
+            return DeployPlan(
+                agent_name=agent.name,
+                actions=[],
+                current_hash=current_hash,
+                target_hash=target_hash,
+                changes={},
+            )
+
+        if current_hash is None:
+            return DeployPlan(
+                agent_name=agent.name,
+                actions=["Create new deployment on Azure Container Apps"],
+                current_hash=None,
+                target_hash=target_hash,
+                changes={"all": (None, target_hash)},
+            )
+
         return DeployPlan(
             agent_name=agent.name,
-            actions=["Deploy to Azure Container Apps"],
+            actions=["Update deployment on Azure Container Apps"],
             current_hash=current_hash,
-            target_hash=tree.root,
-            changes={"all": (current_hash, tree.root)},
+            target_hash=target_hash,
+            changes={"root": (current_hash, target_hash)},
         )
 
     def apply(self, plan: DeployPlan) -> DeployResult:
