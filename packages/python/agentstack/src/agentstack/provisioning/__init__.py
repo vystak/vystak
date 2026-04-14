@@ -9,9 +9,10 @@ from agentstack.provisioning.health import (
     TcpHealthCheck,
 )
 from agentstack.provisioning.node import Provisionable, ProvisionResult
+from agentstack.provisioning.grouping import group_agents_by_platform, platform_fingerprint
 
 __all__ = [
-    "CommandHealthCheck", "CycleError", "HealthCheck", "HttpHealthCheck",
-    "NoopHealthCheck", "Provisionable", "ProvisionError", "ProvisionGraph",
+    "CommandHealthCheck", "CycleError", "group_agents_by_platform", "HealthCheck", "HttpHealthCheck",
+    "NoopHealthCheck", "platform_fingerprint", "Provisionable", "ProvisionError", "ProvisionGraph",
     "ProvisionResult", "TcpHealthCheck",
 ]
