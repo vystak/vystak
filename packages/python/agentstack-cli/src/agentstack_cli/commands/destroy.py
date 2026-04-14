@@ -1,57 +1,61 @@
-"""agentstack destroy — stop and remove an agent."""
+"""agentstack destroy — stop and remove agents."""
+
+from pathlib import Path
 
 import click
 
-from agentstack_cli.loader import find_agent_file, load_agent_from_file
+from agentstack_cli.loader import find_agent_file, load_agents
 from agentstack_cli.provider_factory import get_provider
 
 
 @click.command()
-@click.option("--file", "file_path", default=None, help="Path to agent definition file")
-@click.option("--name", "agent_name", default=None, help="Agent name (alternative to --file)")
-@click.option(
-    "--include-resources",
-    is_flag=True,
-    default=False,
-    help="Also remove backing resources (Postgres, ACR, etc.)",
-)
-def destroy(file_path, agent_name, include_resources):
-    """Stop and remove a deployed agent."""
-    agent = None
-    if agent_name is None:
-        path = find_agent_file(file=file_path)
-        agent = load_agent_from_file(path)
-        agent_name = agent.name
-
-    click.echo(f"Destroying: {agent_name}")
-    if agent:
-        provider = get_provider(agent)
-    else:
+@click.argument("files", nargs=-1, type=click.Path(exists=True))
+@click.option("--file", "file_path", default=None, help="Path to agent definition file (legacy)")
+@click.option("--name", "agent_name", default=None, help="Destroy a specific agent by name")
+@click.option("--include-resources", is_flag=True, default=False,
+              help="Also remove backing infrastructure")
+def destroy(files, file_path, agent_name, include_resources):
+    """Stop and remove deployed agents."""
+    if agent_name and not files and not file_path:
         from agentstack_provider_docker import DockerProvider
         provider = DockerProvider()
+        click.echo(f"Destroying: {agent_name}")
+        provider.destroy(agent_name, include_resources=include_resources)
+        click.echo(f"Destroyed: {agent_name}")
+        return
 
-    if agent:
+    if files:
+        paths = [Path(f) for f in files]
+    elif file_path:
+        paths = [Path(file_path)]
+    else:
+        paths = [find_agent_file()]
+
+    base_dir = paths[0].parent if paths[0].is_file() else paths[0].parent
+    agents = load_agents(paths, base_dir=base_dir)
+
+    if agent_name:
+        agents = [a for a in agents if a.name == agent_name]
+        if not agents:
+            click.echo(f"Agent '{agent_name}' not found in definition.", err=True)
+            raise SystemExit(1)
+
+    for agent in agents:
+        click.echo(f"Destroying: {agent.name}")
+        provider = get_provider(agent)
         provider.set_agent(agent)
 
-    # List resources that will be affected
-    if include_resources and hasattr(provider, "list_resources"):
-        resources = provider.list_resources(agent_name)
-        if resources:
-            click.echo("Resources to delete:")
-            for r in resources:
-                click.echo(f"  - {r['type']}: {r['name']}")
-        else:
-            click.echo("No tagged resources found.")
-    else:
-        click.echo(f"  Container: agentstack-{agent_name}")
+        if include_resources and hasattr(provider, "list_resources"):
+            resources = provider.list_resources(agent.name)
+            if resources:
+                click.echo("  Resources to delete:")
+                for r in resources:
+                    click.echo(f"    - {r['type']}: {r['name']}")
 
-    try:
-        provider.destroy(agent_name, include_resources=include_resources)
-        click.echo("OK")
-        if include_resources:
-            click.echo("All tagged resources removed.")
-        click.echo(f"Destroyed: {agent_name}")
-    except Exception as e:
-        click.echo("FAILED")
-        click.echo(f"  Error: {e}", err=True)
-        raise SystemExit(1)
+        try:
+            provider.destroy(agent.name, include_resources=include_resources)
+            click.echo("  OK")
+        except Exception as e:
+            click.echo(f"  FAILED: {e}", err=True)
+
+    click.echo(f"Destroyed {len(agents)} agent(s)")
