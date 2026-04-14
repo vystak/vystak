@@ -27,6 +27,7 @@ def apply(files, file_path):
     click.echo(f"Loaded {len(agents)} agent(s)")
 
     adapter = LangChainAdapter()
+    deployed: list[dict] = []
 
     for agent in agents:
         click.echo(f"\nAgent: {agent.name}")
@@ -51,6 +52,7 @@ def apply(files, file_path):
 
         if not deploy_plan.actions:
             click.echo("  No changes. Already up to date.")
+            deployed.append({"name": agent.name, "url": "(unchanged)", "agent": agent})
             continue
 
         click.echo("  Deploying... ", nl=False)
@@ -60,11 +62,64 @@ def apply(files, file_path):
 
         if result.success:
             click.echo("OK")
-            click.echo(f"  {result.message}")
+            url = result.info.get("url", result.message) if hasattr(result, "info") else result.message
+            deployed.append({"name": agent.name, "url": url, "agent": agent, "result": result})
         else:
             click.echo("FAILED")
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
+
+    # Deployment summary
+    if deployed:
+        _print_summary(deployed)
+
+
+def _print_summary(deployed: list[dict]) -> None:
+    """Print deployment summary with infrastructure and agent details."""
+    click.echo("\n" + "=" * 60)
+    click.echo(f"Deployment complete — {len(deployed)} agent(s) deployed")
+    click.echo("=" * 60)
+
+    # Shared infrastructure details (from first agent with a platform)
+    first_agent = next((d["agent"] for d in deployed if d["agent"].platform), None)
+    if first_agent and first_agent.platform:
+        provider_type = first_agent.platform.provider.type
+        config = first_agent.platform.provider.config
+
+        click.echo("\nShared Infrastructure:")
+
+        if provider_type == "azure":
+            click.echo(f"  Provider:     Azure ({config.get('location', 'unknown')})")
+            if config.get("resource_group"):
+                click.echo(f"  Resource Group: {config['resource_group']}")
+        elif provider_type == "docker":
+            click.echo(f"  Provider:     Docker (local)")
+            click.echo(f"  Network:      agentstack-net")
+
+    # Agent URLs
+    click.echo("\nAgents:")
+    max_name = max(len(d["name"]) for d in deployed)
+    for d in deployed:
+        result = d.get("result")
+        if result and hasattr(result, "message"):
+            # Extract URL from message like "Deployed X at https://..."
+            msg = result.message
+            if " at " in msg:
+                url = msg.split(" at ", 1)[1]
+            else:
+                url = msg
+        else:
+            url = d.get("url", "")
+        click.echo(f"  {d['name']:<{max_name}}  {url}")
+
+    # Connect command
+    click.echo("\nConnect:")
+    for d in deployed:
+        result = d.get("result")
+        if result and hasattr(result, "message") and " at " in result.message:
+            url = result.message.split(" at ", 1)[1]
+            click.echo(f"  agentstack-chat --url {url}")
+            break  # Show connect for first agent only
 
 
 def _find_agent_base_dir(agent_name: str, paths: list[Path]) -> Path:

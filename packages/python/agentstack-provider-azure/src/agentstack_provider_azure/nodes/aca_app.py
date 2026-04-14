@@ -155,6 +155,11 @@ class ContainerAppNode(Provisionable):
                 self._agent.name,
                 ContainerApp(
                     location=cfg.get("location", "eastus2"),
+                    tags={
+                        "agentstack:managed": "true",
+                        "agentstack:agent": self._agent.name,
+                        "agentstack:hash": self._plan.target_hash,
+                    },
                     managed_environment_id=env_info["environment_id"],
                     configuration=Configuration(
                         ingress=Ingress(
