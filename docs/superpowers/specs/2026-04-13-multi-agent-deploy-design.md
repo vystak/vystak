@@ -100,6 +100,101 @@ agentstack apply weather/agentstack.yaml time/agentstack.yaml assistant/agentsta
 
 When merging separate files, agents with structurally equal provider+platform configs are grouped together (same type, same config values → same infra).
 
+### YAML: Split Files with Convention
+
+Projects can split definitions across files using naming conventions:
+
+```
+project/
+  agentstack.base.yaml      # shared providers, platforms, models
+  agentstack.env.yaml        # environment-specific overrides
+  weather/agentstack.yaml    # agent definition, references base
+  time/agentstack.yaml
+  assistant/agentstack.yaml
+```
+
+**`agentstack.base.yaml`** — shared infrastructure declarations. Always loaded if present in the working directory or any parent.
+
+```yaml
+# agentstack.base.yaml
+providers:
+  azure:
+    type: azure
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.7
+      anthropic_api_url: https://api.minimax.io/anthropic
+```
+
+**`agentstack.env.yaml`** — environment-specific config (staging, prod). Deep-merges into base. Overrides provider configs, adds tags, changes regions.
+
+```yaml
+# agentstack.env.yaml (staging)
+providers:
+  azure:
+    config:
+      location: eastus2
+      resource_group: agentstack-staging-rg
+      tags:
+        env: staging
+```
+
+```yaml
+# agentstack.env.yaml (prod)
+providers:
+  azure:
+    config:
+      location: westus2
+      resource_group: agentstack-prod-rg
+      tags:
+        env: prod
+```
+
+**Agent files** — reference providers, platforms, models by name from the base.
+
+```yaml
+# weather/agentstack.yaml
+name: weather-agent
+model: minimax
+platform: aca
+skills:
+  - name: weather
+    tools: [get_weather]
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+```
+
+**Load order:** `base` → `env` → agent files. Deep merge at each step — later values override earlier ones for the same key.
+
+```bash
+# Deploy all agents — base + env loaded automatically
+agentstack apply weather/ time/ assistant/
+
+# Different env file
+AGENTSTACK_ENV=prod agentstack apply weather/ time/ assistant/
+# → loads agentstack.env.prod.yaml instead of agentstack.env.yaml
+```
+
+**Environment file selection:**
+- Default: `agentstack.env.yaml`
+- `AGENTSTACK_ENV=prod` → `agentstack.env.prod.yaml`
+- `AGENTSTACK_ENV=staging` → `agentstack.env.staging.yaml`
+- No env file found → skip (base only)
+
 ### YAML: Backward Compatibility
 
 The old single-agent YAML still works — no `providers`, `platforms`, `models`, or `agents` blocks needed:
@@ -120,7 +215,10 @@ channels:
     type: api
 ```
 
-The loader detects the format: if `agents` key exists → multi-agent. If `name` key exists at top level → single agent (legacy).
+The loader detects the format:
+- Has `agents` key → multi-agent (single file)
+- Has `name` key at top level → single agent (legacy)
+- Has string references for `model`/`platform` → resolve from base file
 
 ### Cross-Platform Deployment
 
@@ -518,6 +616,92 @@ agents:
 cd examples/azure-multi-agent
 agentstack apply
 # → Creates 1 RG, 1 ACR, 1 Log Analytics, 1 ACA Environment, 3 Container Apps
+```
+
+## Example: Split YAML with Base + Env
+
+```
+examples/azure-multi-agent-split/
+  agentstack.base.yaml          # shared providers, platforms, models
+  agentstack.env.yaml           # default env (staging)
+  agentstack.env.prod.yaml      # prod overrides
+  weather/
+    agentstack.yaml             # agent definition
+    tools/get_weather.py
+  time/
+    agentstack.yaml
+    tools/get_time.py
+  assistant/
+    agentstack.yaml
+    tools/ask_weather_agent.py
+    tools/ask_time_agent.py
+```
+
+```yaml
+# agentstack.base.yaml
+providers:
+  azure:
+    type: azure
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.7
+      anthropic_api_url: https://api.minimax.io/anthropic
+```
+
+```yaml
+# agentstack.env.yaml (staging — default)
+providers:
+  azure:
+    config:
+      location: eastus2
+      resource_group: agentstack-staging-rg
+      tags:
+        env: staging
+```
+
+```yaml
+# agentstack.env.prod.yaml
+providers:
+  azure:
+    config:
+      location: westus2
+      resource_group: agentstack-prod-rg
+      tags:
+        env: prod
+```
+
+```yaml
+# weather/agentstack.yaml — just the agent
+name: weather-agent
+model: minimax
+platform: aca
+skills:
+  - name: weather
+    tools: [get_weather]
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+```
+
+```bash
+# Deploy to staging (default env)
+agentstack apply weather/ time/ assistant/
+
+# Deploy to prod
+AGENTSTACK_ENV=prod agentstack apply weather/ time/ assistant/
 ```
 
 ## A2A Agent Discovery
