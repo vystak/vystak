@@ -33,6 +33,10 @@ class AzureProvider(PlatformProvider):
     def __init__(self):
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
+        self._listener = None
+
+    def set_listener(self, listener) -> None:
+        self._listener = listener
 
     def set_generated_code(self, code: GeneratedCode) -> None:
         self._generated_code = code
@@ -183,6 +187,9 @@ class AzureProvider(PlatformProvider):
             env_existing = bool(cfg.get("environment"))
 
             graph = ProvisionGraph()
+
+            if self._listener:
+                graph.set_listener(self._listener)
 
             graph.add(ResourceGroupNode(
                 client=resource_client,
