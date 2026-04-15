@@ -128,11 +128,35 @@ class TestGenerateServerPy:
         code = generate_server_py(anthropic_agent)
         assert '"/v1/chat/completions"' in code
 
-    def test_has_v1_threads(self, anthropic_agent):
+    def test_chat_completions_stateless(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert '"/v1/threads"' in code
-        assert '"/v1/threads/{thread_id}/messages"' in code
-        assert '"/v1/threads/{thread_id}/runs"' in code
+        assert "for msg in request.messages" in code
+
+    def test_has_v1_responses(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert '"/v1/responses"' in code
+        assert "CreateResponseRequest" in code
+
+    def test_has_v1_responses_get(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert '"/v1/responses/{response_id}"' in code
+
+    def test_responses_streaming(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "response.created" in code
+        assert "response.output_text.delta" in code
+        assert "response.completed" in code
+        assert "response.function_call_arguments.delta" in code
+
+    def test_responses_background(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "background" in code
+        assert "in_progress" in code
+
+    def test_no_threads_endpoints(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert '"/v1/threads"' not in code
+        assert "CreateThreadRequest" not in code
 
     def test_no_invoke_endpoint(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
@@ -142,20 +166,11 @@ class TestGenerateServerPy:
         code = generate_server_py(anthropic_agent)
         assert '"/stream"' not in code
 
-    def test_no_invoke_request_model(self, anthropic_agent):
-        code = generate_server_py(anthropic_agent)
-        assert "class InvokeRequest" not in code
-        assert "class InvokeResponse" not in code
-
-    def test_imports_openai_schema(self, anthropic_agent):
+    def test_imports_openai_types(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
         assert "from openai_types import" in code
-
-    def test_chat_completions_streaming(self, anthropic_agent):
-        code = generate_server_py(anthropic_agent)
-        assert "ChatCompletionChunk" in code
-        assert "_stream_chat_completions" in code
-        assert "[DONE]" in code
+        assert "CreateResponseRequest" in code
+        assert "ResponseObject" in code
 
     def test_openai_error_format(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
