@@ -25,6 +25,53 @@ def deploy_gateway(deployed: list[dict], gateway_name: str = "main") -> str | No
         return None
 
 
+def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
+    """Inject AGENTSTACK_GATEWAY_URL env var into deployed agents."""
+    for d in deployed:
+        agent = d["agent"]
+        if not agent.platform or agent.platform.provider.type != "azure":
+            # Docker agents would need container restart — skip for now
+            continue
+
+        try:
+            from agentstack_provider_azure.auth import get_credential, get_subscription_id
+            config = {}
+            config.update(agent.platform.provider.config)
+            config.update(agent.platform.config)
+
+            credential = get_credential()
+            subscription_id = get_subscription_id(config)
+            rg_name = config.get("resource_group", f"agentstack-{agent.name}-rg")
+
+            from azure.mgmt.appcontainers import ContainerAppsAPIClient
+            aca_client = ContainerAppsAPIClient(credential, subscription_id)
+
+            # Get current app
+            app = aca_client.container_apps.get(rg_name, agent.name)
+
+            # Check if env var already set
+            container = app.template.containers[0]
+            existing_env = {e.name: e for e in (container.env or [])}
+            if "AGENTSTACK_GATEWAY_URL" in existing_env:
+                click.echo(f"  {agent.name}: already configured")
+                continue
+
+            # Add gateway URL env var
+            from azure.mgmt.appcontainers.models import EnvironmentVar
+            new_env = list(container.env or [])
+            new_env.append(EnvironmentVar(name="AGENTSTACK_GATEWAY_URL", value=gateway_url))
+            container.env = new_env
+
+            # Update the app
+            aca_client.container_apps.begin_create_or_update(
+                rg_name, agent.name, app,
+            ).result()
+            click.echo(f"  {agent.name}: updated")
+
+        except Exception as e:
+            click.echo(f"  {agent.name}: failed ({e})")
+
+
 def register_agents(gateway_url: str, deployed: list[dict]) -> None:
     """Register all deployed agents with the gateway via POST /register."""
     # Wait for gateway to be healthy

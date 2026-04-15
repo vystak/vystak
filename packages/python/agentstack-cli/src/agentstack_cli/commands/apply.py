@@ -80,13 +80,15 @@ def apply(files, file_path, force):
     if len(deployed) > 1:
         click.echo("\nGateway:")
         click.echo("  Deploying... ", nl=False)
-        from agentstack_cli.gateway import deploy_gateway, register_agents
+        from agentstack_cli.gateway import deploy_gateway, register_agents, inject_gateway_env
         gateway_url = deploy_gateway(deployed)
         if gateway_url:
             click.echo("OK")
             click.echo(f"  {gateway_url}")
             click.echo("  Registering agents...")
             register_agents(gateway_url, deployed)
+            click.echo("  Injecting gateway URL into agents...")
+            inject_gateway_env(gateway_url, deployed)
         else:
             click.echo("skipped")
 
