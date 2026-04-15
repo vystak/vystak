@@ -23,6 +23,7 @@ uvicorn>=0.34
 httpx>=0.28
 slack-bolt>=1.21
 aiohttp>=3.9
+aiosqlite>=0.20
 """
 
 
@@ -37,7 +38,7 @@ def write_gateway_source(gateway_dir: Path) -> None:
     import agentstack_gateway
     pkg_dir = Path(agentstack_gateway.__file__).parent
 
-    for filename in ["server.py", "router.py", "__init__.py"]:
+    for filename in ["server.py", "router.py", "store.py", "__init__.py"]:
         src = pkg_dir / filename
         if src.exists():
             content = src.read_text()

@@ -27,6 +27,16 @@ def deploy_gateway(deployed: list[dict], gateway_name: str = "main") -> str | No
 
 def register_agents(gateway_url: str, deployed: list[dict]) -> None:
     """Register all deployed agents with the gateway via POST /register."""
+    # Wait for gateway to be healthy
+    for attempt in range(15):
+        try:
+            resp = httpx.get(f"{gateway_url}/health", timeout=5)
+            if resp.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+
     for d in deployed:
         agent_name = d["name"]
         url = _resolve_agent_url(d)
@@ -49,8 +59,17 @@ def register_agents(gateway_url: str, deployed: list[dict]) -> None:
 
 
 def _resolve_agent_url(d: dict) -> str | None:
-    """Get the agent URL from deploy result or provider status."""
-    # From deploy result
+    """Get the agent URL reachable by the gateway (internal network URL)."""
+    agent = d["agent"]
+    provider_type = "docker"
+    if agent.platform and agent.platform.provider:
+        provider_type = agent.platform.provider.type
+
+    if provider_type == "docker":
+        # Docker: gateway reaches agents via container name on shared network
+        return f"http://agentstack-{agent.name}:8000"
+
+    # Azure/other: use the external URL from deploy result
     result = d.get("result")
     if result and hasattr(result, "message") and " at " in result.message:
         return result.message.split(" at ", 1)[1]
@@ -59,8 +78,7 @@ def _resolve_agent_url(d: dict) -> str | None:
     if url and url != "(unchanged)":
         return url
 
-    # For unchanged agents, query provider
-    agent = d["agent"]
+    # Query provider status for URL
     try:
         from agentstack_cli.provider_factory import get_provider
         provider = get_provider(agent)
@@ -68,16 +86,10 @@ def _resolve_agent_url(d: dict) -> str | None:
         status = provider.status(agent.name)
         info = status.info or {}
 
-        # Azure: url or fqdn
         if info.get("url"):
             return info["url"]
         if info.get("fqdn"):
             return f"https://{info['fqdn']}"
-
-        # Docker: ports
-        if "ports" in info and "8000/tcp" in info["ports"] and info["ports"]["8000/tcp"]:
-            port = info["ports"]["8000/tcp"][0].get("HostPort", "8000")
-            return f"http://localhost:{port}"
     except Exception:
         pass
 
