@@ -774,12 +774,13 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    }}")
     lines.append("")
 
-    # Memory recall
+    # Memory recall (skip when continuing a conversation — checkpointer has context)
     if uses_persistent:
-        lines.append("    memories = await recall_memories(_store, last_user_msg, user_id=user_id, project_id=project_id)")
-        lines.append("    if memories:")
-        lines.append('        memory_text = "Relevant memories:\\n" + "\\n".join(memories)')
-        lines.append('        input_messages.insert(0, ("system", memory_text))')
+        lines.append("    if not request.previous_response_id:")
+        lines.append("        memories = await recall_memories(_store, last_user_msg, user_id=user_id, project_id=project_id)")
+        lines.append("        if memories:")
+        lines.append('            memory_text = "Relevant memories:\\n" + "\\n".join(memories)')
+        lines.append('            input_messages.insert(0, ("system", memory_text))')
         lines.append("")
 
     # Streaming
