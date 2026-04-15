@@ -3,18 +3,28 @@
 import asyncio
 import json
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from agentstack.schema.openai import (
+    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChunk,
+    ChatMessage, Choice, ChunkChoice, ChunkDelta, CompletionUsage,
+    CreateThreadRequest, ErrorDetail, ErrorResponse, ModelList, ModelObject, Thread,
+)
 from agentstack_gateway.router import Route, Router
-from agentstack_gateway.store import RegistrationStore, create_store
+from agentstack_gateway.store import RegistrationStore, ThreadStore, create_store
 
 router = Router()
 providers: dict = {}
 reg_store: RegistrationStore | None = None
+thread_store = ThreadStore()
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
@@ -220,19 +230,13 @@ async def unregister_agent(agent_name: str):
     return {"status": "unregistered", "agent": agent_name}
 
 
-# === Chat / A2A Proxy ===
-# The gateway proxies requests to agents, acting as the unified entry point.
-
-import httpx
-from fastapi import Request
-from fastapi.responses import StreamingResponse
-
+# === Agent Listing & A2A Proxy ===
 
 @app.get("/agents")
 async def list_agents():
     """List all registered agents with status and Agent Cards."""
     agents = []
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10) as http_client:
         for route in router.list_routes():
             entry = {
                 "name": route.agent_name,
@@ -243,50 +247,13 @@ async def list_agents():
             }
             if route.status == "online":
                 try:
-                    resp = await client.get(f"{route.agent_url}/.well-known/agent.json")
+                    resp = await http_client.get(f"{route.agent_url}/.well-known/agent.json")
                     card = resp.json()
                     entry.update(card)
                 except Exception:
                     pass
             agents.append(entry)
     return agents
-
-
-@app.post("/invoke/{agent_name}")
-async def proxy_invoke(agent_name: str, request: Request):
-    """Proxy an invoke request to a specific agent."""
-    route = _find_route(agent_name)
-    if not route:
-        return {"error": f"Agent '{agent_name}' not found"}
-
-    body = await request.json()
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{route.agent_url}/invoke", json=body)
-            router.mark_online(agent_name)
-            return resp.json()
-    except Exception as e:
-        router.mark_offline(agent_name, str(e))
-        return {"error": f"Agent '{agent_name}' is not responding: {e}"}
-
-
-@app.post("/stream/{agent_name}")
-async def proxy_stream(agent_name: str, request: Request):
-    """Proxy a stream request to a specific agent via SSE."""
-    route = _find_route(agent_name)
-    if not route:
-        return {"error": f"Agent '{agent_name}' not found"}
-
-    body = await request.json()
-
-    async def stream_proxy():
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", f"{route.agent_url}/stream", json=body) as resp:
-                async for line in resp.aiter_lines():
-                    if line:
-                        yield line + "\n"
-
-    return StreamingResponse(stream_proxy(), media_type="text/event-stream")
 
 
 @app.post("/a2a/{agent_name}")
@@ -297,8 +264,8 @@ async def proxy_a2a(agent_name: str, request: Request):
         return {"error": f"Agent '{agent_name}' not found"}
 
     body = await request.json()
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{route.agent_url}/a2a", json=body)
+    async with httpx.AsyncClient(timeout=120) as http_client:
+        resp = await http_client.post(f"{route.agent_url}/a2a", json=body)
         return resp.json()
 
 
@@ -321,62 +288,315 @@ async def gateway_agent_card():
     }
 
 
+# === OpenAI-Compatible v1 Endpoints ===
+
+@app.get("/v1/models")
+async def v1_models():
+    """List all registered agents as OpenAI-compatible model entries."""
+    models = []
+    for route in router.list_routes():
+        models.append(ModelObject(
+            id=f"agentstack/{route.agent_name}",
+            created=int(time.time()),
+            owned_by="agentstack",
+        ))
+    return ModelList(object="list", data=models)
+
+
+@app.post("/v1/chat/completions")
+async def v1_chat_completions(request: ChatCompletionRequest):
+    """Route chat completions to agents via A2A."""
+    # Parse model field — strip agentstack/ prefix
+    model = request.model
+    agent_name = model.removeprefix("agentstack/")
+
+    route = _find_route(agent_name)
+    if not route:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message=f"Model '{model}' not found",
+                    type="invalid_request_error",
+                    code="model_not_found",
+                )
+            ).model_dump(),
+        )
+
+    # Build the user message from the last message
+    last_msg = ""
+    for msg in reversed(request.messages):
+        if msg.role == "user" and msg.content:
+            last_msg = msg.content
+            break
+
+    session_id = request.session_id or str(uuid.uuid4())
+
+    if request.stream:
+        return await _stream_chat_completion(route, agent_name, model, session_id, last_msg, request)
+    else:
+        return await _non_stream_chat_completion(route, agent_name, model, session_id, last_msg, request)
+
+
+async def _non_stream_chat_completion(route, agent_name, model, session_id, last_msg, request):
+    """Send A2A tasks/send and return ChatCompletionResponse."""
+    a2a_request = {
+        "jsonrpc": "2.0",
+        "method": "tasks/send",
+        "id": 1,
+        "params": {
+            "id": session_id,
+            "sessionId": session_id,
+            "message": {"role": "user", "parts": [{"text": last_msg}]},
+            "metadata": {
+                "trace_id": str(uuid.uuid4()),
+                "user_id": request.user_id or "",
+                "project_id": request.project_id or "",
+            },
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120) as http_client:
+        resp = await http_client.post(f"{route.agent_url}/a2a", json=a2a_request)
+        a2a_resp = resp.json()
+
+    # Extract response text from A2A result
+    response_text = ""
+    result = a2a_resp.get("result", {})
+    status = result.get("status", {})
+    status_message = status.get("message", {})
+    parts = status_message.get("parts", [])
+    if parts:
+        response_text = parts[0].get("text", "")
+
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        created=int(time.time()),
+        model=model,
+        choices=[Choice(
+            index=0,
+            message=ChatMessage(role="assistant", content=response_text),
+            finish_reason="stop",
+        )],
+        usage=CompletionUsage(),
+    )
+
+
+async def _stream_chat_completion(route, agent_name, model, session_id, last_msg, request):
+    """Send A2A tasks/sendSubscribe and translate SSE to ChatCompletionChunk stream."""
+    a2a_request = {
+        "jsonrpc": "2.0",
+        "method": "tasks/sendSubscribe",
+        "id": 1,
+        "params": {
+            "id": session_id,
+            "sessionId": session_id,
+            "message": {"role": "user", "parts": [{"text": last_msg}]},
+            "metadata": {
+                "trace_id": str(uuid.uuid4()),
+                "user_id": request.user_id or "",
+                "project_id": request.project_id or "",
+            },
+        },
+    }
+
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    async def stream_generator():
+        async with httpx.AsyncClient(timeout=120) as http_client:
+            async with http_client.stream("POST", f"{route.agent_url}/a2a", json=a2a_request) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    try:
+                        event = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    result = event.get("result", {})
+
+                    # Check for artifact with text content
+                    artifact = result.get("artifact", {})
+                    if artifact:
+                        parts = artifact.get("parts", [])
+                        for part in parts:
+                            text = part.get("text", "")
+                            if text:
+                                chunk = ChatCompletionChunk(
+                                    id=completion_id,
+                                    created=created,
+                                    model=model,
+                                    choices=[ChunkChoice(
+                                        index=0,
+                                        delta=ChunkDelta(content=text),
+                                    )],
+                                )
+                                yield f"data: {chunk.model_dump_json()}\n\n"
+
+                    # Check for final status
+                    if result.get("final"):
+                        # Send finish chunk
+                        finish_chunk = ChatCompletionChunk(
+                            id=completion_id,
+                            created=created,
+                            model=model,
+                            choices=[ChunkChoice(
+                                index=0,
+                                delta=ChunkDelta(),
+                                finish_reason="stop",
+                            )],
+                        )
+                        yield f"data: {finish_chunk.model_dump_json()}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+
+@app.post("/v1/threads")
+async def v1_create_thread(request: CreateThreadRequest):
+    """Create a thread with optional model binding."""
+    thread_id = f"thread_{uuid.uuid4().hex}"
+
+    # Validate model if provided
+    if request.model:
+        agent_name = request.model.removeprefix("agentstack/")
+        route = _find_route(agent_name)
+        if not route:
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(
+                    error=ErrorDetail(
+                        message=f"Model '{request.model}' not found",
+                        type="invalid_request_error",
+                        code="model_not_found",
+                    )
+                ).model_dump(),
+            )
+
+    thread = thread_store.create(
+        thread_id=thread_id,
+        model=request.model,
+        metadata=request.metadata,
+    )
+    return thread
+
+
+@app.get("/v1/threads/{thread_id}/messages")
+async def v1_list_thread_messages(thread_id: str):
+    """List messages for a thread — proxies to bound agent."""
+    thread = thread_store.get(thread_id)
+    if not thread:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message=f"Thread '{thread_id}' not found",
+                    type="invalid_request_error",
+                    code="thread_not_found",
+                )
+            ).model_dump(),
+        )
+
+    model = thread.get("model")
+    if not model:
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message="Thread has no bound model",
+                    type="invalid_request_error",
+                    code="no_model_bound",
+                )
+            ).model_dump(),
+        )
+
+    agent_name = model.removeprefix("agentstack/")
+    route = _find_route(agent_name)
+    if not route:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message=f"Model '{model}' not found",
+                    type="invalid_request_error",
+                    code="model_not_found",
+                )
+            ).model_dump(),
+        )
+
+    # Proxy to agent's thread messages endpoint
+    async with httpx.AsyncClient(timeout=30) as http_client:
+        resp = await http_client.get(f"{route.agent_url}/v1/threads/{thread_id}/messages")
+        return resp.json()
+
+
+@app.post("/v1/threads/{thread_id}/runs")
+async def v1_create_thread_run(thread_id: str, request: Request):
+    """Create a run on a thread — proxies to bound agent with deferred model binding."""
+    thread = thread_store.get(thread_id)
+    if not thread:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message=f"Thread '{thread_id}' not found",
+                    type="invalid_request_error",
+                    code="thread_not_found",
+                )
+            ).model_dump(),
+        )
+
+    body = await request.json()
+
+    # Deferred model binding: if thread has no model, bind from run request
+    model = thread.get("model") or body.get("model")
+    if model and not thread.get("model"):
+        thread_store.bind_model(thread_id, model)
+
+    if not model:
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message="No model specified in thread or run request",
+                    type="invalid_request_error",
+                    code="no_model_bound",
+                )
+            ).model_dump(),
+        )
+
+    agent_name = model.removeprefix("agentstack/")
+    route = _find_route(agent_name)
+    if not route:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    message=f"Model '{model}' not found",
+                    type="invalid_request_error",
+                    code="model_not_found",
+                )
+            ).model_dump(),
+        )
+
+    # Proxy to agent
+    async with httpx.AsyncClient(timeout=120) as http_client:
+        resp = await http_client.post(
+            f"{route.agent_url}/v1/threads/{thread_id}/runs",
+            json=body,
+        )
+        return resp.json()
+
+
 def _find_route(agent_name: str) -> Route | None:
     """Find a route by agent name."""
     for route in router.list_routes():
         if route.agent_name == agent_name:
             return route
     return None
-
-
-# === Chat CLI Compatible Proxy ===
-# The chat CLI expects {base_url}/invoke and {base_url}/stream.
-# /proxy/{agent_name} acts as the base URL for a specific agent.
-
-@app.get("/proxy/{agent_name}/health")
-async def proxy_health(agent_name: str):
-    """Proxy health check for a specific agent."""
-    route = _find_route(agent_name)
-    if not route:
-        return {"error": f"Agent '{agent_name}' not found"}
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(f"{route.agent_url}/health")
-        return resp.json()
-
-
-@app.post("/proxy/{agent_name}/invoke")
-async def proxy_agent_invoke(agent_name: str, request: Request):
-    """Proxy invoke for a specific agent (chat CLI compatible)."""
-    route = _find_route(agent_name)
-    if not route:
-        return {"error": f"Agent '{agent_name}' not found"}
-    body = await request.json()
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{route.agent_url}/invoke", json=body)
-            router.mark_online(agent_name)
-            return resp.json()
-    except Exception as e:
-        router.mark_offline(agent_name, str(e))
-        return {"error": f"Agent '{agent_name}' is not responding: {e}"}
-
-
-@app.post("/proxy/{agent_name}/stream")
-async def proxy_agent_stream(agent_name: str, request: Request):
-    """Proxy stream for a specific agent (chat CLI compatible)."""
-    route = _find_route(agent_name)
-    if not route:
-        return {"error": f"Agent '{agent_name}' not found"}
-    body = await request.json()
-
-    async def stream_proxy():
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", f"{route.agent_url}/stream", json=body) as resp:
-                async for line in resp.aiter_lines():
-                    if line:
-                        yield line + "\n"
-
-    return StreamingResponse(stream_proxy(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
