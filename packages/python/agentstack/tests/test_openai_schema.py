@@ -105,6 +105,11 @@ class TestThread:
         )
         assert msg.object == "thread.message"
 
+    def test_create_message_request(self):
+        req = CreateMessageRequest(role="user", content="hello")
+        assert req.role == "user"
+        assert req.content == "hello"
+
     def test_run(self):
         r = Run(
             id="run-1",
