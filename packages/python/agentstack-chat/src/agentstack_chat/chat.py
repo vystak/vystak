@@ -689,7 +689,7 @@ def run_oneshot(url: str | None = None, message: str = ""):
                     agent_name = health_info.get("agent", "agent")
                     model = ""
 
-        result, _ = await _stream_response(agent_url, message, agent_name, model=model)
+        result, _ = await _stream_response(agent_url, message, agent_name, model=model, user_id=getpass.getuser())
 
         if result.total_tokens:
             console.print(
