@@ -149,7 +149,7 @@ class TestGenerateServerPy:
 
     def test_imports_openai_schema(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert "from agentstack.schema.openai import" in code
+        assert "from openai_types import" in code
 
     def test_chat_completions_streaming(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
@@ -190,9 +190,10 @@ class TestGenerateRequirementsTxt:
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
 
-    def test_includes_agentstack_core(self, anthropic_agent):
+    def test_no_agentstack_in_requirements(self, anthropic_agent):
+        """agentstack schema is bundled as openai_types.py, not installed from PyPI."""
         reqs = generate_requirements_txt(anthropic_agent)
-        assert "agentstack>=0.1" in reqs
+        assert "agentstack" not in reqs
 
 
 @pytest.fixture()

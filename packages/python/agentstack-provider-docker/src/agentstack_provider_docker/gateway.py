@@ -44,7 +44,14 @@ def write_gateway_source(gateway_dir: Path) -> None:
             content = src.read_text()
             # Rewrite package imports to local imports for Docker deployment
             content = content.replace("from agentstack_gateway.", "from ")
+            content = content.replace("from agentstack.schema.openai import", "from openai_types import")
             (gateway_dir / filename).write_text(content)
+
+    # Bundle OpenAI-compatible schema types
+    import agentstack.schema.openai as _openai_schema
+    _openai_src = Path(_openai_schema.__file__)
+    if _openai_src.exists():
+        (gateway_dir / "openai_types.py").write_text(_openai_src.read_text())
 
     providers_dir = gateway_dir / "providers"
     providers_dir.mkdir(parents=True, exist_ok=True)
