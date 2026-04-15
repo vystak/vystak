@@ -75,12 +75,25 @@ def apply(files, file_path, force):
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
 
+    # Deploy gateway if multiple agents
+    gateway_url = None
+    if len(deployed) > 1:
+        click.echo("\nGateway:")
+        click.echo("  Building routes... ", nl=False)
+        from agentstack_cli.gateway import deploy_gateway
+        gateway_url = deploy_gateway(deployed)
+        if gateway_url:
+            click.echo("OK")
+            click.echo(f"  Gateway deployed at {gateway_url}")
+        else:
+            click.echo("skipped (no routes)")
+
     # Deployment summary
     if deployed:
-        _print_summary(deployed)
+        _print_summary(deployed, gateway_url=gateway_url)
 
 
-def _print_summary(deployed: list[dict]) -> None:
+def _print_summary(deployed: list[dict], gateway_url: str | None = None) -> None:
     """Print deployment summary with infrastructure and agent details."""
     click.echo("\n" + "=" * 60)
     click.echo(f"Deployment complete — {len(deployed)} agent(s) deployed")
@@ -118,14 +131,24 @@ def _print_summary(deployed: list[dict]) -> None:
             url = d.get("url", "")
         click.echo(f"  {d['name']:<{max_name}}  {url}")
 
+    # Gateway
+    if gateway_url:
+        click.echo(f"\nGateway:")
+        click.echo(f"  {gateway_url}")
+        click.echo(f"  Agents:  {gateway_url}/agents")
+        click.echo(f"  Health:  {gateway_url}/health")
+
     # Connect command
     click.echo("\nConnect:")
-    for d in deployed:
-        result = d.get("result")
-        if result and hasattr(result, "message") and " at " in result.message:
-            url = result.message.split(" at ", 1)[1]
-            click.echo(f"  agentstack-chat --url {url}")
-            break  # Show connect for first agent only
+    if gateway_url:
+        click.echo(f"  agentstack-chat --gateway {gateway_url}")
+    else:
+        for d in deployed:
+            result = d.get("result")
+            if result and hasattr(result, "message") and " at " in result.message:
+                url = result.message.split(" at ", 1)[1]
+                click.echo(f"  agentstack-chat --url {url}")
+                break
 
 
 def _find_agent_base_dir(agent_name: str, paths: list[Path]) -> Path:
