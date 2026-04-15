@@ -125,7 +125,7 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
     return Text("...", style="dim")
 
 
-async def _stream_response(url: str, message: str, session_id: str, agent_name: str) -> client.StreamResult:
+async def _stream_response(url: str, message: str, session_id: str, agent_name: str, model: str = "") -> client.StreamResult:
     """Stream response without disrupting the prompt_toolkit layout."""
     stream_result = client.StreamResult()
     tokens_buf: list[str] = []
@@ -137,7 +137,7 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
     status_line_shown = True
 
     try:
-        async for event in client.stream_events(url, message, session_id, result=stream_result):
+        async for event in client.stream_events(url, message, session_id, result=stream_result, model=model):
             if event.type == "token":
                 if status_line_shown:
                     console.print(" " * 60, end="\r")
@@ -170,7 +170,7 @@ async def _stream_response(url: str, message: str, session_id: str, agent_name: 
         if not has_output:
             if status_line_shown:
                 console.print(" " * 60, end="\r")
-            invoke_result = await client.invoke(url, message, session_id)
+            invoke_result = await client.invoke(url, message, session_id, model=model)
             console.print(f"[agent]{agent_name}[/agent]")
             console.print(Markdown(invoke_result.response))
             stream_result.input_tokens = invoke_result.input_tokens
@@ -196,6 +196,7 @@ class ChatREPL:
     def __init__(self):
         self._agent_name: str | None = None
         self._agent_url: str | None = None
+        self._model: str = ""  # OpenAI model ID (e.g., "agentstack/assistant-agent")
         self._session_id: str | None = None
         self._running = True
         self._total_input_tokens: int = 0
@@ -276,6 +277,7 @@ class ChatREPL:
 
         self._agent_name = agent_name
         self._agent_url = url
+        self._model = f"agentstack/{agent_name}"
 
         session = create_session(agent_name, url)
         self._session_id = session["id"]
@@ -457,8 +459,9 @@ class ChatREPL:
             return
 
         agent_name = selected["agent_name"]
-        # Use gateway proxy URL (not the internal Docker URL)
-        agent_url = f"{gateway_url}/proxy/{agent_name}"
+        # Use gateway URL with model routing (not the old proxy URL)
+        agent_url = gateway_url
+        model_id = f"agentstack/{agent_name}"
 
         # Save and connect
         add_agent(agent_name, agent_url)
@@ -466,6 +469,7 @@ class ChatREPL:
 
         self._agent_name = agent_name
         self._agent_url = agent_url
+        self._model = model_id
         session = create_session(agent_name, agent_url)
         self._session_id = session["id"]
         self._reset_tokens()
@@ -507,7 +511,7 @@ class ChatREPL:
         try:
             console.print(f"\n[user]You[/user]")
             console.print(message)
-            result = await _stream_response(self._agent_url, message, self._session_id, self._agent_name)
+            result = await _stream_response(self._agent_url, message, self._session_id, self._agent_name, model=self._model)
             self._last_input_tokens = result.input_tokens
             self._last_output_tokens = result.output_tokens
             self._total_input_tokens += result.input_tokens
@@ -640,20 +644,21 @@ def run_oneshot(url: str | None = None, message: str = ""):
             health_info = await client.health(agent_url)
             if health_info:
                 if "routes" in health_info:
-                    # Gateway detected — use first agent via proxy
+                    # Gateway detected — use gateway URL with model routing
                     routes = await client.gateway_routes(agent_url)
                     if routes:
                         agent_name = routes[0].get("agent_name", "agent")
-                        agent_url = f"{agent_url}/proxy/{agent_name}"
+                        model = f"agentstack/{agent_name}"
                         console.print(f"[dim]Gateway detected. Using {agent_name}[/dim]")
                     else:
                         console.print("[error]Gateway has no agents[/error]")
                         raise SystemExit(1)
                 else:
                     agent_name = health_info.get("agent", "agent")
+                    model = ""
 
         session = create_session(agent_name, agent_url)
-        result = await _stream_response(agent_url, message, session["id"], agent_name)
+        result = await _stream_response(agent_url, message, session["id"], agent_name, model=model)
 
         if result.total_tokens:
             console.print(
