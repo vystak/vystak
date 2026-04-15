@@ -61,13 +61,19 @@ def apply(files, file_path, force):
             click.echo("  No changes detected, forcing redeploy.")
             deploy_plan.actions.append("Force redeploy")
 
-        click.echo("  Deploying... ", nl=False)
+        click.echo("  Deploying:")
         provider.set_generated_code(code)
         provider.set_agent(agent)
+
+        # Attach progress listener if provider supports it
+        if hasattr(provider, "set_listener"):
+            from agentstack.provisioning import PrintListener
+            provider.set_listener(PrintListener(indent="    "))
+
         result = provider.apply(deploy_plan)
 
         if result.success:
-            click.echo("OK")
+            click.echo("  OK")
             url = result.info.get("url", result.message) if hasattr(result, "info") else result.message
             deployed.append({"name": agent.name, "url": url, "agent": agent, "result": result})
         else:
