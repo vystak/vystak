@@ -60,6 +60,11 @@ class TestAgentCardCode:
         code = generate_agent_card_code(sample_agent)
         assert "/.well-known/agent.json" in code
 
+    def test_models_field_in_card(self, sample_agent):
+        code = generate_agent_card_code(sample_agent)
+        assert '"models"' in code
+        assert '"agentstack/test-bot"' in code
+
     def test_no_instructions_uses_name(self):
         agent = Agent(
             name="minimal-bot",

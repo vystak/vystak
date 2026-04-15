@@ -27,6 +27,7 @@ def generate_agent_card_code(agent: Agent) -> str:
         lines.append(f'            "name": "{skill_name}",')
         lines.append("        },")
     lines.append("    ],")
+    lines.append(f'    "models": ["agentstack/{agent.name}"],')
     lines.append("}")
     lines.append("")
     lines.append("")
