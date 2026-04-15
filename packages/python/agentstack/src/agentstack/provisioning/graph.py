@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from agentstack.provisioning.listener import NullListener, ProvisionEvent, ProvisionListener
 from agentstack.provisioning.node import Provisionable, ProvisionResult
 
 
@@ -17,6 +18,11 @@ class ProvisionError(Exception):
 class ProvisionGraph:
     _nodes: dict[str, Provisionable] = field(default_factory=dict)
     _implicit_deps: dict[str, list[str]] = field(default_factory=dict)
+    _listener: ProvisionListener = field(default_factory=NullListener)
+
+    def set_listener(self, listener: ProvisionListener) -> None:
+        """Set the event listener for provision progress."""
+        self._listener = listener
 
     def add(self, node: Provisionable) -> None:
         self._nodes[node.name] = node
@@ -62,13 +68,34 @@ class ProvisionGraph:
 
         for name in order:
             node = self._nodes[name]
+
+            self._listener.on_start(ProvisionEvent(
+                node_name=name, event_type="start", message=name,
+            ))
+
+            # Pass listener to node if it supports it
+            if hasattr(node, "set_listener"):
+                node.set_listener(self._listener)
+
             result = node.provision(context=results)
             results[name] = result
 
             if not result.success:
+                self._listener.on_error(ProvisionEvent(
+                    node_name=name, event_type="error",
+                    message=name, detail=result.error or "",
+                ))
                 raise ProvisionError(f"Failed to provision {name}: {result.error}")
 
+            self._listener.on_complete(ProvisionEvent(
+                node_name=name, event_type="complete",
+                message=name, detail=result.info.get("detail", ""),
+            ))
+
             check = node.health_check()
+            self._listener.on_health_check(ProvisionEvent(
+                node_name=name, event_type="health_check", message=f"Waiting for {name}",
+            ))
             check.wait()
 
         return results

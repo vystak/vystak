@@ -23,6 +23,7 @@ class ResourceGroupNode(Provisionable):
         try:
             exists = self._client.resource_groups.check_existence(self._rg_name)
             if not exists:
+                self.emit("Creating", self._rg_name)
                 self._client.resource_groups.create_or_update(
                     self._rg_name,
                     ResourceGroup(location=self._location, tags=self._tags),
@@ -30,7 +31,7 @@ class ResourceGroupNode(Provisionable):
             return ProvisionResult(
                 name=self.name,
                 success=True,
-                info={"rg_name": self._rg_name, "created": not exists},
+                info={"rg_name": self._rg_name, "created": not exists, "detail": "created" if not exists else "exists"},
             )
         except Exception as e:
             return ProvisionResult(name=self.name, success=False, error=str(e))

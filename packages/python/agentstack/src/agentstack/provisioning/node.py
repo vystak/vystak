@@ -15,6 +15,8 @@ class ProvisionResult:
 
 
 class Provisionable(ABC):
+    _listener = None
+
     @property
     @abstractmethod
     def name(self) -> str: ...
@@ -31,3 +33,16 @@ class Provisionable(ABC):
 
     def destroy(self) -> None:
         pass
+
+    def set_listener(self, listener) -> None:
+        """Set the event listener for sub-step progress."""
+        self._listener = listener
+
+    def emit(self, message: str, detail: str = "") -> None:
+        """Emit a sub-step event during provisioning."""
+        if self._listener:
+            from agentstack.provisioning.listener import ProvisionEvent
+            self._listener.on_step(ProvisionEvent(
+                node_name=self.name, event_type="step",
+                message=message, detail=detail,
+            ))
