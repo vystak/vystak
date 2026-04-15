@@ -113,6 +113,32 @@ class MemoryRegistrationStore(RegistrationStore):
         return dict(self._data)
 
 
+class ThreadStore:
+    """In-memory store for thread-to-agent bindings."""
+
+    def __init__(self):
+        self._threads: dict[str, dict] = {}
+
+    def create(self, thread_id: str, model: str | None = None, metadata: dict | None = None) -> dict:
+        import time
+        thread = {
+            "id": thread_id,
+            "object": "thread",
+            "created_at": int(time.time()),
+            "metadata": metadata or {},
+            "model": model,
+        }
+        self._threads[thread_id] = thread
+        return thread
+
+    def get(self, thread_id: str) -> dict | None:
+        return self._threads.get(thread_id)
+
+    def bind_model(self, thread_id: str, model: str) -> None:
+        if thread_id in self._threads:
+            self._threads[thread_id]["model"] = model
+
+
 def create_store() -> RegistrationStore:
     """Create a registration store based on environment config."""
     store_url = os.environ.get("REGISTRATION_STORE_URL", "")
