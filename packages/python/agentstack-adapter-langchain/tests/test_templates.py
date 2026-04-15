@@ -278,6 +278,13 @@ class TestMemoryGeneration:
         assert "save_memory" not in code
         assert "forget_memory" not in code
 
+    def test_prompt_callable_with_resource(self, postgres_agent):
+        """Persistent agents use a prompt callable for ephemeral memory recall."""
+        code = generate_agent_py(postgres_agent)
+        assert "_make_prompt" in code
+        assert "prompt_fn" in code
+        assert "asearch" in code
+
     def test_memory_system_prompt_with_resource(self, postgres_agent):
         code = generate_agent_py(postgres_agent)
         assert "long-term memory" in code.lower()
@@ -316,9 +323,10 @@ class TestServerMemory:
         code = generate_server_py(postgres_agent)
         assert "project_id" in code
 
-    def test_server_recall_memories(self, postgres_agent):
+    def test_server_no_recall_memories(self, postgres_agent):
+        """Memory recall moved to agent's prompt callable — not in server."""
         code = generate_server_py(postgres_agent)
-        assert "recall_memories" in code
+        assert "recall_memories" not in code
 
     def test_server_handle_memory_actions(self, postgres_agent):
         code = generate_server_py(postgres_agent)
