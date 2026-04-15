@@ -1,4 +1,4 @@
-"""Agent API client — invoke and stream responses."""
+"""Agent API client — OpenAI Responses API + Chat Completions."""
 
 import json
 from collections.abc import AsyncIterator
@@ -8,9 +8,9 @@ import httpx
 
 
 @dataclass
-class InvokeResult:
+class ResponseResult:
     response: str
-    session_id: str
+    response_id: str
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -27,51 +27,62 @@ class StreamResult:
 @dataclass
 class StreamEvent:
     """A single event from the stream."""
-    type: str  # "token", "tool_call_start", "tool_result", "done"
+    type: str  # "token", "function_call_start", "function_call_args", "function_call_output", "done"
     token: str = ""
     tool: str = ""
+    args: str = ""
     result: str = ""
     usage: dict | None = None
+    response_id: str = ""
 
 
-async def invoke(url: str, message: str, session_id: str, model: str = "") -> InvokeResult:
-    """Send a message and get a complete response with usage info."""
+async def send_response(
+    url: str, message: str, model: str = "",
+    previous_response_id: str | None = None,
+    user_id: str | None = None, project_id: str | None = None,
+) -> ResponseResult:
+    """Send a message via /v1/responses (non-streaming, store=true)."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
-            f"{url}/v1/chat/completions",
+            f"{url}/v1/responses",
             json={
                 "model": model,
-                "messages": [{"role": "user", "content": message}],
+                "input": message,
+                "previous_response_id": previous_response_id,
+                "store": True,
                 "stream": False,
-                "session_id": session_id,
             },
         )
         response.raise_for_status()
         data = response.json()
-        content = data["choices"][0]["message"]["content"] or ""
+        output = data.get("output", [])
+        content = output[0]["content"] if output else ""
         usage = data.get("usage") or {}
-        return InvokeResult(
+        return ResponseResult(
             response=content,
-            session_id=session_id,
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            response_id=data["id"],
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
         )
 
 
-async def stream_events(
-    url: str, message: str, session_id: str, result: StreamResult | None = None, model: str = ""
+async def stream_response(
+    url: str, message: str, model: str = "",
+    previous_response_id: str | None = None,
+    result: StreamResult | None = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Stream all events — tokens, tool calls, tool results, done."""
+    """Stream via /v1/responses with stream=true."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
-            f"{url}/v1/chat/completions",
+            f"{url}/v1/responses",
             json={
                 "model": model,
-                "messages": [{"role": "user", "content": message}],
+                "input": message,
+                "previous_response_id": previous_response_id,
+                "store": True,
                 "stream": True,
-                "session_id": session_id,
             },
         ) as response:
             response.raise_for_status()
@@ -87,29 +98,56 @@ async def stream_events(
                 except json.JSONDecodeError:
                     continue
 
-                choices = data.get("choices", [])
-                if not choices:
-                    continue
-                delta = choices[0].get("delta", {})
-                finish_reason = choices[0].get("finish_reason")
+                event_type = data.get("type", "")
 
-                # Extension events (tool calls, sub-agent activity)
-                x = data.get("x_agentstack")
-                if x:
-                    event_type = x.get("type", "")
-                    if event_type == "tool_call_start":
-                        yield StreamEvent(type="tool_call_start", tool=x.get("tool", ""))
-                    elif event_type == "tool_result":
-                        yield StreamEvent(type="tool_result", tool=x.get("tool", ""), result=x.get("result", ""))
-                    continue
+                if event_type == "response.output_text.delta":
+                    yield StreamEvent(type="token", token=data.get("delta", ""))
 
-                content = delta.get("content")
-                if content:
-                    yield StreamEvent(type="token", token=content)
+                elif event_type == "response.output_item.added":
+                    item = data.get("item", {})
+                    if item.get("type") == "function_call":
+                        yield StreamEvent(type="function_call_start", tool=item.get("name", ""))
+                    elif item.get("type") == "function_call_output":
+                        yield StreamEvent(type="function_call_output", result=item.get("output", ""))
 
-                if finish_reason == "stop":
-                    yield StreamEvent(type="done")
+                elif event_type == "response.function_call_arguments.delta":
+                    yield StreamEvent(type="function_call_args", args=data.get("delta", ""))
+
+                elif event_type == "response.completed":
+                    resp = data.get("response", {})
+                    usage = resp.get("usage") or {}
+                    if result is not None:
+                        result.input_tokens = usage.get("input_tokens", 0)
+                        result.output_tokens = usage.get("output_tokens", 0)
+                        result.total_tokens = usage.get("total_tokens", 0)
+                    yield StreamEvent(
+                        type="done",
+                        response_id=resp.get("id", ""),
+                        usage=usage,
+                    )
                     return
+
+
+async def get_response(url: str, response_id: str) -> dict | None:
+    """Get a response by ID (for background polling)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{url}/v1/responses/{response_id}")
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        return None
+
+
+async def list_models(url: str) -> list[dict]:
+    """Get available models from /v1/models."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{url}/v1/models")
+            response.raise_for_status()
+            return response.json().get("data", [])
+    except Exception:
+        return []
 
 
 async def health(url: str) -> dict | None:
@@ -123,19 +161,8 @@ async def health(url: str) -> dict | None:
         return None
 
 
-async def list_models(url: str) -> list[dict]:
-    """List available models from the agent."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{url}/v1/models")
-            response.raise_for_status()
-            return response.json().get("data", [])
-    except Exception:
-        return []
-
-
 async def gateway_routes(gateway_url: str) -> list[dict]:
-    """Get all routes from a gateway — discovers deployed agents."""
+    """Get all routes from a gateway."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{gateway_url}/routes")
