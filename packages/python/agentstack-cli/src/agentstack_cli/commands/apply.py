@@ -13,7 +13,8 @@ from agentstack_cli.provider_factory import get_provider
 @click.command()
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option("--file", "file_path", default=None, help="Path to agent definition file (legacy)")
-def apply(files, file_path):
+@click.option("--force", is_flag=True, default=False, help="Force redeploy even if no changes detected")
+def apply(files, file_path, force):
     """Deploy or update agents."""
     if files:
         paths = [Path(f) for f in files]
@@ -51,10 +52,14 @@ def apply(files, file_path):
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
 
-        if not deploy_plan.actions:
+        if not deploy_plan.actions and not force:
             click.echo("  No changes. Already up to date.")
             deployed.append({"name": agent.name, "url": "(unchanged)", "agent": agent})
             continue
+
+        if not deploy_plan.actions and force:
+            click.echo("  No changes detected, forcing redeploy.")
+            deploy_plan.actions.append("Force redeploy")
 
         click.echo("  Deploying... ", nl=False)
         provider.set_generated_code(code)
