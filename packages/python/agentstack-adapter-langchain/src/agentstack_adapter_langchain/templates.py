@@ -827,7 +827,8 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
-        sse-starlette>=2.0{checkpoint_pkg}{mcp_pkg}{tool_deps}
+        sse-starlette>=2.0
+        agentstack>=0.1{checkpoint_pkg}{mcp_pkg}{tool_deps}
     """)
 
 
