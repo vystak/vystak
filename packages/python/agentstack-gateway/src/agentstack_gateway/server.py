@@ -83,6 +83,14 @@ class RegisterRouteRequest(BaseModel):
     dm: bool = True
 
 
+class RegisterAgentRequest(BaseModel):
+    """Agent self-registration request."""
+    name: str
+    url: str
+    description: str = ""
+    skills: list[dict] = []
+
+
 @app.get("/health")
 async def health():
     return {
@@ -149,6 +157,31 @@ async def list_routes():
     ]
 
 
+# === Agent Self-Registration ===
+
+@app.post("/register")
+async def register_agent(request: RegisterAgentRequest):
+    """Agent self-registration. Called by agents on startup."""
+    route = Route(
+        provider_name="api",
+        agent_name=request.name,
+        agent_url=request.url,
+        channels=[],
+        listen="all",
+        threads=True,
+        dm=True,
+    )
+    router.add_route(route)
+    return {"status": "registered", "agent": request.name, "url": request.url}
+
+
+@app.delete("/unregister/{agent_name}")
+async def unregister_agent(agent_name: str):
+    """Agent deregistration. Called by agents on shutdown."""
+    router.remove_routes(agent_name)
+    return {"status": "unregistered", "agent": agent_name}
+
+
 # === Chat / A2A Proxy ===
 # The gateway proxies requests to agents, acting as the unified entry point.
 
@@ -159,21 +192,25 @@ from fastapi.responses import StreamingResponse
 
 @app.get("/agents")
 async def list_agents():
-    """List all registered agents with their Agent Cards."""
+    """List all registered agents with status and Agent Cards."""
     agents = []
     async with httpx.AsyncClient(timeout=10) as client:
         for route in router.list_routes():
-            try:
-                resp = await client.get(f"{route.agent_url}/.well-known/agent.json")
-                card = resp.json()
-                card["_route"] = {"agent_name": route.agent_name, "agent_url": route.agent_url}
-                agents.append(card)
-            except Exception:
-                agents.append({
-                    "name": route.agent_name,
-                    "url": route.agent_url,
-                    "status": "unreachable",
-                })
+            entry = {
+                "name": route.agent_name,
+                "url": route.agent_url,
+                "status": route.status,
+                "registered_at": route.registered_at,
+                "last_seen": route.last_seen,
+            }
+            if route.status == "online":
+                try:
+                    resp = await client.get(f"{route.agent_url}/.well-known/agent.json")
+                    card = resp.json()
+                    entry.update(card)
+                except Exception:
+                    pass
+            agents.append(entry)
     return agents
 
 
@@ -185,9 +222,14 @@ async def proxy_invoke(agent_name: str, request: Request):
         return {"error": f"Agent '{agent_name}' not found"}
 
     body = await request.json()
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{route.agent_url}/invoke", json=body)
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{route.agent_url}/invoke", json=body)
+            router.mark_online(agent_name)
+            return resp.json()
+    except Exception as e:
+        router.mark_offline(agent_name, str(e))
+        return {"error": f"Agent '{agent_name}' is not responding: {e}"}
 
 
 @app.post("/stream/{agent_name}")
@@ -271,9 +313,14 @@ async def proxy_agent_invoke(agent_name: str, request: Request):
     if not route:
         return {"error": f"Agent '{agent_name}' not found"}
     body = await request.json()
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{route.agent_url}/invoke", json=body)
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{route.agent_url}/invoke", json=body)
+            router.mark_online(agent_name)
+            return resp.json()
+    except Exception as e:
+        router.mark_offline(agent_name, str(e))
+        return {"error": f"Agent '{agent_name}' is not responding: {e}"}
 
 
 @app.post("/proxy/{agent_name}/stream")
