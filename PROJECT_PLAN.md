@@ -12,14 +12,14 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ## Current State
 
-**Status:** MVP complete and running in production-like Docker deployments.
+**Status:** Multi-cloud deployment working — Docker + Azure Container Apps with multi-agent gateway.
 
 **Numbers:**
-- 123 commits
-- 319 tests across 40 test files
-- ~4,400 lines of Python source code
-- 8 Python packages + 4 TypeScript stubs
-- 2 design sessions (April 11-12, 2026)
+- 200+ commits
+- 475 tests across 50+ test files
+- 9 Python packages + 4 TypeScript stubs
+- 9 examples (Docker + Azure)
+- 3 design sessions (April 11-14, 2026)
 
 ## What We Built
 
@@ -35,10 +35,20 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 **Core SDK (`agentstack`):**
 - Pydantic v2 schema models for all 7 concepts: Agent, Skill, Channel, Resource, Workspace, Provider, Platform
 - Plus: McpServer, Secret, Model, Embedding, Gateway, ChannelProvider, SlackChannel
+- Service types: Postgres, Sqlite, Redis, Qdrant — replace generic Resource
+- First-class `sessions` and `memory` fields on Agent
 - Content-addressable hash engine (SHA-256 hash tree for change detection)
 - YAML/JSON loader (`load_agent`, `dump_agent`)
+- Multi-agent YAML loader with named references (providers, platforms, models)
+- Base + env config loading (`agentstack.base.yaml` + `agentstack.env.yaml`)
 - AsyncSqliteStore for long-term memory persistence
 - Provider ABCs: FrameworkAdapter, PlatformProvider, ChannelAdapter
+- Provisioning engine:
+  - ProvisionGraph — DAG with topological sort (Kahn's algorithm)
+  - Provisionable protocol — name, depends_on, provision(), health_check()
+  - HealthCheck ABCs: Noop, TCP, Command, HTTP
+  - ProvisionListener — event callbacks for progress reporting (on_start/on_step/on_complete/on_error)
+  - Platform fingerprint grouping for shared infrastructure dedup
 
 ### Phase 2: LangChain Adapter (Complete)
 
@@ -144,6 +154,161 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - Rich markdown rendering for agent responses
 - One-shot mode (`-p "question"`) for scripting
 
+### Phase 9: Schema Refactor (Complete — April 13, 2026)
+
+**Provider/Platform/Service separation:**
+- Provider = cloud account (azure, docker, anthropic)
+- Platform = where agents run (container-apps, docker)
+- Service = typed infrastructure (Postgres, Sqlite, Redis, Qdrant)
+- `sessions` and `memory` as first-class Agent fields
+- `depends_on` for explicit service dependencies
+- Backward compatible — old `resources` field still works
+
+### Phase 10: Provision Graph (Complete — April 13, 2026)
+
+**Dependency-aware provisioning:**
+- ProvisionGraph with Kahn's topological sort
+- Provisionable protocol (name, depends_on, provision, health_check)
+- HealthCheck hierarchy (Noop, TCP, Command, HTTP)
+- ProvisionListener for progress events
+- Docker provider rewired to use graph
+- Implicit dependencies: network → services → agent → gateways
+
+### Phase 11: Azure Provider — Phase 2a (Complete — April 13, 2026)
+
+**Minimal Azure Container Apps deployment:**
+- `agentstack-provider-azure` package
+- Auth: DefaultAzureCredential (az CLI → service principal)
+- 5 Azure node types: ResourceGroup, LogAnalytics, ACR, ACA Environment, ContainerApp
+- Cross-platform build (docker buildx linux/amd64 for ARM Macs)
+- Hash-based change detection via ACA tags
+- Tag-based destroy (`--include-resources`)
+- CLI provider factory — auto-selects Docker vs Azure
+- Tested: 3 agents deployed to ACA, A2A working
+
+### Phase 12: Multi-Agent Deployment (Complete — April 14, 2026)
+
+**Pulumi-style resource deduplication:**
+- Python: same object `id()` → shared infrastructure
+- YAML: named `providers`, `platforms`, `models` blocks — agents reference by name
+- Base + env config: `agentstack.base.yaml` + `agentstack.env.yaml` + `AGENTSTACK_ENV`
+- CLI accepts multiple files/directories: `agentstack apply weather/ time/ assistant/`
+- Platform fingerprint grouping — shared RG, ACR, ACA Environment
+- All CLI commands updated: apply, destroy, status, plan, logs
+- `--force` flag to redeploy without changes
+- `--name` flag to target individual agents
+
+### Phase 13: Gateway + Agent Registration (Complete — April 14, 2026)
+
+**Auto-deployed gateway with CLI-driven registration:**
+- Gateway auto-deploys after multi-agent apply (Docker + Azure)
+- CLI registers agents via `POST /register` after deploy
+- Persistent registration store (Postgres, SQLite, in-memory)
+- Health tracking: marks agents offline after 3 consecutive proxy failures
+- Gateway URL injection into Azure Container Apps
+- Deployment summary with shared infra, agent URLs, connect command
+
+---
+
+## Planned: Phase 14 — Azure Provider Phase 2b/2c
+
+### Phase 2b: Postgres + VNet + Key Vault
+
+**Goal:** Full production Azure deployment with private networking and managed database.
+
+- [ ] **Azure Database for PostgreSQL Flexible Server**
+  - AzurePostgresNode in provision graph
+  - SKU: Standard_B1ms (burstable), configurable via `config.sku`
+  - Auto-create database `agentstack`
+  - Connection string injected into Container App env
+  - Bring-your-own via `connection_string_env` (skip provisioning)
+
+- [ ] **Virtual Network**
+  - AzureVNetNode with two subnets: ACA (10.0.0.0/23) + Postgres (10.0.2.0/24)
+  - ACA Environment integrated with VNet for private networking
+  - Postgres private access via VNet subnet delegation
+  - Agents reach Postgres via private IP (no public endpoint)
+
+- [ ] **Key Vault**
+  - AzureKeyVaultNode for secret management
+  - Store ANTHROPIC_API_KEY, database passwords, ACR credentials
+  - Container Apps reference secrets from Key Vault (managed identity)
+  - Replaces plaintext secret injection in env vars
+
+- [ ] **Managed Identity**
+  - User-assigned managed identity for ACA → ACR pull (no admin user)
+  - Key Vault access policy for Container Apps
+  - Postgres Azure AD auth (optional, alongside password auth)
+
+- [ ] **Session/memory examples on Azure**
+  - `sessions-postgres` example deployed to Azure with managed Postgres
+  - `memory-agent` example with both sessions + memory on Azure Postgres
+  - Verify session persistence survives Container App restarts
+
+### Phase 2c: Full Lifecycle
+
+**Goal:** Complete Azure operational commands.
+
+- [ ] **`agentstack destroy` — full tag-based cleanup**
+  - Delete resources in reverse dependency order
+  - Respect shared resources (don't delete ACR if other agents use it)
+  - Auto-delete RG only if AgentStack created it (not user-specified)
+  - Confirmation prompt before deleting infrastructure
+
+- [ ] **`agentstack status` — rich Azure status**
+  - Show provisioning state, replica count, FQDN
+  - Show resource group contents
+  - Show cost estimate (based on SKU + replica hours)
+
+- [ ] **`agentstack logs` — Azure Monitor integration**
+  - Query Log Analytics workspace for container logs
+  - `--follow` for live tail via streaming query
+  - `--tail N` for last N log lines
+  - Filter by agent name
+
+- [ ] **`agentstack plan` — Azure diff**
+  - Compare local hash with deployed hash (from ACA tags)
+  - Show which resources would be created/updated/unchanged
+  - Show infrastructure changes (new VNet, new Postgres, etc.)
+  - Estimate cost impact
+
+---
+
+## Planned: Phase 15 — Parallel Provisioning
+
+**Goal:** Provision independent graph nodes concurrently for faster deployments.
+
+- [ ] **Parallel graph execution**
+  - Identify independent nodes (same depth in topo-sort, no shared dependencies)
+  - Execute independent nodes concurrently via `asyncio.gather()`
+  - Sequential execution for dependent chains
+  - Example: RG → (LogAnalytics + ACR + VNet in parallel) → ACA Environment → (3 Container Apps in parallel)
+
+- [ ] **Async Provisionable protocol**
+  - `async def provision(self, context)` — awaitable
+  - `async def health_check().wait()` — async health polling
+  - Backward compat: sync nodes wrapped in `asyncio.to_thread()`
+
+- [ ] **Concurrency control**
+  - `ProvisionGraph.execute(max_concurrency=N)` — limit parallel operations
+  - Default: 5 concurrent provisions (Azure ARM has rate limits)
+  - Per-provider throttling (Azure: 5, Docker: 10)
+
+- [ ] **Progress reporting for parallel execution**
+  - ProvisionListener events include concurrency info
+  - `on_start` shows which nodes are running in parallel
+  - `on_complete` shows remaining nodes
+  - CLI output: `[3/7] Creating ACR + Log Analytics + VNet...`
+
+- [ ] **Docker parallel provisioning**
+  - Independent services (postgres for sessions + postgres for memory) in parallel
+  - Multiple agent containers built + started in parallel
+  - Network must be created first (dependency)
+
+- [ ] **Estimated speed improvements**
+  - Azure multi-agent: ~8 min sequential → ~4 min parallel (2 Container Apps at once)
+  - Docker multi-agent: ~30s sequential → ~15s parallel
+
 ---
 
 ## Architecture
@@ -161,8 +326,9 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
        └────────┬──┘  └─────┬─────┘  └───┬────────┘
                 │            │            │
           LangChain     Docker       REST API
-          LangGraph   Kubernetes      Slack
-          (future)   AWS AgentCore   (future)
+          LangGraph   Azure ACA      Slack
+          (future)   Kubernetes     (future)
+                     AWS AgentCore
 
                     ┌─────────────────┐
                     │    Gateway      │  ← Unified entry point
@@ -181,11 +347,12 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 | Package | Description | Status |
 |---------|-------------|--------|
-| `agentstack` | Core SDK — schema, hash, loader, stores | Complete |
-| `agentstack-cli` | CLI tool — init, plan, apply, destroy, status, logs | Complete |
+| `agentstack` | Core SDK — schema, hash, loader, provisioning engine | Complete |
+| `agentstack-cli` | CLI — init, plan, apply, destroy, status, logs | Complete |
 | `agentstack-adapter-langchain` | LangChain/LangGraph code generator | Complete |
-| `agentstack-provider-docker` | Docker deployment provider | Complete |
-| `agentstack-gateway` | Channel gateway (Slack, API routing) | Complete |
+| `agentstack-provider-docker` | Docker deployment provider (provision graph) | Complete |
+| `agentstack-provider-azure` | Azure Container Apps provider | Complete (Phase 2a) |
+| `agentstack-gateway` | Gateway — routing, registration, health tracking | Complete |
 | `agentstack-chat` | Interactive chat client | Complete |
 | `agentstack-adapter-mastra` | Mastra framework adapter | Stub |
 | `agentstack-channel-api` | REST API channel adapter | Stub |
@@ -505,6 +672,11 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `specs/2026-04-12-real-tool-loading-design.md`
 - `specs/2026-04-12-a2a-server-design.md`
 - `specs/2026-04-12-mcp-integration-design.md`
+- `specs/2026-04-12-schema-refactor-design.md`
+- `specs/2026-04-13-test-examples-design.md`
+- `specs/2026-04-13-provision-graph-design.md`
+- `specs/2026-04-13-azure-provider-design.md`
+- `specs/2026-04-13-multi-agent-deploy-design.md`
 
 **Plans:**
 - `plans/2026-04-11-monorepo-scaffold.md`
@@ -516,6 +688,11 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `plans/2026-04-12-real-tool-loading.md`
 - `plans/2026-04-12-a2a-server.md`
 - `plans/2026-04-12-mcp-integration.md`
+- `plans/2026-04-12-schema-refactor.md`
+- `plans/2026-04-13-test-examples.md`
+- `plans/2026-04-13-provision-graph.md`
+- `plans/2026-04-13-azure-provider-phase2a.md`
+- `plans/2026-04-14-multi-agent-loader.md`
 
 ---
 
