@@ -144,6 +144,10 @@ class ContainerAppNode(Provisionable):
                         "secretRef": safe_name,
                     })
 
+            # Inject extra env vars (gateway URL, peer URLs, etc.)
+            for key, value in self._platform_config.get("env", {}).items():
+                env_vars.append({"name": key, "value": value})
+
             # ----------------------------------------------------------
             # 4. Create Container App
             # ----------------------------------------------------------

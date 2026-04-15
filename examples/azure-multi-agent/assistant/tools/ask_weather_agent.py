@@ -1,11 +1,16 @@
 import json
+import os
 import uuid
 
 import httpx
 from langgraph.config import get_config, get_stream_writer
 
 
-WEATHER_AGENT_URL = "http://agentstack-weather-agent:8000/a2a"
+_gateway = os.environ.get("AGENTSTACK_GATEWAY_URL", "")
+if _gateway:
+    WEATHER_AGENT_URL = f"{_gateway}/a2a/weather-agent"
+else:
+    WEATHER_AGENT_URL = os.environ.get("WEATHER_AGENT_URL", "http://agentstack-weather-agent:8000") + "/a2a"
 
 
 async def ask_weather_agent(question: str) -> str:
