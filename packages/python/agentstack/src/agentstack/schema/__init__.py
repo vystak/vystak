@@ -21,6 +21,27 @@ from agentstack.schema.secret import Secret
 from agentstack.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from agentstack.schema.skill import Skill, SkillRequirements
 from agentstack.schema.workspace import Workspace
+from agentstack.schema.openai import (
+    ChatCompletionChunk,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatMessage,
+    Choice,
+    ChunkChoice,
+    ChunkDelta,
+    CompletionUsage,
+    ContentBlock,
+    CreateMessageRequest,
+    CreateRunRequest,
+    CreateThreadRequest,
+    ErrorDetail,
+    ErrorResponse,
+    ModelList,
+    ModelObject,
+    Run,
+    Thread,
+    ThreadMessage,
+)
 
 __all__ = [
     "Agent", "Cache", "Channel", "ChannelProvider", "ChannelType", "Database",
@@ -29,4 +50,10 @@ __all__ = [
     "Redis", "Resource", "Secret", "Service", "SessionStore", "Skill",
     "SkillRequirements", "SlackChannel", "Sqlite", "VectorStore",
     "Workspace", "WorkspaceType",
+    # OpenAI-compatible API models
+    "ChatCompletionChunk", "ChatCompletionRequest", "ChatCompletionResponse",
+    "ChatMessage", "Choice", "ChunkChoice", "ChunkDelta", "CompletionUsage",
+    "ContentBlock", "CreateMessageRequest", "CreateRunRequest",
+    "CreateThreadRequest", "ErrorDetail", "ErrorResponse", "ModelList",
+    "ModelObject", "Run", "Thread", "ThreadMessage",
 ]
