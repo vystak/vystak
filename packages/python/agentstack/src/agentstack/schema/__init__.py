@@ -30,17 +30,15 @@ from agentstack.schema.openai import (
     ChunkChoice,
     ChunkDelta,
     CompletionUsage,
-    ContentBlock,
-    CreateMessageRequest,
-    CreateRunRequest,
-    CreateThreadRequest,
+    CreateResponseRequest,
     ErrorDetail,
     ErrorResponse,
+    InputMessage,
     ModelList,
     ModelObject,
-    Run,
-    Thread,
-    ThreadMessage,
+    ResponseObject,
+    ResponseOutput,
+    ResponseUsage,
 )
 
 __all__ = [
@@ -53,7 +51,6 @@ __all__ = [
     # OpenAI-compatible API models
     "ChatCompletionChunk", "ChatCompletionRequest", "ChatCompletionResponse",
     "ChatMessage", "Choice", "ChunkChoice", "ChunkDelta", "CompletionUsage",
-    "ContentBlock", "CreateMessageRequest", "CreateRunRequest",
-    "CreateThreadRequest", "ErrorDetail", "ErrorResponse", "ModelList",
-    "ModelObject", "Run", "Thread", "ThreadMessage",
+    "CreateResponseRequest", "ErrorDetail", "ErrorResponse", "InputMessage",
+    "ModelList", "ModelObject", "ResponseObject", "ResponseOutput", "ResponseUsage",
 ]
