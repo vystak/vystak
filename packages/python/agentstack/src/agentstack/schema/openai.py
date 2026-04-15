@@ -1,7 +1,7 @@
 """OpenAI-compatible API schema models.
 
 Shared Pydantic types used by both agent servers and the gateway
-to implement OpenAI Chat Completions, Models, and Threads APIs.
+to implement OpenAI Chat Completions, Models, and Responses APIs.
 """
 
 from pydantic import BaseModel
@@ -33,7 +33,6 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage]
     stream: bool = False
     # Extension fields
-    session_id: str | None = None
     user_id: str | None = None
     project_id: str | None = None
 
@@ -79,52 +78,46 @@ class ChatCompletionChunk(BaseModel):
     x_agentstack: dict | None = None
 
 
-# === Threads API ===
+# === Responses API ===
 
-class CreateThreadRequest(BaseModel):
-    model: str | None = None
-    metadata: dict = {}
-
-
-class Thread(BaseModel):
-    id: str
-    object: str = "thread"
-    created_at: int
-    metadata: dict = {}
-
-
-class ContentBlock(BaseModel):
-    type: str = "text"
-    text: str
-
-
-class CreateMessageRequest(BaseModel):
+class InputMessage(BaseModel):
     role: str
     content: str
 
 
-class ThreadMessage(BaseModel):
-    id: str
-    object: str = "thread.message"
-    thread_id: str
-    role: str
-    content: list[ContentBlock]
-    created_at: int
-
-
-class CreateRunRequest(BaseModel):
+class CreateResponseRequest(BaseModel):
     model: str
+    input: str | list[InputMessage]
+    previous_response_id: str | None = None
+    store: bool = True
     stream: bool = False
+    background: bool = False
+    user_id: str | None = None
+    project_id: str | None = None
 
 
-class Run(BaseModel):
+class ResponseOutput(BaseModel):
+    type: str = "message"
+    role: str = "assistant"
+    content: str
+
+
+class ResponseUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ResponseObject(BaseModel):
     id: str
-    object: str = "thread.run"
-    thread_id: str
-    model: str
-    status: str
+    object: str = "response"
     created_at: int
-    completed_at: int | None = None
+    model: str
+    output: list[ResponseOutput]
+    status: str = "completed"
+    previous_response_id: str | None = None
+    usage: ResponseUsage | None = None
+    store: bool = True
 
 
 # === Error Response ===

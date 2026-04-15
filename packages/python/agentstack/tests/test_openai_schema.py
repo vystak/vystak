@@ -11,17 +11,15 @@ from agentstack.schema.openai import (
     ChunkChoice,
     ChunkDelta,
     CompletionUsage,
-    ContentBlock,
-    CreateMessageRequest,
-    CreateRunRequest,
-    CreateThreadRequest,
+    CreateResponseRequest,
     ErrorDetail,
     ErrorResponse,
+    InputMessage,
     ModelList,
     ModelObject,
-    Run,
-    Thread,
-    ThreadMessage,
+    ResponseObject,
+    ResponseOutput,
+    ResponseUsage,
 )
 
 
@@ -48,17 +46,15 @@ class TestChatCompletion:
             messages=[ChatMessage(role="user", content="hi")],
         )
         assert req.stream is False
-        assert req.session_id is None
 
     def test_request_with_extensions(self):
         req = ChatCompletionRequest(
             model="agentstack/test-bot",
             messages=[ChatMessage(role="user", content="hi")],
-            session_id="s1",
             user_id="u1",
             project_id="p1",
         )
-        assert req.session_id == "s1"
+        assert req.user_id == "u1"
 
     def test_response_structure(self):
         resp = ChatCompletionResponse(
@@ -82,44 +78,73 @@ class TestChatCompletion:
         assert chunk.choices[0].finish_reason is None
 
 
-class TestThread:
-    def test_create_request_optional_model(self):
-        req = CreateThreadRequest()
-        assert req.model is None
-
-    def test_create_request_with_model(self):
-        req = CreateThreadRequest(model="agentstack/test-bot")
-        assert req.model == "agentstack/test-bot"
-
-    def test_thread_object(self):
-        t = Thread(id="thread-1", created_at=1000)
-        assert t.object == "thread"
-
-    def test_message(self):
-        msg = ThreadMessage(
-            id="msg-1",
-            thread_id="thread-1",
-            role="user",
-            content=[ContentBlock(text="hello")],
-            created_at=1000,
-        )
-        assert msg.object == "thread.message"
-
-    def test_create_message_request(self):
-        req = CreateMessageRequest(role="user", content="hello")
-        assert req.role == "user"
-        assert req.content == "hello"
-
-    def test_run(self):
-        r = Run(
-            id="run-1",
-            thread_id="thread-1",
+class TestResponse:
+    def test_create_request_string_input(self):
+        req = CreateResponseRequest(
             model="agentstack/test-bot",
-            status="completed",
-            created_at=1000,
-            completed_at=1001,
+            input="hello",
         )
-        assert r.object == "thread.run"
+        assert req.store is True
+        assert req.stream is False
+        assert req.background is False
+        assert req.previous_response_id is None
+
+    def test_create_request_array_input(self):
+        req = CreateResponseRequest(
+            model="agentstack/test-bot",
+            input=[
+                InputMessage(role="user", content="hi"),
+                InputMessage(role="assistant", content="hello"),
+                InputMessage(role="user", content="how are you"),
+            ],
+        )
+        assert len(req.input) == 3
+
+    def test_create_request_with_chaining(self):
+        req = CreateResponseRequest(
+            model="agentstack/test-bot",
+            input="follow up",
+            previous_response_id="resp-abc123",
+            store=True,
+        )
+        assert req.previous_response_id == "resp-abc123"
+
+    def test_create_request_stateless(self):
+        req = CreateResponseRequest(
+            model="agentstack/test-bot",
+            input="one-shot",
+            store=False,
+        )
+        assert req.store is False
+
+    def test_response_object(self):
+        resp = ResponseObject(
+            id="resp-123",
+            created_at=1000,
+            model="agentstack/test-bot",
+            output=[ResponseOutput(content="hello")],
+        )
+        assert resp.object == "response"
+        assert resp.status == "completed"
+        assert resp.store is True
+
+    def test_response_in_progress(self):
+        resp = ResponseObject(
+            id="resp-123",
+            created_at=1000,
+            model="agentstack/test-bot",
+            output=[],
+            status="in_progress",
+        )
+        assert resp.status == "in_progress"
+
+    def test_response_usage(self):
+        usage = ResponseUsage(input_tokens=10, output_tokens=5, total_tokens=15)
+        assert usage.total_tokens == 15
+
+    def test_input_message(self):
+        msg = InputMessage(role="user", content="hello")
+        assert msg.role == "user"
 
 
 class TestError:
