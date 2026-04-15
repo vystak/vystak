@@ -75,18 +75,20 @@ def apply(files, file_path, force):
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
 
-    # Deploy gateway if multiple agents
+    # Deploy gateway and register agents if multiple agents
     gateway_url = None
     if len(deployed) > 1:
         click.echo("\nGateway:")
-        click.echo("  Building routes... ", nl=False)
-        from agentstack_cli.gateway import deploy_gateway
+        click.echo("  Deploying... ", nl=False)
+        from agentstack_cli.gateway import deploy_gateway, register_agents
         gateway_url = deploy_gateway(deployed)
         if gateway_url:
             click.echo("OK")
-            click.echo(f"  Gateway deployed at {gateway_url}")
+            click.echo(f"  {gateway_url}")
+            click.echo("  Registering agents...")
+            register_agents(gateway_url, deployed)
         else:
-            click.echo("skipped (no routes)")
+            click.echo("skipped")
 
     # Deployment summary
     if deployed:

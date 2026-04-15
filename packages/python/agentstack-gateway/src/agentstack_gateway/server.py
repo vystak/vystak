@@ -10,9 +10,11 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from agentstack_gateway.router import Route, Router
+from agentstack_gateway.store import RegistrationStore, create_store
 
 router = Router()
 providers: dict = {}
+reg_store: RegistrationStore | None = None
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
@@ -53,7 +55,28 @@ def load_routes_file(path: str | None = None) -> None:
 
 @asynccontextmanager
 async def lifespan(app_instance):
+    global reg_store
+    # Initialize registration store
+    reg_store = create_store()
+    await reg_store.setup()
+
+    # Load persisted registrations
+    registrations = await reg_store.list_all()
+    for agent_name, data in registrations.items():
+        route = Route(
+            provider_name=data.get("provider_name", "api"),
+            agent_name=agent_name,
+            agent_url=data["url"],
+            channels=data.get("channels", []),
+            listen=data.get("listen", "all"),
+            threads=data.get("threads", True),
+            dm=data.get("dm", True),
+        )
+        router.add_route(route)
+
+    # Load static routes file (if present)
     load_routes_file()
+
     for runner in providers.values():
         asyncio.create_task(runner.start())
     yield
@@ -161,7 +184,7 @@ async def list_routes():
 
 @app.post("/register")
 async def register_agent(request: RegisterAgentRequest):
-    """Agent self-registration. Called by agents on startup."""
+    """Register an agent. Called by CLI after deployment or by agents on startup."""
     route = Route(
         provider_name="api",
         agent_name=request.name,
@@ -172,13 +195,28 @@ async def register_agent(request: RegisterAgentRequest):
         dm=True,
     )
     router.add_route(route)
+
+    # Persist to store
+    if reg_store:
+        await reg_store.save(request.name, {
+            "url": request.url,
+            "description": request.description,
+            "skills": request.skills,
+            "provider_name": "api",
+        })
+
     return {"status": "registered", "agent": request.name, "url": request.url}
 
 
 @app.delete("/unregister/{agent_name}")
 async def unregister_agent(agent_name: str):
-    """Agent deregistration. Called by agents on shutdown."""
+    """Deregister an agent."""
     router.remove_routes(agent_name)
+
+    # Remove from store
+    if reg_store:
+        await reg_store.delete(agent_name)
+
     return {"status": "unregistered", "agent": agent_name}
 
 
