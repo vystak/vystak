@@ -581,7 +581,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        messages.append((msg.role, msg.content or ''))")
     lines.append("")
     lines.append("    if request.stream:")
-    lines.append("        return await _stream_chat_completions(messages, config)")
+    lines.append("        return await _stream_chat_completions(messages, config, request)")
     lines.append("")
     lines.append(f"    result = await {agent_ref}.ainvoke(")
     lines.append('        {"messages": messages},')
@@ -619,11 +619,12 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
 
     # === Chat Completions Streaming helper ===
-    lines.append("async def _stream_chat_completions(messages, config):")
+    lines.append("async def _stream_chat_completions(messages, config, request):")
     lines.append('    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"')
     lines.append("")
     lines.append("    async def event_generator():")
     lines.append("        usage = {}")
+    lines.append("        tool_msgs = []")
     lines.append(f"        async for chunk in {agent_ref}.astream(")
     lines.append('            {"messages": messages},')
     lines.append('            config=config,')
@@ -683,6 +684,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('                        x_agentstack={"type": "tool_result", "tool": tool_name, "result": output_str},')
     lines.append("                    ).model_dump()")
     lines.append('                    yield {"data": json.dumps(oai_chunk)}')
+    lines.append("                    tool_msgs.append(msg)")
     lines.append("        # Final chunk with finish_reason")
     lines.append("        final = ChatCompletionChunk(")
     lines.append("            id=completion_id,")
@@ -691,6 +693,12 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('            choices=[ChunkChoice(delta=ChunkDelta(), finish_reason="stop")],')
     lines.append("        ).model_dump()")
     lines.append('        yield {"data": json.dumps(final)}')
+
+    if uses_persistent:
+        lines.append("        # Process memory actions from tool messages")
+        lines.append("        if tool_msgs:")
+        lines.append("            await handle_memory_actions(_store, tool_msgs, user_id=request.user_id, project_id=request.project_id)")
+
     lines.append('        yield {"data": "[DONE]"}')
     lines.append("")
     lines.append("    return EventSourceResponse(event_generator())")
@@ -936,6 +944,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        output_index = 0")
     lines.append("        accumulated = []")
     lines.append("        pending_tool_calls = {}")
+    lines.append("        tool_messages_for_memory = []  # Collect tool messages for memory processing")
     lines.append("        final_output = []")
     lines.append("")
     lines.append("        # response.output_item.added (message)")
@@ -1027,6 +1036,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                        },")
     lines.append("                    }")
     lines.append('                    yield {"data": json.dumps(tool_output)}')
+    lines.append("                    tool_messages_for_memory.append(msg)")
     lines.append("")
     lines.append("        # response.output_text.done")
     lines.append("        full_text = ''.join(accumulated)")
@@ -1063,6 +1073,13 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                'thread_id': config['configurable']['thread_id'],")
     lines.append("                'created_at': created_at,")
     lines.append("            }")
+    lines.append("")
+
+    if uses_persistent:
+        lines.append("        # Process memory actions from tool messages")
+        lines.append("        if tool_messages_for_memory:")
+        lines.append("            await handle_memory_actions(_store, tool_messages_for_memory, user_id=request.user_id, project_id=request.project_id)")
+
     lines.append("")
     lines.append('        yield {"data": "[DONE]"}')
     lines.append("")
