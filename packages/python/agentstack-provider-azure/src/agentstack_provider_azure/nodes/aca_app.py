@@ -108,7 +108,7 @@ class ContainerAppNode(Provisionable):
             # ----------------------------------------------------------
             image_tag = f"{login_server}/{self._agent.name}:{self._plan.target_hash}"
 
-            # Use docker buildx for cross-platform build + push in one step
+            self.emit("Building image", "linux/amd64")
             subprocess.run(
                 ["docker", "login", login_server,
                  "--username", acr_username, "--password-stdin"],
@@ -125,6 +125,7 @@ class ContainerAppNode(Provisionable):
             )
             if result.returncode != 0:
                 raise RuntimeError(f"Docker buildx failed: {result.stderr}")
+            self.emit("Pushed to ACR", login_server)
 
             # ----------------------------------------------------------
             # 3. Collect secrets from environment
@@ -151,6 +152,7 @@ class ContainerAppNode(Provisionable):
             # ----------------------------------------------------------
             # 4. Create Container App
             # ----------------------------------------------------------
+            self.emit("Creating Container App", self._agent.name)
             cfg = self._platform_config
             port = cfg.get("port", 8000)
 

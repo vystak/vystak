@@ -27,10 +27,11 @@ def deploy_gateway(deployed: list[dict], gateway_name: str = "main") -> str | No
 
 def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
     """Inject AGENTSTACK_GATEWAY_URL env var into deployed agents."""
+    import os
+
     for d in deployed:
         agent = d["agent"]
         if not agent.platform or agent.platform.provider.type != "azure":
-            # Docker agents would need container restart — skip for now
             continue
 
         try:
@@ -44,25 +45,44 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
             rg_name = config.get("resource_group", f"agentstack-{agent.name}-rg")
 
             from azure.mgmt.appcontainers import ContainerAppsAPIClient
+            from azure.mgmt.appcontainers.models import EnvironmentVar, Secret
             aca_client = ContainerAppsAPIClient(credential, subscription_id)
 
-            # Get current app
             app = aca_client.container_apps.get(rg_name, agent.name)
 
-            # Check if env var already set
+            # Check if already set
             container = app.template.containers[0]
             existing_env = {e.name: e for e in (container.env or [])}
             if "AGENTSTACK_GATEWAY_URL" in existing_env:
                 click.echo(f"  {agent.name}: already configured")
                 continue
 
-            # Add gateway URL env var
-            from azure.mgmt.appcontainers.models import EnvironmentVar
+            # Add env var
             new_env = list(container.env or [])
             new_env.append(EnvironmentVar(name="AGENTSTACK_GATEWAY_URL", value=gateway_url))
             container.env = new_env
 
-            # Update the app
+            # Re-provide secret values (Azure strips them on GET)
+            # Get ACR creds
+            from azure.mgmt.containerregistry import ContainerRegistryManagementClient
+            acr_client = ContainerRegistryManagementClient(credential, subscription_id)
+            registries = list(acr_client.registries.list_by_resource_group(rg_name))
+            acr_password = ""
+            if registries:
+                creds = acr_client.registries.list_credentials(rg_name, registries[0].name)
+                acr_password = creds.passwords[0].value
+
+            secrets = []
+            for s in (app.configuration.secrets or []):
+                if s.name == "acr-password":
+                    secrets.append(Secret(name=s.name, value=acr_password))
+                else:
+                    # Re-read from os.environ (agent secrets like ANTHROPIC_API_KEY)
+                    env_name = s.name.upper().replace("-", "_")
+                    value = os.environ.get(env_name, "")
+                    secrets.append(Secret(name=s.name, value=value))
+            app.configuration.secrets = secrets
+
             aca_client.container_apps.begin_create_or_update(
                 rg_name, agent.name, app,
             ).result()
