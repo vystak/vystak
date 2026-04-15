@@ -1,6 +1,7 @@
 """Interactive chat REPL — Claude Code-style terminal interface."""
 
 import asyncio
+import getpass
 import sys
 
 from pathlib import Path
@@ -129,6 +130,7 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 async def _stream_response(
     url: str, message: str, agent_name: str, model: str = "",
     previous_response_id: str | None = None,
+    user_id: str | None = None,
 ) -> tuple[client.StreamResult, str]:
     """Stream response without disrupting the prompt_toolkit layout.
 
@@ -149,6 +151,7 @@ async def _stream_response(
             url, message, model=model,
             previous_response_id=previous_response_id,
             result=stream_result,
+            user_id=user_id,
         ):
             if event.type == "token":
                 if status_line_shown:
@@ -186,6 +189,7 @@ async def _stream_response(
             invoke_result = await client.send_response(
                 url, message, model=model,
                 previous_response_id=previous_response_id,
+                user_id=user_id,
             )
             console.print(f"[agent]{agent_name}[/agent]")
             console.print(Markdown(invoke_result.response))
@@ -219,6 +223,7 @@ class ChatREPL:
         self._agent_url: str | None = None
         self._model: str = ""  # OpenAI model ID (e.g., "agentstack/assistant-agent")
         self._previous_response_id: str | None = None
+        self._user_id: str = getpass.getuser()  # Default user_id for memory scoping
         self._running = True
         self._total_input_tokens: int = 0
         self._total_output_tokens: int = 0
@@ -533,6 +538,7 @@ class ChatREPL:
                 self._agent_url, message, self._agent_name,
                 model=self._model,
                 previous_response_id=self._previous_response_id,
+                user_id=self._user_id,
             )
             if response_id:
                 self._previous_response_id = response_id

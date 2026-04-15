@@ -51,6 +51,8 @@ async def send_response(
                 "previous_response_id": previous_response_id,
                 "store": True,
                 "stream": False,
+                "user_id": user_id,
+                "project_id": project_id,
             },
         )
         response.raise_for_status()
@@ -71,6 +73,7 @@ async def stream_response(
     url: str, message: str, model: str = "",
     previous_response_id: str | None = None,
     result: StreamResult | None = None,
+    user_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream via /v1/responses with stream=true."""
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -83,6 +86,7 @@ async def stream_response(
                 "previous_response_id": previous_response_id,
                 "store": True,
                 "stream": True,
+                "user_id": user_id,
             },
         ) as response:
             response.raise_for_status()
