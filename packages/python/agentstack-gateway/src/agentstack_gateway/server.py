@@ -16,15 +16,16 @@ from pydantic import BaseModel
 from agentstack.schema.openai import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChunk,
     ChatMessage, Choice, ChunkChoice, ChunkDelta, CompletionUsage,
-    CreateThreadRequest, ErrorDetail, ErrorResponse, ModelList, ModelObject, Thread,
+    CreateResponseRequest, ErrorDetail, ErrorResponse,
+    InputMessage, ModelList, ModelObject, ResponseObject,
 )
 from agentstack_gateway.router import Route, Router
-from agentstack_gateway.store import RegistrationStore, ThreadStore, create_store
+from agentstack_gateway.store import RegistrationStore, ResponseStore, create_store
 
 router = Router()
 providers: dict = {}
 reg_store: RegistrationStore | None = None
-thread_store = ThreadStore()
+response_store = ResponseStore()
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
@@ -330,7 +331,7 @@ async def v1_chat_completions(request: ChatCompletionRequest):
             last_msg = msg.content
             break
 
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
 
     if request.stream:
         return await _stream_chat_completion(route, agent_name, model, session_id, last_msg, request)
@@ -455,139 +456,61 @@ async def _stream_chat_completion(route, agent_name, model, session_id, last_msg
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
-@app.post("/v1/threads")
-async def v1_create_thread(request: CreateThreadRequest):
-    """Create a thread with optional model binding."""
-    thread_id = f"thread_{uuid.uuid4().hex}"
-
-    # Validate model if provided
-    if request.model:
-        agent_name = request.model.removeprefix("agentstack/")
-        route = _find_route(agent_name)
-        if not route:
-            return JSONResponse(
-                status_code=404,
-                content=ErrorResponse(
-                    error=ErrorDetail(
-                        message=f"Model '{request.model}' not found",
-                        type="invalid_request_error",
-                        code="model_not_found",
-                    )
-                ).model_dump(),
-            )
-
-    thread = thread_store.create(
-        thread_id=thread_id,
-        model=request.model,
-        metadata=request.metadata,
-    )
-    return thread
-
-
-@app.get("/v1/threads/{thread_id}/messages")
-async def v1_list_thread_messages(thread_id: str):
-    """List messages for a thread — proxies to bound agent."""
-    thread = thread_store.get(thread_id)
-    if not thread:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message=f"Thread '{thread_id}' not found",
-                    type="invalid_request_error",
-                    code="thread_not_found",
-                )
-            ).model_dump(),
-        )
-
-    model = thread.get("model")
-    if not model:
-        return JSONResponse(
-            status_code=400,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message="Thread has no bound model",
-                    type="invalid_request_error",
-                    code="no_model_bound",
-                )
-            ).model_dump(),
-        )
-
+@app.post("/v1/responses")
+async def v1_create_response(request: CreateResponseRequest):
+    """Route response creation to the target agent."""
+    model = request.model
     agent_name = model.removeprefix("agentstack/")
     route = _find_route(agent_name)
     if not route:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message=f"Model '{model}' not found",
-                    type="invalid_request_error",
-                    code="model_not_found",
-                )
-            ).model_dump(),
-        )
+        return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail(
+            message=f"Model '{model}' not found",
+            type="invalid_request_error", code="model_not_found",
+        )).model_dump())
 
-    # Proxy to agent's thread messages endpoint
-    async with httpx.AsyncClient(timeout=30) as http_client:
-        resp = await http_client.get(f"{route.agent_url}/v1/threads/{thread_id}/messages")
-        return resp.json()
+    if request.previous_response_id:
+        prev = response_store.get(request.previous_response_id)
+        if prev and prev["agent_name"] != agent_name:
+            return JSONResponse(status_code=400, content=ErrorResponse(error=ErrorDetail(
+                message="Cannot chain to a response from a different agent",
+                type="invalid_request_error", code="invalid_request",
+            )).model_dump())
 
-
-@app.post("/v1/threads/{thread_id}/runs")
-async def v1_create_thread_run(thread_id: str, request: Request):
-    """Create a run on a thread — proxies to bound agent with deferred model binding."""
-    thread = thread_store.get(thread_id)
-    if not thread:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message=f"Thread '{thread_id}' not found",
-                    type="invalid_request_error",
-                    code="thread_not_found",
-                )
-            ).model_dump(),
-        )
-
-    body = await request.json()
-
-    # Deferred model binding: if thread has no model, bind from run request
-    model = thread.get("model") or body.get("model")
-    if model and not thread.get("model"):
-        thread_store.bind_model(thread_id, model)
-
-    if not model:
-        return JSONResponse(
-            status_code=400,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message="No model specified in thread or run request",
-                    type="invalid_request_error",
-                    code="no_model_bound",
-                )
-            ).model_dump(),
-        )
-
-    agent_name = model.removeprefix("agentstack/")
-    route = _find_route(agent_name)
-    if not route:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    message=f"Model '{model}' not found",
-                    type="invalid_request_error",
-                    code="model_not_found",
-                )
-            ).model_dump(),
-        )
-
-    # Proxy to agent
+    # Proxy to agent's /v1/responses
     async with httpx.AsyncClient(timeout=120) as http_client:
         resp = await http_client.post(
-            f"{route.agent_url}/v1/threads/{thread_id}/runs",
-            json=body,
+            f"{route.agent_url}/v1/responses",
+            json=request.model_dump(),
         )
+        result = resp.json()
+
+    resp_id = result.get("id")
+    if resp_id:
+        response_store.save(resp_id, agent_name)
+
+    return result
+
+
+@app.get("/v1/responses/{response_id}")
+async def v1_get_response(response_id: str):
+    """Retrieve a response — proxy to the owning agent."""
+    mapping = response_store.get(response_id)
+    if not mapping:
+        return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail(
+            message="Response not found",
+            type="invalid_request_error", code="response_not_found",
+        )).model_dump())
+
+    agent_name = mapping["agent_name"]
+    route = _find_route(agent_name)
+    if not route:
+        return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail(
+            message=f"Agent '{agent_name}' not found",
+            type="invalid_request_error", code="model_not_found",
+        )).model_dump())
+
+    async with httpx.AsyncClient(timeout=30) as http_client:
+        resp = await http_client.get(f"{route.agent_url}/v1/responses/{response_id}")
         return resp.json()
 
 

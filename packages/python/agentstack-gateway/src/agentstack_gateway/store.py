@@ -113,30 +113,17 @@ class MemoryRegistrationStore(RegistrationStore):
         return dict(self._data)
 
 
-class ThreadStore:
-    """In-memory store for thread-to-agent bindings."""
+class ResponseStore:
+    """In-memory store for response-to-agent bindings."""
 
     def __init__(self):
-        self._threads: dict[str, dict] = {}
+        self._responses: dict[str, dict] = {}
 
-    def create(self, thread_id: str, model: str | None = None, metadata: dict | None = None) -> dict:
-        import time
-        thread = {
-            "id": thread_id,
-            "object": "thread",
-            "created_at": int(time.time()),
-            "metadata": metadata or {},
-            "model": model,
-        }
-        self._threads[thread_id] = thread
-        return thread
+    def save(self, response_id: str, agent_name: str, data: dict | None = None) -> None:
+        self._responses[response_id] = {"agent_name": agent_name, **(data or {})}
 
-    def get(self, thread_id: str) -> dict | None:
-        return self._threads.get(thread_id)
-
-    def bind_model(self, thread_id: str, model: str) -> None:
-        if thread_id in self._threads:
-            self._threads[thread_id]["model"] = model
+    def get(self, response_id: str) -> dict | None:
+        return self._responses.get(response_id)
 
 
 def create_store() -> RegistrationStore:
