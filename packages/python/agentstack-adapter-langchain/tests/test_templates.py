@@ -190,6 +190,10 @@ class TestGenerateRequirementsTxt:
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
 
+    def test_includes_agentstack_core(self, anthropic_agent):
+        reqs = generate_requirements_txt(anthropic_agent)
+        assert "agentstack>=0.1" in reqs
+
 
 @pytest.fixture()
 def postgres_agent(anthropic_provider):
