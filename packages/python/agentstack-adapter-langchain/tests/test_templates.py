@@ -115,21 +115,51 @@ class TestGenerateServerPy:
         code = generate_server_py(anthropic_agent)
         python_ast.parse(code)
 
-    def test_fastapi_app(self, anthropic_agent):
+    def test_has_health(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert "FastAPI" in code
+        assert '"/health"' in code
 
-    def test_invoke_endpoint(self, anthropic_agent):
+    def test_has_v1_models(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert "/invoke" in code
+        assert '"/v1/models"' in code
+        assert "agentstack/test-bot" in code
 
-    def test_stream_endpoint(self, anthropic_agent):
+    def test_has_v1_chat_completions(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert "/stream" in code
+        assert '"/v1/chat/completions"' in code
 
-    def test_health_endpoint(self, anthropic_agent):
+    def test_has_v1_threads(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
-        assert "/health" in code
+        assert '"/v1/threads"' in code
+        assert '"/v1/threads/{thread_id}/messages"' in code
+        assert '"/v1/threads/{thread_id}/runs"' in code
+
+    def test_no_invoke_endpoint(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert '"/invoke"' not in code
+
+    def test_no_stream_endpoint(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert '"/stream"' not in code
+
+    def test_no_invoke_request_model(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "class InvokeRequest" not in code
+        assert "class InvokeResponse" not in code
+
+    def test_imports_openai_schema(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "from agentstack.schema.openai import" in code
+
+    def test_chat_completions_streaming(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "ChatCompletionChunk" in code
+        assert "_stream_chat_completions" in code
+        assert "[DONE]" in code
+
+    def test_openai_error_format(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "ErrorResponse" in code
 
     def test_agent_name_injected(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
