@@ -8,11 +8,11 @@ const config = {
   favicon: 'img/favicon.ico',
 
   url: 'https://vystak.github.io',
-  baseUrl: '/AgentsStack/',
+  baseUrl: '/vystak/',
   trailingSlash: false,
 
   organizationName: 'vystak',
-  projectName: 'AgentsStack',
+  projectName: 'vystak',
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -47,7 +47,7 @@ const config = {
       ({
         docs: {
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/vystak/AgentsStack/tree/main/website/',
+          editUrl: 'https://github.com/vystak/vystak/tree/main/website/',
         },
         blog: false,
         theme: {
@@ -99,7 +99,7 @@ const config = {
             position: 'right',
           },
           {
-            href: 'https://github.com/vystak/AgentsStack',
+            href: 'https://github.com/vystak/vystak',
             label: 'GitHub',
             position: 'right',
           },
@@ -118,7 +118,7 @@ const config = {
           {
             title: 'Community',
             items: [
-              {label: 'GitHub', href: 'https://github.com/vystak/AgentsStack'},
+              {label: 'GitHub', href: 'https://github.com/vystak/vystak'},
             ],
           },
         ],
