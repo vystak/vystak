@@ -21,10 +21,12 @@ from agentstack_provider_azure.auth import get_credential, get_location, get_sub
 from agentstack_provider_azure.nodes import (
     ACRNode,
     ACAEnvironmentNode,
+    AzurePostgresNode,
     ContainerAppNode,
     LogAnalyticsNode,
     ResourceGroupNode,
 )
+from agentstack_provider_docker.secrets import get_resource_password
 
 
 class AzureProvider(PlatformProvider):
@@ -86,6 +88,15 @@ class AzureProvider(PlatformProvider):
         cfg = self._platform_config()
         tags.update(cfg.get("tags", {}))
         return tags
+
+    @staticmethod
+    def _postgres_server_name(rg_name: str, service_name: str) -> str:
+        """Derive a globally unique Postgres server name from RG + service name."""
+        import re
+        raw = f"{rg_name}-{service_name}"
+        sanitized = re.sub(r"[^a-z0-9-]", "-", raw.lower())
+        sanitized = sanitized.strip("-")[:63]
+        return sanitized
 
     @staticmethod
     def _create_docker_client():
@@ -186,6 +197,19 @@ class AzureProvider(PlatformProvider):
             acr_existing = bool(cfg.get("registry"))
             env_existing = bool(cfg.get("environment"))
 
+            # Collect unique managed Postgres services from agent
+            postgres_services = {}
+            for svc in [self._agent.sessions, self._agent.memory] + list(self._agent.services):
+                if svc and svc.type == "postgres" and svc.is_managed:
+                    if svc.name not in postgres_services:
+                        postgres_services[svc.name] = svc
+
+            # Create Postgres client only if needed
+            postgres_client = None
+            if postgres_services:
+                from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClient
+                postgres_client = PostgreSQLManagementClient(credential, subscription_id)
+
             graph = ProvisionGraph()
 
             if self._listener:
@@ -223,6 +247,21 @@ class AzureProvider(PlatformProvider):
                 existing=env_existing,
                 tags=tags,
             ))
+
+            secrets_path = Path(".agentstack") / "secrets.json"
+            for svc_name, svc in postgres_services.items():
+                server_name = self._postgres_server_name(rg_name, svc_name)
+                password = get_resource_password(f"azure-postgres-{server_name}", secrets_path)
+                graph.add(AzurePostgresNode(
+                    client=postgres_client,
+                    rg_name=rg_name,
+                    server_name=server_name,
+                    service_name=svc_name,
+                    location=location,
+                    admin_password=password,
+                    config=svc.config,
+                    tags=tags,
+                ))
 
             graph.add(ContainerAppNode(
                 aca_client=aca_client,
