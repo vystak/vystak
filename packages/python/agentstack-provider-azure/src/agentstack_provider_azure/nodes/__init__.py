@@ -5,6 +5,7 @@ from agentstack_provider_azure.nodes.log_analytics import LogAnalyticsNode
 from agentstack_provider_azure.nodes.acr import ACRNode
 from agentstack_provider_azure.nodes.aca_environment import ACAEnvironmentNode
 from agentstack_provider_azure.nodes.aca_app import ContainerAppNode
+from agentstack_provider_azure.nodes.postgres import AzurePostgresNode
 
 __all__ = [
     "ResourceGroupNode",
@@ -12,4 +13,5 @@ __all__ = [
     "ACRNode",
     "ACAEnvironmentNode",
     "ContainerAppNode",
+    "AzurePostgresNode",
 ]
