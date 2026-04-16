@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("vystak", () => {
-  it("re-exports core version", () => {
-    expect(VERSION).toBe("0.1.0");
+  it("exports version", () => {
+    expect(VERSION).toBe("0.0.1");
   });
 
   it("prints hello vystak", () => {

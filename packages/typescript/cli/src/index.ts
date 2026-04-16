@@ -1,3 +1,3 @@
 /** Vystak CLI */
 
-export { VERSION } from "@vystak/core";
+export const VERSION = "0.0.1";
