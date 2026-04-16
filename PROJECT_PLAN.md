@@ -12,14 +12,14 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ## Current State
 
-**Status:** Multi-cloud deployment working — Docker + Azure Container Apps with multi-agent gateway.
+**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway.
 
 **Numbers:**
-- 200+ commits
-- 475 tests across 50+ test files
+- 230+ commits
+- 390+ tests across 50+ test files
 - 9 Python packages + 4 TypeScript stubs
 - 9 examples (Docker + Azure)
-- 3 design sessions (April 11-14, 2026)
+- 4 design sessions (April 11-15, 2026)
 
 ## What We Built
 
@@ -55,7 +55,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 **Code generation (`agentstack-adapter-langchain`):**
 - Generates native LangGraph react agents from schema definitions
 - Generated files: `agent.py`, `server.py`, `requirements.txt`, `tools/`, `store.py`
-- FastAPI harness with `/invoke`, `/stream` (SSE), `/health` endpoints
+- FastAPI harness with OpenAI-compatible endpoints (see Phase 14)
 - Supports Anthropic and OpenAI model providers
 - Custom base URL support (tested with MiniMax's Anthropic-compatible API)
 - `instructions` field for agent system prompt
@@ -67,7 +67,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
   - Postgres (`AsyncPostgresSaver`) — production-grade
 - Long-term memory with three scopes (user, project, global):
   - `save_memory` and `forget_memory` tools
-  - Automatic memory recall on each request
+  - Ephemeral memory recall via LangGraph `prompt` callable (never checkpointed)
   - Backed by AsyncPostgresStore or AsyncSqliteStore
 
 ### Phase 3: Docker Provider (Complete)
@@ -134,23 +134,24 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 **Unified entry point (`agentstack-gateway`):**
 - Routes requests to agents on the Docker network
-- Agent discovery via Agent Cards (`GET /agents`)
-- Proxy endpoints: `/proxy/{agent}/invoke`, `/proxy/{agent}/stream`
+- Agent discovery via Agent Cards (`GET /agents`) and `/v1/models`
+- OpenAI-compatible proxy: `/v1/chat/completions`, `/v1/responses`, `/v1/models`
 - A2A proxy: `/a2a/{agent}`
+- Response-to-agent mapping store for `GET /v1/responses/{id}` routing
 - Slack channel provider with route-based dispatching
 - `routes.json` for static configuration
 
 ### Phase 8: Chat Client (Complete)
 
 **Interactive terminal client (`agentstack-chat`):**
-- Streaming responses with tool call visibility
+- Uses OpenAI Responses API with `previous_response_id` chaining for multi-turn
+- Streaming responses with function call visibility (OpenAI SSE event format)
 - Auto-detects gateway vs direct agent connection
 - Slash commands: `/connect`, `/use`, `/agents`, `/gateway`, `/sessions`, `/new`, `/resume`, `/status`, `/help`
 - Interactive agent picker (arrow keys)
-- Session management (create, list, resume)
 - Tab completion for agent names and commands
 - Persistent prompt history
-- Token usage tracking
+- Token usage tracking with user_id-scoped memory
 - Rich markdown rendering for agent responses
 - One-shot mode (`-p "question"`) for scripting
 
@@ -208,9 +209,46 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - Gateway URL injection into Azure Container Apps
 - Deployment summary with shared infra, agent URLs, connect command
 
+### Phase 14: OpenAI-Compatible API (Complete — April 14-15, 2026)
+
+**Stateless Chat Completions + Stateful Responses API:**
+
+Every agent and the gateway expose OpenAI-compatible endpoints. Any OpenAI SDK client works as a drop-in:
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+client.chat.completions.create(model="agentstack/my-agent", messages=[...])
+```
+
+- Agent endpoints:
+  - `GET /v1/models` — agent listed as `agentstack/{name}`
+  - `POST /v1/chat/completions` — **stateless**, client sends full messages array, no checkpointer
+  - `POST /v1/responses` — **stateful**, `previous_response_id` chaining backed by LangGraph checkpointer
+  - `GET /v1/responses/{id}` — retrieve stored response (polling for background runs)
+- Gateway endpoints: same `/v1/` routes, routes by `model` field to agents
+- Responses API features:
+  - `store: true/false` — persist to checkpointer or one-shot
+  - `previous_response_id` — conversation chaining (response ID = LangGraph thread_id)
+  - `background: true` — async execution, poll via GET
+  - `stream: true` — OpenAI Responses SSE event types:
+    - `response.created`, `response.output_text.delta`, `response.output_text.done`
+    - `response.function_call_arguments.delta`, `response.function_call_arguments.done`
+    - `response.output_item.added` (function_call, function_call_output)
+    - `response.completed`, `[DONE]`
+  - `input` accepts string or message array
+  - `user_id`/`project_id` for memory scoping
+- Memory recall via LangGraph `prompt` callable — ephemeral, never checkpointed
+  - Follows LangMem canonical pattern: prompt function reconstructs system message fresh every turn
+  - Eliminates duplicate system message errors on multi-turn conversations
+- Removed: `/invoke`, `/stream`, `/proxy/*`, `/v1/threads/*`
+- A2A protocol unchanged for agent-to-agent communication
+- `openai_types.py` bundled into Docker builds for agent and gateway containers
+- Chat REPL uses Responses API with `previous_response_id` chaining
+- OpenAI error format on all `/v1/` endpoints
+
 ---
 
-## Planned: Phase 14 — Azure Provider Phase 2b/2c
+## Planned: Phase 16 — Azure Provider Phase 2b/2c
 
 ### Phase 2b: Postgres + VNet + Key Vault
 
@@ -274,7 +312,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ---
 
-## Planned: Phase 15 — Parallel Provisioning
+## Planned: Phase 17 — Parallel Provisioning
 
 **Goal:** Provision independent graph nodes concurrently for faster deployments.
 
@@ -376,7 +414,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] `agentstack dev` — local dev server without Docker (fast iteration)
 - [ ] `agentstack compose` — deploy multiple agents from a single YAML file
 - [ ] `agentstack generate` — write generated code to disk without deploying
-- [ ] Agent registry — agents auto-register with gateway on deploy
+- [x] Agent registry — agents auto-register with gateway on deploy
 
 **Documentation:**
 - [ ] Documentation site (VitePress or Starlight)
@@ -387,9 +425,9 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 ### Near-Medium Term
 
 **Authentication & Security:**
-- [ ] Gateway authentication — API key or JWT for client → gateway
+- [ ] Gateway authentication — API key or JWT for client → gateway (OpenAI `Authorization: Bearer` header)
 - [ ] `agentstack login` — CLI authentication command
-- [ ] Agent endpoint protection — bearer token on `/invoke`, `/stream`, `/a2a`
+- [ ] Agent endpoint protection — bearer token on `/v1/chat/completions`, `/v1/responses`, `/a2a`
 - [ ] mTLS between agents on `agentstack-net` (under discussion — adds complexity vs container network isolation)
 - [ ] Secret rotation for auto-generated resource passwords
 - [ ] Audit log for agent access (who called which agent, when)
