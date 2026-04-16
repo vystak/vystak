@@ -1,0 +1,111 @@
+.hero {
+  padding: 5rem 0 4rem;
+  border-top: 3px solid var(--ifm-color-primary);
+  background: var(--ifm-background-color);
+  overflow: hidden;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+@media (max-width: 996px) {
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+  .hero {
+    padding: 3rem 0 2.5rem;
+  }
+}
+
+.copy {
+  max-width: 560px;
+}
+
+.title {
+  font-size: 4rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  margin-bottom: 0.5rem;
+  line-height: 1;
+}
+
+@media (max-width: 996px) {
+  .title {
+    font-size: 3rem;
+  }
+}
+
+.tagline {
+  font-size: 1.5rem;
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.description {
+  font-size: 1.125rem;
+  color: var(--ifm-color-content-secondary);
+  line-height: 1.6;
+  margin-bottom: 2rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cta,
+.ghost {
+  text-decoration: none;
+}
+
+.codePane {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.codeWindow {
+  width: 100%;
+  max-width: 560px;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px -20px rgba(15, 23, 42, 0.4),
+              0 8px 24px -8px rgba(15, 23, 42, 0.2);
+  border: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.codeWindowHeader {
+  background: #1e293b;
+  padding: 0.625rem 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.codeWindowTitle {
+  margin-left: 0.75rem;
+  color: #94a3b8;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8125rem;
+}
+
+/* Reset Docusaurus default code-block padding inside our window */
+.codeBlock {
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
