@@ -1,7 +1,7 @@
 {
-  "name": "@agentstack/adapter-mastra",
+  "name": "@vystak/adapter-mastra",
   "version": "0.1.0",
-  "description": "AgentStack Mastra framework adapter",
+  "description": "Vystak Mastra framework adapter",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -19,7 +19,7 @@
     "fmt": "prettier --write src/ tests/"
   },
   "dependencies": {
-    "@agentstack/core": "workspace:*"
+    "@vystak/core": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^3.0.0",

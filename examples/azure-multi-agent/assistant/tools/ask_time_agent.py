@@ -6,11 +6,11 @@ import httpx
 from langgraph.config import get_config, get_stream_writer
 
 
-_gateway = os.environ.get("AGENTSTACK_GATEWAY_URL", "")
+_gateway = os.environ.get("VYSTAK_GATEWAY_URL", "")
 if _gateway:
     TIME_AGENT_URL = f"{_gateway}/a2a/time-agent"
 else:
-    TIME_AGENT_URL = os.environ.get("TIME_AGENT_URL", "http://agentstack-time-agent:8000") + "/a2a"
+    TIME_AGENT_URL = os.environ.get("TIME_AGENT_URL", "http://vystak-time-agent:8000") + "/a2a"
 
 
 async def ask_time_agent(question: str) -> str:

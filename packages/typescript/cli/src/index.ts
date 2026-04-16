@@ -1,3 +1,3 @@
-/** AgentStack CLI */
+/** Vystak CLI */
 
-export { VERSION } from "@agentstack/core";
+export { VERSION } from "@vystak/core";

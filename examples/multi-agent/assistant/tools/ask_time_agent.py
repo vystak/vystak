@@ -5,7 +5,7 @@ import httpx
 from langgraph.config import get_config, get_stream_writer
 
 
-TIME_AGENT_URL = "http://agentstack-time-agent:8000/a2a"
+TIME_AGENT_URL = "http://vystak-time-agent:8000/a2a"
 
 
 async def ask_time_agent(question: str) -> str:

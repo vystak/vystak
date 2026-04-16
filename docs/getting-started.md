@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide covers setting up the AgentStack monorepo for development. If you want to understand the philosophy behind AgentStack first, read the [Principles](principles.md).
+This guide covers setting up the Vystak monorepo for development. If you want to understand the philosophy behind Vystak first, read the [Principles](principles.md).
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Install the following tools before proceeding:
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd AgentsStack
+cd Vystak
 
 # Install Python dependencies (all workspace packages)
 uv sync
@@ -34,7 +34,7 @@ just test
 ## Project Structure
 
 ```
-AgentsStack/
+Vystak/
 ├── pyproject.toml              # Python workspace root (uv)
 ├── pnpm-workspace.yaml         # TypeScript workspace root (pnpm)
 ├── package.json                # Root TS config and shared dev deps
@@ -44,18 +44,18 @@ AgentsStack/
 ├── .github/workflows/          # CI and release pipelines
 │
 ├── packages/python/
-│   ├── agentstack/             # Core SDK — schema, IR, hash engine, provider base classes
-│   ├── agentstack-cli/         # CLI tool — init, plan, up, destroy, status, logs
-│   ├── agentstack-adapter-mastra/  # Mastra framework adapter
-│   ├── agentstack-provider-docker/ # Docker platform provider
-│   └── agentstack-channel-api/     # REST API channel adapter
+│   ├── vystak/             # Core SDK — schema, IR, hash engine, provider base classes
+│   ├── vystak-cli/         # CLI tool — init, plan, up, destroy, status, logs
+│   ├── vystak-adapter-mastra/  # Mastra framework adapter
+│   ├── vystak-provider-docker/ # Docker platform provider
+│   └── vystak-channel-api/     # REST API channel adapter
 │
 ├── packages/typescript/
 │   ├── tsconfig.base.json      # Shared TypeScript compiler config
-│   ├── core/                   # @agentstack/core — core SDK
-│   ├── cli/                    # @agentstack/cli — CLI tool
-│   ├── adapter-mastra/         # @agentstack/adapter-mastra — Mastra adapter
-│   └── provider-docker/        # @agentstack/provider-docker — Docker provider
+│   ├── core/                   # @vystak/core — core SDK
+│   ├── cli/                    # @vystak/cli — CLI tool
+│   ├── adapter-mastra/         # @vystak/adapter-mastra — Mastra adapter
+│   └── provider-docker/        # @vystak/provider-docker — Docker provider
 │
 └── docs/
 ```
@@ -64,9 +64,9 @@ AgentsStack/
 
 The monorepo has two independent workspace roots:
 
-- **Python** is managed by **uv**. The root `pyproject.toml` declares `packages/python/*` as workspace members. All Python packages are pip-installable with names like `agentstack`, `agentstack-cli`, `agentstack-adapter-mastra`.
+- **Python** is managed by **uv**. The root `pyproject.toml` declares `packages/python/*` as workspace members. All Python packages are pip-installable with names like `vystak`, `vystak-cli`, `vystak-adapter-mastra`.
 
-- **TypeScript** is managed by **pnpm**. The `pnpm-workspace.yaml` declares `packages/typescript/*` as workspace members. All TS packages are npm-publishable under the `@agentstack` scope.
+- **TypeScript** is managed by **pnpm**. The `pnpm-workspace.yaml` declares `packages/typescript/*` as workspace members. All TS packages are npm-publishable under the `@vystak` scope.
 
 The **Justfile** coordinates both ecosystems with unified commands.
 
@@ -115,10 +115,10 @@ Each command has per-ecosystem variants: `just test-python`, `just test-typescri
 
 ```bash
 # Python — run tests for one package
-uv run pytest packages/python/agentstack/tests/ -v
+uv run pytest packages/python/vystak/tests/ -v
 
 # TypeScript — run tests for one package
-pnpm --filter @agentstack/core test
+pnpm --filter @vystak/core test
 ```
 
 ## Adding a New Package
@@ -128,21 +128,21 @@ pnpm --filter @agentstack/core test
 1. Create the directory structure:
 
 ```bash
-mkdir -p packages/python/agentstack-provider-aws/src/agentstack_provider_aws
-mkdir -p packages/python/agentstack-provider-aws/tests
+mkdir -p packages/python/vystak-provider-aws/src/vystak_provider_aws
+mkdir -p packages/python/vystak-provider-aws/tests
 ```
 
-2. Create `packages/python/agentstack-provider-aws/pyproject.toml`:
+2. Create `packages/python/vystak-provider-aws/pyproject.toml`:
 
 ```toml
 [project]
-name = "agentstack-provider-aws"
+name = "vystak-provider-aws"
 version = "0.1.0"
-description = "AgentStack AWS platform provider"
+description = "Vystak AWS platform provider"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "agentstack>=0.1.0",
+    "vystak>=0.1.0",
 ]
 
 [build-system]
@@ -150,16 +150,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentstack_provider_aws"]
+packages = ["src/vystak_provider_aws"]
 
 [tool.uv.sources]
-agentstack = { workspace = true }
+vystak = { workspace = true }
 ```
 
-3. Create `src/agentstack_provider_aws/__init__.py`:
+3. Create `src/vystak_provider_aws/__init__.py`:
 
 ```python
-"""AgentStack AWS platform provider."""
+"""Vystak AWS platform provider."""
 
 __version__ = "0.1.0"
 ```
@@ -168,7 +168,7 @@ __version__ = "0.1.0"
 
 ```bash
 uv sync
-uv run pytest packages/python/agentstack-provider-aws/tests/ -v
+uv run pytest packages/python/vystak-provider-aws/tests/ -v
 ```
 
 ### TypeScript plugin
@@ -184,9 +184,9 @@ mkdir -p packages/typescript/provider-aws/tests
 
 ```json
 {
-  "name": "@agentstack/provider-aws",
+  "name": "@vystak/provider-aws",
   "version": "0.1.0",
-  "description": "AgentStack AWS platform provider",
+  "description": "Vystak AWS platform provider",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -204,7 +204,7 @@ mkdir -p packages/typescript/provider-aws/tests
     "fmt": "prettier --write src/ tests/"
   },
   "dependencies": {
-    "@agentstack/core": "workspace:*"
+    "@vystak/core": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^3.0.0",
@@ -220,7 +220,7 @@ mkdir -p packages/typescript/provider-aws/tests
 
 ```bash
 pnpm install
-pnpm --filter @agentstack/provider-aws test
+pnpm --filter @vystak/provider-aws test
 ```
 
 ## Running Tests
@@ -231,4 +231,4 @@ pnpm --filter @agentstack/provider-aws test
 | All Python | `just test-python` |
 | All TypeScript | `just test-typescript` |
 | Single Python package | `uv run pytest packages/python/<pkg>/tests/ -v` |
-| Single TS package | `pnpm --filter @agentstack/<pkg> test` |
+| Single TS package | `pnpm --filter @vystak/<pkg> test` |

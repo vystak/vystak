@@ -1,0 +1,42 @@
+# examples/memory-agent/vystak.yaml
+name: memory-agent
+instructions: |
+  You are a personal assistant with long-term memory.
+  Remember important facts the user tells you (name, preferences, projects).
+  When starting a new conversation, recall what you know about the user.
+  Use save_memory when the user shares important facts.
+  Use forget_memory when asked to forget something.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.7
+    anthropic_api_url: https://api.minimax.io/anthropic
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
+sessions:
+  type: postgres
+  provider:
+    name: docker
+    type: docker
+memory:
+  type: postgres
+  provider:
+    name: docker
+    type: docker
+skills:
+  - name: assistant
+    tools: []
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8092
