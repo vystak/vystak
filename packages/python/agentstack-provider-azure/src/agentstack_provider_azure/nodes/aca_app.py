@@ -77,6 +77,12 @@ class ContainerAppNode(Provisionable):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_path.write_text(content)
 
+            # Bundle OpenAI-compatible schema types for deployment
+            import agentstack.schema.openai as _openai_schema
+            _openai_src = Path(_openai_schema.__file__)
+            if _openai_src.exists():
+                (build_dir / "openai_types.py").write_text(_openai_src.read_text())
+
             mcp_installs = ""
             needs_node = False
             if self._agent.mcp_servers:
