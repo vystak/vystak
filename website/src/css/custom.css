@@ -1,0 +1,26 @@
+/**
+ * Vystak custom theme — minimal overrides on Infima defaults.
+ */
+
+:root {
+  --ifm-color-primary: #2563eb;
+  --ifm-color-primary-dark: #1e54d5;
+  --ifm-color-primary-darker: #1d4fc9;
+  --ifm-color-primary-darkest: #1841a5;
+  --ifm-color-primary-light: #3a72ee;
+  --ifm-color-primary-lighter: #4779ef;
+  --ifm-color-primary-lightest: #6993f2;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #60a5fa;
+  --ifm-color-primary-dark: #4396f9;
+  --ifm-color-primary-darker: #358df9;
+  --ifm-color-primary-darkest: #0972f6;
+  --ifm-color-primary-light: #7db4fb;
+  --ifm-color-primary-lighter: #8bbdfb;
+  --ifm-color-primary-lightest: #b6d3fc;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
