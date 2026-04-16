@@ -1,12 +1,34 @@
 [project]
 name = "vystak-adapter-langchain"
 version = "0.1.0"
-description = "Vystak LangChain/LangGraph framework adapter"
+description = "Vystak framework adapter — generates LangChain/LangGraph agent code"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [
+    { name = "Anatoliy Kolodkin", email = "11351966+akolodkin@users.noreply.github.com" },
+]
+keywords = ["vystak", "langchain", "langgraph", "agent", "ai", "codegen"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "vystak>=0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://vystak.dev"
+Documentation = "https://vystak.dev/docs"
+Repository = "https://github.com/vystak/vystak"
+Issues = "https://github.com/vystak/vystak/issues"
 
 [build-system]
 requires = ["hatchling"]

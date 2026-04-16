@@ -1,15 +1,39 @@
 [project]
 name = "vystak-cli"
 version = "0.1.0"
-description = "Vystak CLI — manage and deploy AI agents"
+description = "Vystak CLI — declarative AI agent orchestration from the terminal"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [
+    { name = "Anatoliy Kolodkin", email = "11351966+akolodkin@users.noreply.github.com" },
+]
+keywords = ["vystak", "cli", "agent", "ai", "orchestration", "deployment"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "vystak>=0.1.0",
     "vystak-adapter-langchain>=0.1.0",
     "vystak-provider-docker>=0.1.0",
     "click>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://vystak.dev"
+Documentation = "https://vystak.dev/docs"
+Repository = "https://github.com/vystak/vystak"
+Issues = "https://github.com/vystak/vystak/issues"
 
 [project.scripts]
 vystak = "vystak_cli.cli:cli"

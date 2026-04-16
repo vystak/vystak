@@ -2,14 +2,45 @@
 name = "vystak"
 version = "0.1.0"
 description = "Vystak core SDK — declarative AI agent orchestration"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-readme = "README.md"
+authors = [
+    { name = "Anatoliy Kolodkin", email = "11351966+akolodkin@users.noreply.github.com" },
+]
+keywords = [
+    "ai",
+    "agent",
+    "orchestration",
+    "langchain",
+    "langgraph",
+    "infrastructure",
+    "declarative",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "aiosqlite>=0.20",
 ]
+
+[project.urls]
+Homepage = "https://vystak.dev"
+Documentation = "https://vystak.dev/docs"
+Repository = "https://github.com/vystak/vystak"
+Issues = "https://github.com/vystak/vystak/issues"
 
 [build-system]
 requires = ["hatchling"]
