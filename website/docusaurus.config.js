@@ -7,8 +7,8 @@ const config = {
   tagline: 'Declarative AI agent orchestration',
   favicon: 'img/favicon.ico',
 
-  url: 'https://vystak.github.io',
-  baseUrl: '/vystak/',
+  url: 'https://vystak.dev',
+  baseUrl: '/',
   trailingSlash: false,
 
   organizationName: 'vystak',
