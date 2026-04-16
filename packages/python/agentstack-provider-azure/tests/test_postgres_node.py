@@ -45,7 +45,7 @@ class TestAzurePostgresNode:
         node._client.servers.begin_create.return_value.result.return_value = server_result
 
         node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = MagicMock()
-        node._client.databases.begin_create_or_update.return_value.result.return_value = MagicMock()
+        node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
         result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
 
@@ -59,7 +59,7 @@ class TestAzurePostgresNode:
 
         node._client.servers.begin_create.assert_called_once()
         node._client.firewall_rules.begin_create_or_update.assert_called_once()
-        node._client.databases.begin_create_or_update.assert_called_once()
+        node._client.databases.begin_create.assert_called_once()
 
     def test_provision_reuses_existing_server(self):
         node = self._make_node()
@@ -69,7 +69,7 @@ class TestAzurePostgresNode:
         existing.fully_qualified_domain_name = "test-rg-main-db.postgres.database.azure.com"
         node._client.servers.get.return_value = existing
 
-        node._client.databases.begin_create_or_update.return_value.result.return_value = MagicMock()
+        node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
         result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
 
@@ -93,7 +93,7 @@ class TestAzurePostgresNode:
         server_result.fully_qualified_domain_name = "test-rg-main-db.postgres.database.azure.com"
         node._client.servers.begin_create.return_value.result.return_value = server_result
         node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = MagicMock()
-        node._client.databases.begin_create_or_update.return_value.result.return_value = MagicMock()
+        node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
         result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
         assert result.success is True
@@ -116,11 +116,11 @@ class TestAzurePostgresNode:
         assert result.success is False
         assert "Azure API error" in result.error
 
-    def test_health_check_with_host(self):
+    def test_health_check_always_noop(self):
         node = self._make_node()
         node._host = "test-rg-main-db.postgres.database.azure.com"
         hc = node.health_check()
-        assert isinstance(hc, TcpHealthCheck)
+        assert isinstance(hc, NoopHealthCheck)
 
     def test_health_check_without_host(self):
         node = self._make_node()
