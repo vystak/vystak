@@ -74,6 +74,31 @@ const config = {
             label: 'Docs',
           },
           {
+            to: '/docs/examples/overview',
+            label: 'Examples',
+            position: 'left',
+          },
+          {
+            to: '/blog',
+            label: 'Blog',
+            position: 'left',
+          },
+          {
+            to: '/pricing',
+            label: 'Pricing',
+            position: 'left',
+          },
+          {
+            href: 'https://pypi.org/project/vystak/',
+            label: 'PyPI',
+            position: 'right',
+          },
+          {
+            href: 'https://www.npmjs.com/package/@vystak/core',
+            label: 'npm',
+            position: 'right',
+          },
+          {
             href: 'https://github.com/vystak/AgentsStack',
             label: 'GitHub',
             position: 'right',
