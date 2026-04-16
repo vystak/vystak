@@ -45,10 +45,13 @@ jobs:
       - name: Publish Python packages to PyPI
         # Explicit list (not a glob) — keeps unreleased stubs/internals off PyPI.
         # Order: base SDK first, then leaf packages that depend on it.
+        # Build artifacts go to the workspace-root ./dist/, so clear between
+        # packages and publish one at a time for deterministic ordering.
         run: |
           for pkg in vystak vystak-adapter-langchain vystak-provider-docker vystak-cli; do
-            uv build --directory "packages/python/$pkg"
-            uv publish --directory "packages/python/$pkg"
+            rm -rf dist
+            uv build --package "$pkg"
+            uv publish
           done
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
