@@ -337,7 +337,7 @@ class AzureProvider(PlatformProvider):
 
         return result
 
-    def destroy(self, agent_name: str, include_resources: bool = False) -> None:
+    def destroy(self, agent_name: str, include_resources: bool = False, no_wait: bool = False) -> None:
         cfg = self._platform_config()
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
@@ -349,7 +349,9 @@ class AzureProvider(PlatformProvider):
 
         # Always delete the Container App
         try:
-            aca_client.container_apps.begin_delete(rg_name, agent_name).result()
+            poller = aca_client.container_apps.begin_delete(rg_name, agent_name)
+            if not no_wait:
+                poller.result()
         except Exception:
             pass
 
@@ -379,18 +381,25 @@ class AzureProvider(PlatformProvider):
 
         resources.sort(key=lambda r: type_order.get(r.type.lower(), 99))
 
+        pollers = []
         for resource in resources:
             try:
-                resource_client.resources.begin_delete_by_id(
+                poller = resource_client.resources.begin_delete_by_id(
                     resource.id, api_version=self._api_version(resource.type),
-                ).result()
+                )
+                if no_wait:
+                    pollers.append((resource.name, poller))
+                else:
+                    poller.result()
             except Exception:
                 pass
 
         # Delete auto-created RG
         if not cfg.get("resource_group"):
             try:
-                resource_client.resource_groups.begin_delete(rg_name).result()
+                poller = resource_client.resource_groups.begin_delete(rg_name)
+                if not no_wait:
+                    poller.result()
             except Exception:
                 pass
 

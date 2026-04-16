@@ -14,13 +14,15 @@ from agentstack_cli.provider_factory import get_provider
 @click.option("--name", "agent_name", default=None, help="Destroy a specific agent by name")
 @click.option("--include-resources", is_flag=True, default=False,
               help="Also remove backing infrastructure")
-def destroy(files, file_path, agent_name, include_resources):
+@click.option("--no-wait", is_flag=True, default=False,
+              help="Don't wait for Azure resource deletion to complete")
+def destroy(files, file_path, agent_name, include_resources, no_wait):
     """Stop and remove deployed agents."""
     if agent_name and not files and not file_path:
         from agentstack_provider_docker import DockerProvider
         provider = DockerProvider()
         click.echo(f"Destroying: {agent_name}")
-        provider.destroy(agent_name, include_resources=include_resources)
+        provider.destroy(agent_name, include_resources=include_resources, no_wait=no_wait)
         click.echo(f"Destroyed: {agent_name}")
         return
 
@@ -53,8 +55,9 @@ def destroy(files, file_path, agent_name, include_resources):
                     click.echo(f"    - {r['type']}: {r['name']}")
 
         try:
-            provider.destroy(agent.name, include_resources=include_resources)
-            click.echo("  OK")
+            provider.destroy(agent.name, include_resources=include_resources, no_wait=no_wait)
+            click.echo("  OK" if not no_wait else "  OK (delete in progress)")
+
         except Exception as e:
             click.echo(f"  FAILED: {e}", err=True)
 
