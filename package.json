@@ -15,5 +15,10 @@
   "devDependencies": {
     "@changesets/cli": "^2.27.0",
     "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "webpack": "5.99.9"
+    }
   }
 }
