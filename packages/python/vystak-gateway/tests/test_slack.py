@@ -1,9 +1,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from vystak_gateway.router import Route, Router
 from vystak_gateway.providers.slack import SlackProviderRunner, _build_session_id
+from vystak_gateway.router import Route, Router
 
 
 class TestBuildSessionId:
@@ -41,11 +40,17 @@ class TestSlackEventHandling:
     @patch("vystak_gateway.providers.slack.AsyncSocketModeHandler")
     async def test_message_routed(self, mock_handler_cls, mock_app_cls, mock_httpx):
         router = Router()
-        router.add_route(Route(
-            provider_name="test-slack", agent_name="support-bot",
-            agent_url="http://agent:8000", channels=["#support"],
-            listen="messages", threads=True, dm=True,
-        ))
+        router.add_route(
+            Route(
+                provider_name="test-slack",
+                agent_name="support-bot",
+                agent_url="http://agent:8000",
+                channels=["#support"],
+                listen="messages",
+                threads=True,
+                dm=True,
+            )
+        )
         runner = SlackProviderRunner(
             name="test-slack",
             config={"bot_token": "xoxb-test", "app_token": "xapp-test"},
@@ -91,11 +96,16 @@ class TestSlackEventHandling:
     @patch("vystak_gateway.providers.slack.AsyncSocketModeHandler")
     async def test_dm_routed(self, mock_handler_cls, mock_app_cls, mock_httpx):
         router = Router()
-        router.add_route(Route(
-            provider_name="test-slack", agent_name="support-bot",
-            agent_url="http://agent:8000", channels=["#support"],
-            listen="mentions", dm=True,
-        ))
+        router.add_route(
+            Route(
+                provider_name="test-slack",
+                agent_name="support-bot",
+                agent_url="http://agent:8000",
+                channels=["#support"],
+                listen="mentions",
+                dm=True,
+            )
+        )
         runner = SlackProviderRunner(
             name="test-slack",
             config={"bot_token": "xoxb-test", "app_token": "xapp-test"},
@@ -113,7 +123,13 @@ class TestSlackEventHandling:
 
         say = AsyncMock()
         await runner._handle_message(
-            event={"text": "hello", "channel": "D123", "ts": "123.456", "user": "U1", "channel_type": "im"},
+            event={
+                "text": "hello",
+                "channel": "D123",
+                "ts": "123.456",
+                "user": "U1",
+                "channel_type": "im",
+            },
             say=say,
         )
         mock_client.post.assert_called_once()
@@ -124,11 +140,16 @@ class TestSlackEventHandling:
     @patch("vystak_gateway.providers.slack.AsyncSocketModeHandler")
     async def test_dm_ignored_when_disabled(self, mock_handler_cls, mock_app_cls, mock_httpx):
         router = Router()
-        router.add_route(Route(
-            provider_name="test-slack", agent_name="support-bot",
-            agent_url="http://agent:8000", channels=["#support"],
-            listen="mentions", dm=False,
-        ))
+        router.add_route(
+            Route(
+                provider_name="test-slack",
+                agent_name="support-bot",
+                agent_url="http://agent:8000",
+                channels=["#support"],
+                listen="mentions",
+                dm=False,
+            )
+        )
         runner = SlackProviderRunner(
             name="test-slack",
             config={"bot_token": "xoxb-test", "app_token": "xapp-test"},
@@ -136,7 +157,13 @@ class TestSlackEventHandling:
         )
         say = AsyncMock()
         await runner._handle_message(
-            event={"text": "hello", "channel": "D123", "ts": "123.456", "user": "U1", "channel_type": "im"},
+            event={
+                "text": "hello",
+                "channel": "D123",
+                "ts": "123.456",
+                "user": "U1",
+                "channel_type": "im",
+            },
             say=say,
         )
         say.assert_not_called()

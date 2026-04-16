@@ -36,6 +36,7 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
 
         try:
             from vystak_provider_azure.auth import get_credential, get_subscription_id
+
             config = {}
             config.update(agent.platform.provider.config)
             config.update(agent.platform.config)
@@ -46,6 +47,7 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
 
             from azure.mgmt.appcontainers import ContainerAppsAPIClient
             from azure.mgmt.appcontainers.models import EnvironmentVar, Secret
+
             aca_client = ContainerAppsAPIClient(credential, subscription_id)
 
             app = aca_client.container_apps.get(rg_name, agent.name)
@@ -65,6 +67,7 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
             # Re-provide secret values (Azure strips them on GET)
             # Get ACR creds
             from azure.mgmt.containerregistry import ContainerRegistryManagementClient
+
             acr_client = ContainerRegistryManagementClient(credential, subscription_id)
             registries = list(acr_client.registries.list_by_resource_group(rg_name))
             acr_password = ""
@@ -73,7 +76,7 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
                 acr_password = creds.passwords[0].value
 
             secrets = []
-            for s in (app.configuration.secrets or []):
+            for s in app.configuration.secrets or []:
                 if s.name == "acr-password":
                     secrets.append(Secret(name=s.name, value=acr_password))
                 else:
@@ -84,7 +87,9 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
             app.configuration.secrets = secrets
 
             aca_client.container_apps.begin_create_or_update(
-                rg_name, agent.name, app,
+                rg_name,
+                agent.name,
+                app,
             ).result()
             click.echo(f"  {agent.name}: updated")
 
@@ -95,7 +100,7 @@ def inject_gateway_env(gateway_url: str, deployed: list[dict]) -> None:
 def register_agents(gateway_url: str, deployed: list[dict]) -> None:
     """Register all deployed agents with the gateway via POST /register."""
     # Wait for gateway to be healthy
-    for attempt in range(15):
+    for _attempt in range(15):
         try:
             resp = httpx.get(f"{gateway_url}/health", timeout=5)
             if resp.status_code == 200:
@@ -148,6 +153,7 @@ def _resolve_agent_url(d: dict) -> str | None:
     # Query provider status for URL
     try:
         from vystak_cli.provider_factory import get_provider
+
         provider = get_provider(agent)
         provider.set_agent(agent)
         status = provider.status(agent.name)
@@ -192,7 +198,9 @@ def _deploy_gateway_docker(gateway_name: str) -> str | None:
 
     build_gateway_image(client, gateway_name, str(gateway_dir))
     network = ensure_network(client)
-    provision_gateway(client, gateway_name, network, routes_path=str(routes_path), env={}, port=8080)
+    provision_gateway(
+        client, gateway_name, network, routes_path=str(routes_path), env={}, port=8080
+    )
 
     return "http://localhost:8080"
 
@@ -201,8 +209,8 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
     """Deploy gateway as an Azure Container App."""
     import subprocess
 
-    from vystak_provider_docker.gateway import write_gateway_source
     from vystak_provider_azure.auth import get_credential, get_location, get_subscription_id
+    from vystak_provider_docker.gateway import write_gateway_source
 
     config = {}
     if ref_agent.platform:
@@ -217,6 +225,7 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
 
     # Get ACR from existing resources
     from azure.mgmt.containerregistry import ContainerRegistryManagementClient
+
     acr_client = ContainerRegistryManagementClient(credential, subscription_id)
     registries = list(acr_client.registries.list_by_resource_group(rg_name))
     if not registries:
@@ -231,6 +240,7 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
 
     # Get ACA environment
     from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
     aca_client = ContainerAppsAPIClient(credential, subscription_id)
     environments = list(aca_client.managed_environments.list_by_resource_group(rg_name))
     if not environments:
@@ -250,12 +260,25 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
     image_tag = f"{login_server}/{app_name}:latest"
     subprocess.run(
         ["docker", "login", login_server, "--username", acr_username, "--password-stdin"],
-        input=acr_password, text=True, check=True, capture_output=True,
+        input=acr_password,
+        text=True,
+        check=True,
+        capture_output=True,
     )
     result = subprocess.run(
-        ["docker", "buildx", "build", "--platform", "linux/amd64",
-         "--tag", image_tag, "--push", str(gateway_dir)],
-        capture_output=True, text=True,
+        [
+            "docker",
+            "buildx",
+            "build",
+            "--platform",
+            "linux/amd64",
+            "--tag",
+            image_tag,
+            "--push",
+            str(gateway_dir),
+        ],
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         click.echo(f"  Build failed: {result.stderr}", err=True)
@@ -263,13 +286,21 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
 
     # Deploy
     from azure.mgmt.appcontainers.models import (
-        Configuration, Container, ContainerApp, ContainerResources,
-        Ingress, RegistryCredentials, Scale, Secret, Template,
+        Configuration,
+        Container,
+        ContainerApp,
+        ContainerResources,
+        Ingress,
+        RegistryCredentials,
+        Scale,
+        Secret,
+        Template,
     )
 
     try:
         app = aca_client.container_apps.begin_create_or_update(
-            rg_name, app_name,
+            rg_name,
+            app_name,
             ContainerApp(
                 location=location,
                 tags={"vystak:managed": "true", "vystak:gateway": gateway_name},
@@ -277,16 +308,22 @@ def _deploy_gateway_azure(gateway_name: str, ref_agent) -> str | None:
                 configuration=Configuration(
                     ingress=Ingress(external=True, target_port=8080),
                     secrets=[Secret(name="acr-password", value=acr_password)],
-                    registries=[RegistryCredentials(
-                        server=login_server, username=acr_username,
-                        password_secret_ref="acr-password",
-                    )],
+                    registries=[
+                        RegistryCredentials(
+                            server=login_server,
+                            username=acr_username,
+                            password_secret_ref="acr-password",
+                        )
+                    ],
                 ),
                 template=Template(
-                    containers=[Container(
-                        name=app_name, image=image_tag,
-                        resources=ContainerResources(cpu=0.25, memory="0.5Gi"),
-                    )],
+                    containers=[
+                        Container(
+                            name=app_name,
+                            image=image_tag,
+                            resources=ContainerResources(cpu=0.25, memory="0.5Gi"),
+                        )
+                    ],
                     scale=Scale(min_replicas=1, max_replicas=1),
                 ),
             ),

@@ -1,14 +1,15 @@
 """Interactive picker — arrow keys to select from a list."""
 
 from prompt_toolkit import Application
-from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 
 
-async def pick(title: str, items: list[dict], display_key: str = "label", detail_key: str = "detail") -> dict | None:
+async def pick(
+    title: str, items: list[dict], display_key: str = "label", detail_key: str = "detail"
+) -> dict | None:
     """Show an interactive picker. Returns selected item or None if cancelled.
 
     items: list of dicts, each must have display_key and optionally detail_key.

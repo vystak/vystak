@@ -69,9 +69,13 @@ class ProvisionGraph:
         for name in order:
             node = self._nodes[name]
 
-            self._listener.on_start(ProvisionEvent(
-                node_name=name, event_type="start", message=name,
-            ))
+            self._listener.on_start(
+                ProvisionEvent(
+                    node_name=name,
+                    event_type="start",
+                    message=name,
+                )
+            )
 
             # Pass listener to node if it supports it
             if hasattr(node, "set_listener"):
@@ -81,21 +85,33 @@ class ProvisionGraph:
             results[name] = result
 
             if not result.success:
-                self._listener.on_error(ProvisionEvent(
-                    node_name=name, event_type="error",
-                    message=name, detail=result.error or "",
-                ))
+                self._listener.on_error(
+                    ProvisionEvent(
+                        node_name=name,
+                        event_type="error",
+                        message=name,
+                        detail=result.error or "",
+                    )
+                )
                 raise ProvisionError(f"Failed to provision {name}: {result.error}")
 
-            self._listener.on_complete(ProvisionEvent(
-                node_name=name, event_type="complete",
-                message=name, detail=result.info.get("detail", ""),
-            ))
+            self._listener.on_complete(
+                ProvisionEvent(
+                    node_name=name,
+                    event_type="complete",
+                    message=name,
+                    detail=result.info.get("detail", ""),
+                )
+            )
 
             check = node.health_check()
-            self._listener.on_health_check(ProvisionEvent(
-                node_name=name, event_type="health_check", message=f"Waiting for {name}",
-            ))
+            self._listener.on_health_check(
+                ProvisionEvent(
+                    node_name=name,
+                    event_type="health_check",
+                    message=f"Waiting for {name}",
+                )
+            )
             check.wait()
 
         return results

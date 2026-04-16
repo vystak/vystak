@@ -1,7 +1,6 @@
 import ast as python_ast
 
 import pytest
-
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType, McpTransport
@@ -11,7 +10,6 @@ from vystak.schema.provider import Provider
 from vystak.schema.resource import SessionStore
 from vystak.schema.service import Postgres, Sqlite
 from vystak.schema.skill import Skill
-
 from vystak_adapter_langchain.templates import (
     generate_agent_py,
     generate_requirements_txt,
@@ -216,7 +214,9 @@ def postgres_agent(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="pg-bot",
-        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        model=Model(
+            name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+        ),
         resources=[SessionStore(name="sessions", provider=docker_provider, engine="postgres")],
     )
 
@@ -226,7 +226,9 @@ def sqlite_agent(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="sqlite-bot",
-        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        model=Model(
+            name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+        ),
         resources=[SessionStore(name="sessions", provider=docker_provider, engine="sqlite")],
     )
 
@@ -386,10 +388,22 @@ class TestA2AInServer:
 def mcp_agent(anthropic_provider):
     return Agent(
         name="mcp-bot",
-        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        model=Model(
+            name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+        ),
         mcp_servers=[
-            McpServer(name="filesystem", transport=McpTransport.STDIO, command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/data"]),
-            McpServer(name="remote", transport=McpTransport.STREAMABLE_HTTP, url="http://example.com/mcp", headers={"Authorization": "Bearer token"}),
+            McpServer(
+                name="filesystem",
+                transport=McpTransport.STDIO,
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+            ),
+            McpServer(
+                name="remote",
+                transport=McpTransport.STREAMABLE_HTTP,
+                url="http://example.com/mcp",
+                headers={"Authorization": "Bearer token"},
+            ),
         ],
     )
 
@@ -399,9 +413,16 @@ def mcp_agent_with_resources(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="mcp-pg-bot",
-        model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+        model=Model(
+            name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+        ),
         mcp_servers=[
-            McpServer(name="filesystem", transport=McpTransport.STDIO, command="npx", args=["-y", "@modelcontextprotocol/server-filesystem"]),
+            McpServer(
+                name="filesystem",
+                transport=McpTransport.STDIO,
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem"],
+            ),
         ],
         resources=[SessionStore(name="sessions", provider=docker_provider, engine="postgres")],
     )
@@ -414,7 +435,9 @@ class TestSessionsField:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
-            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            model=Model(
+                name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+            ),
             sessions=Postgres(provider=docker),
         )
         code = generate_server_py(agent)
@@ -424,7 +447,9 @@ class TestSessionsField:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
-            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            model=Model(
+                name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+            ),
             sessions=Sqlite(provider=docker),
         )
         code = generate_server_py(agent)
@@ -433,7 +458,9 @@ class TestSessionsField:
     def test_bring_your_own_sessions(self, anthropic_provider):
         agent = Agent(
             name="bot",
-            model=Model(name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"),
+            model=Model(
+                name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
+            ),
             sessions=Postgres(connection_string_env="DATABASE_URL"),
         )
         code = generate_server_py(agent)

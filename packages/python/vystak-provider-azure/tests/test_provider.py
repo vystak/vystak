@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from vystak.providers.base import DeployPlan, GeneratedCode
 from vystak_provider_azure.provider import AzureProvider
 
@@ -89,17 +87,23 @@ class TestAzureProviderApply:
             "container-app": ProvisionResult(
                 name="container-app",
                 success=True,
-                info={"url": "https://my-agent.eastus.azurecontainerapps.io", "fqdn": "my-agent.eastus.azurecontainerapps.io", "app_name": "my-agent"},
+                info={
+                    "url": "https://my-agent.eastus.azurecontainerapps.io",
+                    "fqdn": "my-agent.eastus.azurecontainerapps.io",
+                    "app_name": "my-agent",
+                },
             ),
         }
 
         provider = AzureProvider()
         agent = _make_agent()
         provider.set_agent(agent)
-        provider.set_generated_code(GeneratedCode(
-            files={"main.py": "print('hi')", "requirements.txt": "fastapi"},
-            entrypoint="main.py",
-        ))
+        provider.set_generated_code(
+            GeneratedCode(
+                files={"main.py": "print('hi')", "requirements.txt": "fastapi"},
+                entrypoint="main.py",
+            )
+        )
 
         plan = DeployPlan(
             agent_name="my-agent",
@@ -109,12 +113,15 @@ class TestAzureProviderApply:
             changes={"all": (None, "abc123")},
         )
 
-        with patch.dict("sys.modules", {
-            "azure.mgmt.resource": MagicMock(),
-            "azure.mgmt.loganalytics": MagicMock(),
-            "azure.mgmt.containerregistry": MagicMock(),
-            "azure.mgmt.appcontainers": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "azure.mgmt.resource": MagicMock(),
+                "azure.mgmt.loganalytics": MagicMock(),
+                "azure.mgmt.containerregistry": MagicMock(),
+                "azure.mgmt.appcontainers": MagicMock(),
+            },
+        ):
             result = provider.apply(plan)
 
         assert result.success is True
@@ -157,10 +164,12 @@ class TestAzureProviderApply:
             "environment": "custom-env",
         }
         provider.set_agent(agent)
-        provider.set_generated_code(GeneratedCode(
-            files={"main.py": "pass", "requirements.txt": ""},
-            entrypoint="main.py",
-        ))
+        provider.set_generated_code(
+            GeneratedCode(
+                files={"main.py": "pass", "requirements.txt": ""},
+                entrypoint="main.py",
+            )
+        )
 
         plan = DeployPlan(
             agent_name="my-agent",
@@ -170,12 +179,15 @@ class TestAzureProviderApply:
             changes={},
         )
 
-        with patch.dict("sys.modules", {
-            "azure.mgmt.resource": MagicMock(),
-            "azure.mgmt.loganalytics": MagicMock(),
-            "azure.mgmt.containerregistry": MagicMock(),
-            "azure.mgmt.appcontainers": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "azure.mgmt.resource": MagicMock(),
+                "azure.mgmt.loganalytics": MagicMock(),
+                "azure.mgmt.containerregistry": MagicMock(),
+                "azure.mgmt.appcontainers": MagicMock(),
+            },
+        ):
             result = provider.apply(plan)
 
         assert result.success is True

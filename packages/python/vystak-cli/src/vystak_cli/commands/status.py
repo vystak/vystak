@@ -16,6 +16,7 @@ def status(files, file_path, agent_name):
     """Show the status of deployed agents."""
     if agent_name and not files and not file_path:
         from vystak_provider_docker import DockerProvider
+
         provider = DockerProvider()
         _show_status(provider, agent_name)
         return

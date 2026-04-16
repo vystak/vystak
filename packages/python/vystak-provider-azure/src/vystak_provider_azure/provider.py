@@ -5,9 +5,7 @@ from pathlib import Path
 
 import docker
 import docker.errors
-
 from vystak.hash import hash_agent
-from vystak.provisioning import ProvisionGraph
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -15,18 +13,19 @@ from vystak.providers.base import (
     GeneratedCode,
     PlatformProvider,
 )
+from vystak.provisioning import ProvisionGraph
 from vystak.schema.agent import Agent
+from vystak_provider_docker.secrets import get_resource_password
 
 from vystak_provider_azure.auth import get_credential, get_location, get_subscription_id
 from vystak_provider_azure.nodes import (
-    ACRNode,
     ACAEnvironmentNode,
+    ACRNode,
     AzurePostgresNode,
     ContainerAppNode,
     LogAnalyticsNode,
     ResourceGroupNode,
 )
-from vystak_provider_docker.secrets import get_resource_password
 
 
 class AzureProvider(PlatformProvider):
@@ -93,6 +92,7 @@ class AzureProvider(PlatformProvider):
     def _postgres_server_name(rg_name: str, service_name: str) -> str:
         """Derive a globally unique Postgres server name from RG + service name."""
         import re
+
         raw = f"{rg_name}-{service_name}"
         sanitized = re.sub(r"[^a-z0-9-]", "-", raw.lower())
         sanitized = sanitized.strip("-")[:63]
@@ -121,6 +121,7 @@ class AzureProvider(PlatformProvider):
             rg_name = self._rg_name(agent_name)
 
             from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
             aca_client = ContainerAppsAPIClient(credential, subscription_id)
 
             app = aca_client.container_apps.get(rg_name, agent_name)
@@ -200,14 +201,19 @@ class AzureProvider(PlatformProvider):
             # Collect unique managed Postgres services from agent
             postgres_services = {}
             for svc in [self._agent.sessions, self._agent.memory] + list(self._agent.services):
-                if svc and svc.type == "postgres" and svc.is_managed:
-                    if svc.name not in postgres_services:
-                        postgres_services[svc.name] = svc
+                if (
+                    svc
+                    and svc.type == "postgres"
+                    and svc.is_managed
+                    and svc.name not in postgres_services
+                ):
+                    postgres_services[svc.name] = svc
 
             # Create Postgres client only if needed
             postgres_client = None
             if postgres_services:
                 from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClient
+
                 postgres_client = PostgreSQLManagementClient(credential, subscription_id)
 
             graph = ProvisionGraph()
@@ -215,63 +221,75 @@ class AzureProvider(PlatformProvider):
             if self._listener:
                 graph.set_listener(self._listener)
 
-            graph.add(ResourceGroupNode(
-                client=resource_client,
-                rg_name=rg_name,
-                location=location,
-                tags=tags,
-            ))
+            graph.add(
+                ResourceGroupNode(
+                    client=resource_client,
+                    rg_name=rg_name,
+                    location=location,
+                    tags=tags,
+                )
+            )
 
-            graph.add(LogAnalyticsNode(
-                client=la_client,
-                rg_name=rg_name,
-                workspace_name=f"{rg_name}-logs",
-                location=location,
-                tags=tags,
-            ))
+            graph.add(
+                LogAnalyticsNode(
+                    client=la_client,
+                    rg_name=rg_name,
+                    workspace_name=f"{rg_name}-logs",
+                    location=location,
+                    tags=tags,
+                )
+            )
 
-            graph.add(ACRNode(
-                client=acr_client,
-                rg_name=rg_name,
-                registry_name=acr_name,
-                location=location,
-                existing=acr_existing,
-                tags=tags,
-            ))
+            graph.add(
+                ACRNode(
+                    client=acr_client,
+                    rg_name=rg_name,
+                    registry_name=acr_name,
+                    location=location,
+                    existing=acr_existing,
+                    tags=tags,
+                )
+            )
 
-            graph.add(ACAEnvironmentNode(
-                client=aca_client,
-                rg_name=rg_name,
-                env_name=env_name,
-                location=location,
-                existing=env_existing,
-                tags=tags,
-            ))
+            graph.add(
+                ACAEnvironmentNode(
+                    client=aca_client,
+                    rg_name=rg_name,
+                    env_name=env_name,
+                    location=location,
+                    existing=env_existing,
+                    tags=tags,
+                )
+            )
 
             secrets_path = Path(".vystak") / "secrets.json"
             for svc_name, svc in postgres_services.items():
                 server_name = self._postgres_server_name(rg_name, svc_name)
                 password = get_resource_password(f"azure-postgres-{server_name}", secrets_path)
-                graph.add(AzurePostgresNode(
-                    client=postgres_client,
-                    rg_name=rg_name,
-                    server_name=server_name,
-                    service_name=svc_name,
-                    location=location,
-                    admin_password=password,
-                    config=svc.config,
-                    tags=tags,
-                ))
+                graph.add(
+                    AzurePostgresNode(
+                        client=postgres_client,
+                        rg_name=rg_name,
+                        server_name=server_name,
+                        service_name=svc_name,
+                        location=location,
+                        admin_password=password,
+                        config=svc.config,
+                        tags=tags,
+                    )
+                )
 
-            graph.add(ContainerAppNode(
-                aca_client=aca_client,
-                docker_client=docker_client,
-                rg_name=rg_name,
-                agent=self._agent,
-                generated_code=self._generated_code,
-                plan=plan,
-                platform_config=cfg,
-            ))
+            graph.add(
+                ContainerAppNode(
+                    aca_client=aca_client,
+                    docker_client=docker_client,
+                    rg_name=rg_name,
+                    agent=self._agent,
+                    generated_code=self._generated_code,
+                    plan=plan,
+                    platform_config=cfg,
+                )
+            )
 
             results = graph.execute()
 
@@ -313,31 +331,40 @@ class AzureProvider(PlatformProvider):
 
         try:
             tag_filter = f"tagName eq 'vystak:agent' and tagValue eq '{agent_name}'"
-            resources = list(resource_client.resources.list_by_resource_group(
-                rg_name, filter=tag_filter,
-            ))
+            resources = list(
+                resource_client.resources.list_by_resource_group(
+                    rg_name,
+                    filter=tag_filter,
+                )
+            )
         except Exception:
             resources = []
 
         result = []
         for r in resources:
-            result.append({
-                "name": r.name,
-                "type": r.type,
-                "id": r.id,
-            })
+            result.append(
+                {
+                    "name": r.name,
+                    "type": r.type,
+                    "id": r.id,
+                }
+            )
 
         # Include the RG itself if auto-created
         if not cfg.get("resource_group"):
-            result.append({
-                "name": rg_name,
-                "type": "Microsoft.Resources/resourceGroups",
-                "id": f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}",
-            })
+            result.append(
+                {
+                    "name": rg_name,
+                    "type": "Microsoft.Resources/resourceGroups",
+                    "id": f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}",
+                }
+            )
 
         return result
 
-    def destroy(self, agent_name: str, include_resources: bool = False, no_wait: bool = False) -> None:
+    def destroy(
+        self, agent_name: str, include_resources: bool = False, no_wait: bool = False
+    ) -> None:
         cfg = self._platform_config()
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
@@ -364,9 +391,12 @@ class AzureProvider(PlatformProvider):
         resource_client = ResourceManagementClient(credential, subscription_id)
 
         tag_filter = f"tagName eq 'vystak:agent' and tagValue eq '{agent_name}'"
-        resources = list(resource_client.resources.list_by_resource_group(
-            rg_name, filter=tag_filter,
-        ))
+        resources = list(
+            resource_client.resources.list_by_resource_group(
+                rg_name,
+                filter=tag_filter,
+            )
+        )
 
         # Delete in reverse dependency order
         type_order = {
@@ -385,7 +415,8 @@ class AzureProvider(PlatformProvider):
         for resource in resources:
             try:
                 poller = resource_client.resources.begin_delete_by_id(
-                    resource.id, api_version=self._api_version(resource.type),
+                    resource.id,
+                    api_version=self._api_version(resource.type),
                 )
                 if no_wait:
                     pollers.append((resource.name, poller))
@@ -429,7 +460,11 @@ class AzureProvider(PlatformProvider):
             rg_name = self._rg_name(agent_name)
 
             app = aca_client.container_apps.get(rg_name, agent_name)
-            fqdn = app.configuration.ingress.fqdn if app.configuration and app.configuration.ingress else None
+            fqdn = (
+                app.configuration.ingress.fqdn
+                if app.configuration and app.configuration.ingress
+                else None
+            )
 
             return AgentStatus(
                 agent_name=agent_name,

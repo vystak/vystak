@@ -13,8 +13,8 @@ for _e in _cwd_entries:
     sys.path.remove(_e)
 try:
     from vystak.schema.agent import Agent
-    from vystak.schema.loader import load_agent
     from vystak.schema.config_loader import load_base_config, merge_configs
+    from vystak.schema.loader import load_agent
     from vystak.schema.multi_loader import load_multi_agent_yaml
 finally:
     sys.path = _cwd_entries + sys.path
@@ -37,8 +37,7 @@ def find_agent_file(file: str | None = None, search_dir: Path | None = None) -> 
             return path
 
     raise FileNotFoundError(
-        f"No agent definition found. Create vystak.yaml or specify --file. "
-        f"Searched: {search_dir}"
+        f"No agent definition found. Create vystak.yaml or specify --file. Searched: {search_dir}"
     )
 
 
@@ -67,9 +66,7 @@ def load_agent_from_file(path: Path) -> Agent:
         del sys.modules["_vystak_def"]
 
         if not hasattr(module, "agent"):
-            raise ValueError(
-                f"Python file {path} must define an 'agent' variable of type Agent"
-            )
+            raise ValueError(f"Python file {path} must define an 'agent' variable of type Agent")
 
         agent = module.agent
         if not isinstance(agent, Agent):
@@ -85,7 +82,9 @@ def load_agents(paths: list[Path], base_dir: Path | None = None) -> list[Agent]:
     """Load agents from one or more files/directories."""
     if base_dir is None and paths:
         first = paths[0]
-        base_dir = first.parent if first.is_file() else first.parent if first.is_dir() else Path.cwd()
+        base_dir = (
+            first.parent if first.is_file() else first.parent if first.is_dir() else Path.cwd()
+        )
     base_config = load_base_config(base_dir) if base_dir else {}
 
     all_agents: list[Agent] = []

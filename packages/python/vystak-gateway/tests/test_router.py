@@ -1,5 +1,4 @@
 import pytest
-
 from vystak_gateway.router import Route, Router
 
 

@@ -1,5 +1,4 @@
 import pytest
-
 from vystak.provisioning.graph import CycleError, ProvisionError, ProvisionGraph
 from vystak.provisioning.health import NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
@@ -52,7 +51,7 @@ class TestProvisionGraph:
         graph.add(network)
         graph.add(db)
         graph.add(app)
-        results = graph.execute()
+        graph.execute()
         assert network.provisioned and db.provisioned and app.provisioned
         assert "network" in db.context_received
         assert "network" in app.context_received
@@ -65,7 +64,7 @@ class TestProvisionGraph:
         graph.add(network)
         graph.add(db)
         graph.add_dependency("db", "network")
-        results = graph.execute()
+        graph.execute()
         assert "network" in db.context_received
 
     def test_mixed_explicit_and_implicit_deps(self):
@@ -80,7 +79,7 @@ class TestProvisionGraph:
         graph.add(app)
         graph.add_dependency("cache", "network")
         graph.add_dependency("app", "cache")
-        results = graph.execute()
+        graph.execute()
         assert "db" in app.context_received
         assert "cache" in app.context_received
 
@@ -126,7 +125,7 @@ class TestProvisionGraph:
         graph = ProvisionGraph()
         node = StubNode("app", deps=["nonexistent"])
         graph.add(node)
-        results = graph.execute()
+        graph.execute()
         assert node.provisioned
 
     def test_empty_graph(self):
@@ -142,5 +141,5 @@ class TestProvisionGraph:
         graph.add(a)
         graph.add(b)
         graph.add(c)
-        results = graph.execute()
+        graph.execute()
         assert a.provisioned and b.provisioned and c.provisioned

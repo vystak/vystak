@@ -1,8 +1,5 @@
 """AzurePostgresNode — provisions Azure Database for PostgreSQL Flexible Server."""
 
-from vystak.provisioning.health import HealthCheck, NoopHealthCheck, TcpHealthCheck
-from vystak.provisioning.node import Provisionable, ProvisionResult
-
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.rdbms.postgresql_flexibleservers.models import (
     Backup,
@@ -12,6 +9,8 @@ from azure.mgmt.rdbms.postgresql_flexibleservers.models import (
     Sku,
     Storage,
 )
+from vystak.provisioning.health import HealthCheck, NoopHealthCheck
+from vystak.provisioning.node import Provisionable, ProvisionResult
 
 
 class AzurePostgresNode(Provisionable):

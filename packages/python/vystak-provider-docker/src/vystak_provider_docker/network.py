@@ -1,6 +1,6 @@
 """Docker network management for Vystak."""
 
-import docker
+import docker  # noqa: F401 — re-exported for test patching (vystak_provider_docker.network.docker)
 
 NETWORK_NAME = "vystak-net"
 

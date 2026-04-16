@@ -31,7 +31,7 @@ class Provisionable(ABC):
     def health_check(self) -> HealthCheck:
         return NoopHealthCheck()
 
-    def destroy(self) -> None:
+    def destroy(self) -> None:  # noqa: B027 — default no-op; subclasses may override
         pass
 
     def set_listener(self, listener) -> None:
@@ -42,7 +42,12 @@ class Provisionable(ABC):
         """Emit a sub-step event during provisioning."""
         if self._listener:
             from vystak.provisioning.listener import ProvisionEvent
-            self._listener.on_step(ProvisionEvent(
-                node_name=self.name, event_type="step",
-                message=message, detail=detail,
-            ))
+
+            self._listener.on_step(
+                ProvisionEvent(
+                    node_name=self.name,
+                    event_type="step",
+                    message=message,
+                    detail=detail,
+                )
+            )

@@ -42,6 +42,11 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Code-generation modules emit literal Python source as strings; long lines are inherent.
+"packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/a2a.py" = ["E501"]
+"packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/templates.py" = ["E501"]
+
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"

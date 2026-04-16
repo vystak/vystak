@@ -10,7 +10,7 @@ class Channel(NamedModel):
     config: dict = {}
 
 
-from vystak.schema.gateway import ChannelProvider
+from vystak.schema.gateway import ChannelProvider  # noqa: E402 — deferred to avoid circular import
 
 
 class SlackChannel(NamedModel):

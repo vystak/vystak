@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType
 
@@ -12,7 +11,11 @@ class TestChannel:
         assert ch.config == {}
 
     def test_slack_with_config(self):
-        ch = Channel(name="support-slack", type=ChannelType.SLACK, config={"channel": "#support", "bot_token_secret": "SLACK_TOKEN"})
+        ch = Channel(
+            name="support-slack",
+            type=ChannelType.SLACK,
+            config={"channel": "#support", "bot_token_secret": "SLACK_TOKEN"},
+        )
         assert ch.type == ChannelType.SLACK
         assert ch.config["channel"] == "#support"
 

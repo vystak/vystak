@@ -2,8 +2,6 @@
 
 import asyncio
 import getpass
-import sys
-
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -12,7 +10,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
+from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
@@ -20,7 +18,6 @@ from rich.theme import Theme
 from vystak_chat import client
 from vystak_chat.config import (
     add_agent,
-    create_session,
     get_agent,
     get_session,
     get_sessions_for_agent,
@@ -28,8 +25,6 @@ from vystak_chat.config import (
     list_sessions,
     remove_agent,
 )
-from rich.padding import Padding
-
 
 # Slash command definitions: (command, args_hint, description)
 COMMANDS = [
@@ -107,14 +102,17 @@ class SlashCompleter(Completer):
                     display_meta=desc,
                 )
 
-custom_theme = Theme({
-    "user": "bold cyan",
-    "agent": "bold blue",
-    "system": "dim",
-    "error": "bold red",
-    "success": "bold green",
-    "warning": "bold yellow",
-})
+
+custom_theme = Theme(
+    {
+        "user": "bold cyan",
+        "agent": "bold blue",
+        "system": "dim",
+        "error": "bold red",
+        "success": "bold green",
+        "warning": "bold yellow",
+    }
+)
 
 console = Console(theme=custom_theme)
 
@@ -128,7 +126,10 @@ def _render_streaming(tokens: list[str], agent_name: str) -> Text:
 
 
 async def _stream_response(
-    url: str, message: str, agent_name: str, model: str = "",
+    url: str,
+    message: str,
+    agent_name: str,
+    model: str = "",
     previous_response_id: str | None = None,
     user_id: str | None = None,
 ) -> tuple[client.StreamResult, str]:
@@ -148,7 +149,9 @@ async def _stream_response(
 
     try:
         async for event in client.stream_response(
-            url, message, model=model,
+            url,
+            message,
+            model=model,
             previous_response_id=previous_response_id,
             result=stream_result,
             user_id=user_id,
@@ -167,8 +170,10 @@ async def _stream_response(
                 console.print(f"[dim]  > calling {event.tool}...[/dim]")
 
             elif event.type == "function_call_output":
-                result_preview = event.result[:200] + "..." if len(event.result) > 200 else event.result
-                console.print(f"[dim]  > result:[/dim]")
+                result_preview = (
+                    event.result[:200] + "..." if len(event.result) > 200 else event.result
+                )
+                console.print("[dim]  > result:[/dim]")
                 console.print(Padding(Markdown(result_preview), (0, 0, 0, 4)))
                 console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
                 status_line_shown = True
@@ -187,7 +192,9 @@ async def _stream_response(
             if status_line_shown:
                 console.print(" " * 60, end="\r")
             invoke_result = await client.send_response(
-                url, message, model=model,
+                url,
+                message,
+                model=model,
                 previous_response_id=previous_response_id,
                 user_id=user_id,
             )
@@ -202,7 +209,9 @@ async def _stream_response(
         if status_line_shown:
             console.print(" " * 60, end="\r")
         invoke_result = await client.send_response(
-            url, message, model=model,
+            url,
+            message,
+            model=model,
             previous_response_id=previous_response_id,
         )
         console.print(f"[agent]{agent_name}[/agent]")
@@ -269,7 +278,9 @@ class ChatREPL:
     def _show_status(self):
         if self.connected:
             console.print(f"  [system]agent:[/system]   [agent]{self._agent_name}[/agent]")
-            response_label = (self._previous_response_id[:8] + "...") if self._previous_response_id else "new"
+            response_label = (
+                (self._previous_response_id[:8] + "...") if self._previous_response_id else "new"
+            )
             console.print(f"  [system]response:[/system] {response_label}")
             console.print(f"  [system]url:[/system]     {self._agent_url}")
         else:
@@ -354,11 +365,13 @@ class ChatREPL:
             health_info = await client.health(agent["url"])
             status = "online" if health_info else "offline"
             current = " (connected)" if agent["url"] == self._agent_url else ""
-            items.append({
-                "label": f"{agent['name']}{current}",
-                "detail": f"{agent['url']}  [{status}]",
-                "agent": agent,
-            })
+            items.append(
+                {
+                    "label": f"{agent['name']}{current}",
+                    "detail": f"{agent['url']}  [{status}]",
+                    "agent": agent,
+                }
+            )
 
         selected = await pick("Agents", items)
         if selected is None:
@@ -380,12 +393,16 @@ class ChatREPL:
         # Build picker items
         items = []
         for s in saved:
-            items.append({
-                "label": f"{s['id'][:8]}  {s['agent_name']}",
-                "detail": s["agent_url"],
-                "session": s,
-            })
-        items.append({"label": "+ New conversation", "detail": "Start a new conversation", "session": None})
+            items.append(
+                {
+                    "label": f"{s['id'][:8]}  {s['agent_name']}",
+                    "detail": s["agent_url"],
+                    "session": s,
+                }
+            )
+        items.append(
+            {"label": "+ New conversation", "detail": "Start a new conversation", "session": None}
+        )
 
         selected = await pick("Sessions", items)
         if selected is None:
@@ -420,7 +437,7 @@ class ChatREPL:
                     break
 
         if not session:
-            console.print(f"[error]Session not found. /sessions to list.[/error]")
+            console.print("[error]Session not found. /sessions to list.[/error]")
             return
 
         self._agent_name = session["agent_name"]
@@ -436,7 +453,7 @@ class ChatREPL:
 
         self._previous_response_id = None
         self._reset_tokens()
-        console.print(f"[success]New conversation started[/success]")
+        console.print("[success]New conversation started[/success]")
 
     async def _cmd_gateway(self, args: str):
         """Connect to a gateway and pick an agent."""
@@ -467,12 +484,14 @@ class ChatREPL:
         items = []
         for name, info in agents_map.items():
             channels_str = ", ".join(info["channels"]) if info["channels"] else "no channels"
-            items.append({
-                "label": name,
-                "detail": f"{info['url']}  ({channels_str})",
-                "agent_name": name,
-                "agent_url": info["url"],
-            })
+            items.append(
+                {
+                    "label": name,
+                    "detail": f"{info['url']}  ({channels_str})",
+                    "agent_name": name,
+                    "agent_url": info["url"],
+                }
+            )
 
         if len(items) == 1:
             selected = items[0]
@@ -532,10 +551,12 @@ class ChatREPL:
             return
 
         try:
-            console.print(f"\n[user]You[/user]")
+            console.print("\n[user]You[/user]")
             console.print(message)
             result, response_id = await _stream_response(
-                self._agent_url, message, self._agent_name,
+                self._agent_url,
+                message,
+                self._agent_name,
                 model=self._model,
                 previous_response_id=self._previous_response_id,
                 user_id=self._user_id,
@@ -575,10 +596,14 @@ class ChatREPL:
         if self.connected:
             total = self._total_input_tokens + self._total_output_tokens
             tokens_str = (
-                f'tokens: {self._format_tokens(total)}'
-                f' ({self._format_tokens(self._total_input_tokens)} in'
-                f' / {self._format_tokens(self._total_output_tokens)} out)'
-            ) if total > 0 else "tokens: 0"
+                (
+                    f"tokens: {self._format_tokens(total)}"
+                    f" ({self._format_tokens(self._total_input_tokens)} in"
+                    f" / {self._format_tokens(self._total_output_tokens)} out)"
+                )
+                if total > 0
+                else "tokens: 0"
+            )
 
             response_label = self._previous_response_id[:8] if self._previous_response_id else "new"
             return HTML(
@@ -639,6 +664,7 @@ class ChatREPL:
 
 def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None = None):
     """Entry point for interactive REPL."""
+
     async def _run():
         repl = ChatREPL()
         if auto_connect_url:
@@ -654,7 +680,7 @@ def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None =
 
 def run_oneshot(url: str | None = None, message: str = ""):
     """Send a single message and exit. For scripting/piping."""
-    from vystak_chat.config import get_agent, list_agents
+    from vystak_chat.config import list_agents
 
     async def _run():
         # Resolve URL
@@ -669,7 +695,10 @@ def run_oneshot(url: str | None = None, message: str = ""):
                 agent_url = agents[0]["url"]
                 agent_name = agents[0]["name"]
             else:
-                console.print("[error]No URL specified and no saved agents. Use --url or add an agent.[/error]")
+                console.print(
+                    "[error]No URL specified and no saved agents. "
+                    "Use --url or add an agent.[/error]"
+                )
                 raise SystemExit(1)
         else:
             agent_url = agent_url.rstrip("/")
@@ -689,7 +718,9 @@ def run_oneshot(url: str | None = None, message: str = ""):
                     agent_name = health_info.get("agent", "agent")
                     model = ""
 
-        result, _ = await _stream_response(agent_url, message, agent_name, model=model, user_id=getpass.getuser())
+        result, _ = await _stream_response(
+            agent_url, message, agent_name, model=model, user_id=getpass.getuser()
+        )
 
         if result.total_tokens:
             console.print(

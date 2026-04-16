@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-
 from vystak.hash.hasher import hash_dict, hash_model
 
 

@@ -3,12 +3,11 @@
 import os
 from pathlib import Path
 
+import docker.errors
+from vystak.providers.base import DeployPlan, GeneratedCode
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
-from vystak.providers.base import DeployPlan, GeneratedCode
 from vystak.schema.agent import Agent
-
-import docker.errors
 
 
 class DockerAgentNode(Provisionable):
@@ -61,6 +60,7 @@ class DockerAgentNode(Provisionable):
 
             # Bundle OpenAI-compatible schema types for Docker deployment
             import vystak.schema.openai as _openai_schema
+
             _openai_src = Path(_openai_schema.__file__)
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())

@@ -3,6 +3,7 @@
 from textwrap import dedent
 
 from vystak.schema.agent import Agent
+
 from vystak_adapter_langchain.a2a import (
     generate_a2a_handler_code,
     generate_agent_card_code,
@@ -96,6 +97,7 @@ def _get_session_store(agent: Agent):
         return agent.sessions
 
     from vystak.schema.resource import SessionStore
+
     for resource in agent.resources:
         if isinstance(resource, SessionStore):
             return resource
@@ -142,26 +144,28 @@ def _generate_mcp_config(agent: Agent) -> str:
             lines.append('        "env": {')
             for k, v in mcp.env.items():
                 lines.append(f'            "{k}": "{v}",')
-            lines.append('        },')
+            lines.append("        },")
         if mcp.headers:
             lines.append('        "headers": {')
             for k, v in mcp.headers.items():
                 lines.append(f'            "{k}": "{v}",')
-            lines.append('        },')
-        lines.append('    },')
+            lines.append("        },")
+        lines.append("    },")
 
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
 
 
-def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, stub_tool_names: list[str] | None = None) -> str:
+def generate_agent_py(
+    agent: Agent,
+    found_tool_names: list[str] | None = None,
+    stub_tool_names: list[str] | None = None,
+) -> str:
     """Generate a LangGraph agent definition file."""
     has_mcp = _has_mcp_servers(agent)
     provider_type = agent.model.provider.type
-    model_import, model_class = MODEL_PROVIDERS.get(
-        provider_type, MODEL_PROVIDERS["anthropic"]
-    )
+    model_import, model_class = MODEL_PROVIDERS.get(provider_type, MODEL_PROVIDERS["anthropic"])
 
     # Build model kwargs
     model_kwargs = [f'model="{agent.model.model_name}"']
@@ -226,7 +230,7 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
         lines.append(_generate_mcp_config(agent))
     lines.append("")
     lines.append("")
-    lines.append(f"# Model")
+    lines.append("# Model")
     lines.append(f"model = {model_class}({model_kwargs_str})")
     lines.append("")
 
@@ -276,10 +280,7 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
     # Build tools list including memory tools if session_store is present
     if session_store:
         memory_tools = "save_memory, forget_memory"
-        if tools_list:
-            full_tools_list = f"{tools_list}, {memory_tools}"
-        else:
-            full_tools_list = memory_tools
+        full_tools_list = f"{tools_list}, {memory_tools}" if tools_list else memory_tools
     else:
         full_tools_list = tools_list
 
@@ -288,58 +289,82 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
     if session_store and session_store.engine in ("postgres", "sqlite"):
         lines.append("")
         lines.append("def _make_prompt(base_prompt, mem_store):")
-        lines.append('    """Create a prompt callable that injects recalled memories ephemerally."""')
+        lines.append(
+            '    """Create a prompt callable that injects recalled memories ephemerally."""'
+        )
         lines.append("    async def prompt(state, config):")
         lines.append("        user_id = config.get('configurable', {}).get('user_id')")
         lines.append("        project_id = config.get('configurable', {}).get('project_id')")
         lines.append("        last_msg = ''")
         lines.append("        for m in reversed(state.get('messages', [])):")
-        lines.append("            if hasattr(m, 'content') and isinstance(m.content, str) and getattr(m, 'type', '') == 'human':")
+        lines.append(
+            "            if hasattr(m, 'content') and isinstance(m.content, str) and getattr(m, 'type', '') == 'human':"
+        )
         lines.append("                last_msg = m.content")
         lines.append("                break")
         lines.append("        memories = []")
         lines.append("        if mem_store and last_msg:")
         lines.append("            if user_id:")
-        lines.append('                results = await mem_store.asearch(("user", user_id, "memories"), query=last_msg, limit=5)')
+        lines.append(
+            '                results = await mem_store.asearch(("user", user_id, "memories"), query=last_msg, limit=5)'
+        )
         lines.append("                for item in results:")
-        lines.append("                    memories.append(f'[{item.key}] {item.value.get(\"data\", \"\")} (scope: user)')")
+        lines.append(
+            '                    memories.append(f\'[{item.key}] {item.value.get("data", "")} (scope: user)\')'
+        )
         lines.append("            if project_id:")
-        lines.append('                results = await mem_store.asearch(("project", project_id, "memories"), query=last_msg, limit=5)')
+        lines.append(
+            '                results = await mem_store.asearch(("project", project_id, "memories"), query=last_msg, limit=5)'
+        )
         lines.append("                for item in results:")
-        lines.append("                    memories.append(f'[{item.key}] {item.value.get(\"data\", \"\")} (scope: project)')")
-        lines.append('            results = await mem_store.asearch(("global", "memories"), query=last_msg, limit=5)')
+        lines.append(
+            '                    memories.append(f\'[{item.key}] {item.value.get("data", "")} (scope: project)\')'
+        )
+        lines.append(
+            '            results = await mem_store.asearch(("global", "memories"), query=last_msg, limit=5)'
+        )
         lines.append("            for item in results:")
-        lines.append("                memories.append(f'[{item.key}] {item.value.get(\"data\", \"\")} (scope: global)')")
+        lines.append(
+            '                memories.append(f\'[{item.key}] {item.value.get("data", "")} (scope: global)\')'
+        )
         lines.append("        parts = []")
         lines.append("        if base_prompt:")
         lines.append("            parts.append(base_prompt)")
         lines.append("        if memories:")
         lines.append('            parts.append("Relevant memories:\\n" + "\\n".join(memories))')
-        lines.append('        system_content = "\\n\\n".join(parts) if parts else "You are a helpful assistant."')
-        lines.append('        return [{"role": "system", "content": system_content}] + state["messages"]')
+        lines.append(
+            '        system_content = "\\n\\n".join(parts) if parts else "You are a helpful assistant."'
+        )
+        lines.append(
+            '        return [{"role": "system", "content": system_content}] + state["messages"]'
+        )
         lines.append("    return prompt")
         lines.append("")
         lines.append("")
-        lines.append(f"def create_agent(checkpointer, store=None, mcp_tools=None):")
+        lines.append("def create_agent(checkpointer, store=None, mcp_tools=None):")
         lines.append(f"    all_tools = [{full_tools_list}]")
-        lines.append(f"    if mcp_tools:")
-        lines.append(f"        all_tools.extend(mcp_tools)")
+        lines.append("    if mcp_tools:")
+        lines.append("        all_tools.extend(mcp_tools)")
         if system_prompt:
-            lines.append(f"    prompt_fn = _make_prompt(system_prompt, store)")
+            lines.append("    prompt_fn = _make_prompt(system_prompt, store)")
         else:
-            lines.append(f"    prompt_fn = _make_prompt(None, store)")
-        lines.append(f"    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=prompt_fn)")
+            lines.append("    prompt_fn = _make_prompt(None, store)")
+        lines.append(
+            "    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=prompt_fn)"
+        )
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
     elif has_mcp:
-        lines.append(f"def create_agent(mcp_tools=None):")
+        lines.append("def create_agent(mcp_tools=None):")
         lines.append(f"    all_tools = [{full_tools_list}]")
-        lines.append(f"    if mcp_tools:")
-        lines.append(f"        all_tools.extend(mcp_tools)")
+        lines.append("    if mcp_tools:")
+        lines.append("        all_tools.extend(mcp_tools)")
         if system_prompt:
-            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=memory, prompt=system_prompt)")
+            lines.append(
+                "    return create_react_agent(model, all_tools, checkpointer=memory, prompt=system_prompt)"
+            )
         else:
-            lines.append(f"    return create_react_agent(model, all_tools, checkpointer=memory)")
+            lines.append("    return create_react_agent(model, all_tools, checkpointer=memory)")
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
     else:
@@ -348,7 +373,9 @@ def generate_agent_py(agent: Agent, found_tool_names: list[str] | None = None, s
                 f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory, prompt=system_prompt)"
             )
         else:
-            lines.append(f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory)")
+            lines.append(
+                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory)"
+            )
 
     lines.append("")
 
@@ -362,9 +389,13 @@ def generate_server_py(agent: Agent) -> str:
     has_mcp = _has_mcp_servers(agent)
 
     if uses_persistent:
-        saver_class = "AsyncPostgresSaver" if session_store.engine == "postgres" else "AsyncSqliteSaver"
+        saver_class = (
+            "AsyncPostgresSaver" if session_store.engine == "postgres" else "AsyncSqliteSaver"
+        )
         saver_module = "postgres.aio" if session_store.engine == "postgres" else "sqlite.aio"
-        store_class = "AsyncPostgresStore" if session_store.engine == "postgres" else "AsyncSqliteStore"
+        store_class = (
+            "AsyncPostgresStore" if session_store.engine == "postgres" else "AsyncSqliteStore"
+        )
         if session_store.engine == "postgres":
             store_import = "from langgraph.store.postgres.aio import AsyncPostgresStore"
         else:
@@ -438,23 +469,35 @@ def generate_server_py(agent: Agent) -> str:
             lines.append("    _mcp_client = MultiServerMCPClient(MCP_SERVERS)")
             lines.append("    mcp_tools = await _mcp_client.get_tools()")
             if session_store.engine == "postgres":
-                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
+                lines.append(
+                    f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\"
+                )
                 lines.append(f"               {store_class}.from_conn_string(DB_URI) as store:")
             else:
-                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-                lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
+                lines.append(
+                    f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\"
+                )
+                lines.append(
+                    f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:"
+                )
             lines.append("        await checkpointer.setup()")
             lines.append("        await store.setup()")
             lines.append("        _store = store")
-            lines.append("        _agent = create_agent(checkpointer, store=store, mcp_tools=mcp_tools)")
+            lines.append(
+                "        _agent = create_agent(checkpointer, store=store, mcp_tools=mcp_tools)"
+            )
             lines.append("        yield")
         else:
             if session_store.engine == "postgres":
                 lines.append("    import asyncio as _asyncio")
                 lines.append("    for _attempt in range(30):")
                 lines.append("        try:")
-                lines.append(f"            async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-                lines.append(f"                       {store_class}.from_conn_string(DB_URI) as store:")
+                lines.append(
+                    f"            async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\"
+                )
+                lines.append(
+                    f"                       {store_class}.from_conn_string(DB_URI) as store:"
+                )
                 lines.append("                await checkpointer.setup()")
                 lines.append("                await store.setup()")
                 lines.append("                _store = store")
@@ -466,8 +509,12 @@ def generate_server_py(agent: Agent) -> str:
                 lines.append("                raise")
                 lines.append("            await _asyncio.sleep(2)")
             else:
-                lines.append(f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\")
-                lines.append(f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:")
+                lines.append(
+                    f"    async with {saver_class}.from_conn_string(DB_URI) as checkpointer, \\"
+                )
+                lines.append(
+                    f"               {store_class}.from_conn_string(DB_URI.replace('.db', '_store.db')) as store:"
+                )
                 lines.append("        await checkpointer.setup()")
                 lines.append("        await store.setup()")
                 lines.append("        _store = store")
@@ -515,7 +562,9 @@ def generate_server_py(agent: Agent) -> str:
     # Memory recall is now handled by the agent's prompt callable (ephemeral, not checkpointed).
     # Only handle_memory_actions remains in the server for processing save/forget tool results.
     if uses_persistent:
-        lines.append("async def handle_memory_actions(store, messages, user_id=None, project_id=None):")
+        lines.append(
+            "async def handle_memory_actions(store, messages, user_id=None, project_id=None):"
+        )
         lines.append("    import uuid as _uuid")
         lines.append("    for msg in messages:")
         lines.append("        if hasattr(msg, 'content') and isinstance(msg.content, str):")
@@ -525,17 +574,27 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("                    scope, content = parts[1], parts[2]")
         lines.append("                    memory_id = str(_uuid.uuid4())[:8]")
         lines.append('                    if scope == "user" and user_id:')
-        lines.append('                        await store.aput(("user", user_id, "memories"), memory_id, {"data": content})')
+        lines.append(
+            '                        await store.aput(("user", user_id, "memories"), memory_id, {"data": content})'
+        )
         lines.append('                    elif scope == "project" and project_id:')
-        lines.append('                        await store.aput(("project", project_id, "memories"), memory_id, {"data": content})')
+        lines.append(
+            '                        await store.aput(("project", project_id, "memories"), memory_id, {"data": content})'
+        )
         lines.append('                    elif scope == "global":')
-        lines.append('                        await store.aput(("global", "memories"), memory_id, {"data": content})')
+        lines.append(
+            '                        await store.aput(("global", "memories"), memory_id, {"data": content})'
+        )
         lines.append('            elif msg.content.startswith("__FORGET_MEMORY__|"):')
         lines.append('                memory_id = msg.content.split("|", 1)[1]')
         lines.append("                if user_id:")
-        lines.append('                    await store.adelete(("user", user_id, "memories"), memory_id)')
+        lines.append(
+            '                    await store.adelete(("user", user_id, "memories"), memory_id)'
+        )
         lines.append("                if project_id:")
-        lines.append('                    await store.adelete(("project", project_id, "memories"), memory_id)')
+        lines.append(
+            '                    await store.adelete(("project", project_id, "memories"), memory_id)'
+        )
         lines.append('                await store.adelete(("global", "memories"), memory_id)')
         lines.append("")
         lines.append("")
@@ -546,8 +605,8 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('    if request.url.path.startswith("/v1/"):')
     lines.append("        return JSONResponse(")
     lines.append("            status_code=500,")
-    lines.append('            content=ErrorResponse(error=ErrorDetail(')
-    lines.append('                message=str(exc),')
+    lines.append("            content=ErrorResponse(error=ErrorDetail(")
+    lines.append("                message=str(exc),")
     lines.append('                type="server_error",')
     lines.append('                code="internal_error",')
     lines.append("            )).model_dump(),")
@@ -596,7 +655,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
     lines.append(f"    result = await {agent_ref}.ainvoke(")
     lines.append('        {"messages": messages},')
-    lines.append('        config=config,')
+    lines.append("        config=config,")
     lines.append("    )")
     lines.append('    content = result["messages"][-1].content')
     lines.append("    if isinstance(content, list):")
@@ -607,7 +666,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    else:")
     lines.append("        response_text = str(content)")
     if uses_persistent:
-        lines.append("    await handle_memory_actions(_store, result['messages'], user_id=user_id, project_id=project_id)")
+        lines.append(
+            "    await handle_memory_actions(_store, result['messages'], user_id=user_id, project_id=project_id)"
+        )
     lines.append("")
     lines.append("    last = result['messages'][-1]")
     lines.append("    usage = None")
@@ -623,7 +684,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('        id=f"chatcmpl-{uuid.uuid4().hex[:12]}",')
     lines.append("        created=int(time.time()),")
     lines.append("        model=MODEL_ID,")
-    lines.append("        choices=[Choice(message=ChatMessage(role='assistant', content=response_text))],")
+    lines.append(
+        "        choices=[Choice(message=ChatMessage(role='assistant', content=response_text))],"
+    )
     lines.append("        usage=usage,")
     lines.append("    ).model_dump()")
     lines.append("")
@@ -638,7 +701,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        tool_msgs = []")
     lines.append(f"        async for chunk in {agent_ref}.astream(")
     lines.append('            {"messages": messages},')
-    lines.append('            config=config,')
+    lines.append("            config=config,")
     lines.append('            stream_mode=["messages", "custom"],')
     lines.append("        ):")
     lines.append('            if chunk[0] == "custom":')
@@ -651,20 +714,26 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                ).model_dump()")
     lines.append('                yield {"data": json.dumps(oai_chunk)}')
     lines.append('            elif chunk[0] == "messages":')
-    lines.append('                msg, metadata = chunk[1]')
+    lines.append("                msg, metadata = chunk[1]")
     lines.append('                if msg.type == "AIMessageChunk":')
     lines.append("                    if msg.content:")
-    lines.append("                        text = msg.content if isinstance(msg.content, str) else ''")
+    lines.append(
+        "                        text = msg.content if isinstance(msg.content, str) else ''"
+    )
     lines.append("                        if not text and isinstance(msg.content, list):")
     lines.append("                            for block in msg.content:")
-    lines.append("                                if isinstance(block, dict) and block.get('type') == 'text':")
+    lines.append(
+        "                                if isinstance(block, dict) and block.get('type') == 'text':"
+    )
     lines.append("                                    text += block.get('text', '')")
     lines.append("                        if text:")
     lines.append("                            oai_chunk = ChatCompletionChunk(")
     lines.append("                                id=completion_id,")
     lines.append("                                created=int(time.time()),")
     lines.append("                                model=MODEL_ID,")
-    lines.append("                                choices=[ChunkChoice(delta=ChunkDelta(content=text))],")
+    lines.append(
+        "                                choices=[ChunkChoice(delta=ChunkDelta(content=text))],"
+    )
     lines.append("                            ).model_dump()")
     lines.append('                            yield {"data": json.dumps(oai_chunk)}')
     lines.append("                    if msg.tool_call_chunks:")
@@ -675,7 +744,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                                    created=int(time.time()),")
     lines.append("                                    model=MODEL_ID,")
     lines.append("                                    choices=[ChunkChoice(delta=ChunkDelta())],")
-    lines.append('                                    x_vystak={"type": "tool_call_start", "tool": tc["name"]},')
+    lines.append(
+        '                                    x_vystak={"type": "tool_call_start", "tool": tc["name"]},'
+    )
     lines.append("                                ).model_dump()")
     lines.append('                                yield {"data": json.dumps(oai_chunk)}')
     lines.append("                    if hasattr(msg, 'usage_metadata') and msg.usage_metadata:")
@@ -683,7 +754,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                        inp = um.get('input_tokens', 0)")
     lines.append("                        out = um.get('output_tokens', 0)")
     lines.append("                        if inp or out:")
-    lines.append('                            usage = {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": um.get("total_tokens", 0)}')
+    lines.append(
+        '                            usage = {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": um.get("total_tokens", 0)}'
+    )
     lines.append('                elif msg.type == "tool":')
     lines.append("                    tool_name = getattr(msg, 'name', 'tool')")
     lines.append("                    output_str = str(msg.content)[:200] if msg.content else ''")
@@ -692,7 +765,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                        created=int(time.time()),")
     lines.append("                        model=MODEL_ID,")
     lines.append("                        choices=[ChunkChoice(delta=ChunkDelta())],")
-    lines.append('                        x_vystak={"type": "tool_result", "tool": tool_name, "result": output_str},')
+    lines.append(
+        '                        x_vystak={"type": "tool_result", "tool": tool_name, "result": output_str},'
+    )
     lines.append("                    ).model_dump()")
     lines.append('                    yield {"data": json.dumps(oai_chunk)}')
     lines.append("                    tool_msgs.append(msg)")
@@ -708,7 +783,9 @@ def generate_server_py(agent: Agent) -> str:
     if uses_persistent:
         lines.append("        # Process memory actions from tool messages")
         lines.append("        if tool_msgs:")
-        lines.append("            await handle_memory_actions(_store, tool_msgs, user_id=request.user_id, project_id=request.project_id)")
+        lines.append(
+            "            await handle_memory_actions(_store, tool_msgs, user_id=request.user_id, project_id=request.project_id)"
+        )
 
     lines.append('        yield {"data": "[DONE]"}')
     lines.append("")
@@ -743,7 +820,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    else:")
     lines.append("        for item in request.input:")
     lines.append("            if isinstance(item, dict):")
-    lines.append("                input_messages.append((item.get('role', 'user'), item.get('content', '')))")
+    lines.append(
+        "                input_messages.append((item.get('role', 'user'), item.get('content', '')))"
+    )
     if uses_persistent:
         lines.append("                if item.get('role') == 'user' and item.get('content'):")
         lines.append("                    last_user_msg = item['content']")
@@ -758,13 +837,17 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    # Determine thread_id and response_id")
     lines.append("    if previous_id:")
     lines.append("        if previous_id not in _responses:")
-    lines.append("            return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail(")
-    lines.append('                message=f"Response \'{previous_id}\' not found",')
+    lines.append(
+        "            return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail("
+    )
+    lines.append("                message=f\"Response '{previous_id}' not found\",")
     lines.append('                type="invalid_request_error", code="response_not_found",')
     lines.append("            )).model_dump())")
     lines.append("        prev = _responses[previous_id]")
     lines.append("        if not prev.get('stored'):")
-    lines.append("            return JSONResponse(status_code=400, content=ErrorResponse(error=ErrorDetail(")
+    lines.append(
+        "            return JSONResponse(status_code=400, content=ErrorResponse(error=ErrorDetail("
+    )
     lines.append('                message="Cannot chain from a response created with store=false",')
     lines.append('                type="invalid_request_error", code="invalid_value",')
     lines.append("            )).model_dump())")
@@ -789,7 +872,9 @@ def generate_server_py(agent: Agent) -> str:
 
     # Streaming
     lines.append("    if request.stream:")
-    lines.append("        return await _stream_response(input_messages, config, response_id, request)")
+    lines.append(
+        "        return await _stream_response(input_messages, config, response_id, request)"
+    )
     lines.append("")
 
     # Background
@@ -804,7 +889,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("            'thread_id': thread_id,")
     lines.append("            'created_at': int(time.time()),")
     lines.append("        }")
-    lines.append("        asyncio.create_task(_run_background(input_messages, config, response_id, request))")
+    lines.append(
+        "        asyncio.create_task(_run_background(input_messages, config, response_id, request))"
+    )
     lines.append("        return ResponseObject(")
     lines.append("            id=response_id,")
     lines.append('            status="in_progress",')
@@ -817,7 +904,7 @@ def generate_server_py(agent: Agent) -> str:
     # Synchronous invoke
     lines.append(f"    result = await {agent_ref}.ainvoke(")
     lines.append('        {"messages": input_messages},')
-    lines.append('        config=config,')
+    lines.append("        config=config,")
     lines.append("    )")
     lines.append('    content = result["messages"][-1].content')
     lines.append("    if isinstance(content, list):")
@@ -829,7 +916,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        response_text = str(content)")
 
     if uses_persistent:
-        lines.append("    await handle_memory_actions(_store, result['messages'], user_id=user_id, project_id=project_id)")
+        lines.append(
+            "    await handle_memory_actions(_store, result['messages'], user_id=user_id, project_id=project_id)"
+        )
 
     lines.append("")
     lines.append("    last = result['messages'][-1]")
@@ -842,7 +931,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("            total_tokens=um.get('total_tokens', 0),")
     lines.append("        )")
     lines.append("")
-    lines.append("    output = [ResponseOutput(type='message', role='assistant', content=response_text)]")
+    lines.append(
+        "    output = [ResponseOutput(type='message', role='assistant', content=response_text)]"
+    )
     lines.append("    resp = ResponseObject(")
     lines.append("        id=response_id,")
     lines.append('        status="completed",')
@@ -872,7 +963,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    try:")
     lines.append(f"        result = await {agent_ref}.ainvoke(")
     lines.append('            {"messages": input_messages},')
-    lines.append('            config=config,')
+    lines.append("            config=config,")
     lines.append("        )")
     lines.append('        content = result["messages"][-1].content')
     lines.append("        if isinstance(content, list):")
@@ -882,7 +973,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("            )")
     lines.append("        else:")
     lines.append("            response_text = str(content)")
-    lines.append("        output = [ResponseOutput(type='message', role='assistant', content=response_text)]")
+    lines.append(
+        "        output = [ResponseOutput(type='message', role='assistant', content=response_text)]"
+    )
     lines.append("        last = result['messages'][-1]")
     lines.append("        usage_obj = None")
     lines.append("        if hasattr(last, 'usage_metadata') and last.usage_metadata:")
@@ -909,8 +1002,10 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('@app.get("/v1/responses/{response_id}")')
     lines.append("async def get_response(response_id: str):")
     lines.append("    if response_id not in _responses:")
-    lines.append("        return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail(")
-    lines.append('            message=f"Response \'{response_id}\' not found",')
+    lines.append(
+        "        return JSONResponse(status_code=404, content=ErrorResponse(error=ErrorDetail("
+    )
+    lines.append("            message=f\"Response '{response_id}' not found\",")
     lines.append('            type="invalid_request_error", code="response_not_found",')
     lines.append("        )).model_dump())")
     lines.append("    stored = _responses[response_id]")
@@ -949,7 +1044,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        output_index = 0")
     lines.append("        accumulated = []")
     lines.append("        pending_tool_calls = {}")
-    lines.append("        tool_messages_for_memory = []  # Collect tool messages for memory processing")
+    lines.append(
+        "        tool_messages_for_memory = []  # Collect tool messages for memory processing"
+    )
     lines.append("        final_output = []")
     lines.append("")
     lines.append("        # response.output_item.added (message)")
@@ -971,17 +1068,21 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
     lines.append(f"        async for chunk in {agent_ref}.astream(")
     lines.append('            {"messages": input_messages},')
-    lines.append('            config=config,')
+    lines.append("            config=config,")
     lines.append('            stream_mode=["messages", "custom"],')
     lines.append("        ):")
     lines.append('            if chunk[0] == "messages":')
-    lines.append('                msg, metadata = chunk[1]')
+    lines.append("                msg, metadata = chunk[1]")
     lines.append('                if msg.type == "AIMessageChunk":')
     lines.append("                    if msg.content:")
-    lines.append("                        text = msg.content if isinstance(msg.content, str) else ''")
+    lines.append(
+        "                        text = msg.content if isinstance(msg.content, str) else ''"
+    )
     lines.append("                        if not text and isinstance(msg.content, list):")
     lines.append("                            for block in msg.content:")
-    lines.append("                                if isinstance(block, dict) and block.get('type') == 'text':")
+    lines.append(
+        "                                if isinstance(block, dict) and block.get('type') == 'text':"
+    )
     lines.append("                                    text += block.get('text', '')")
     lines.append("                        if text:")
     lines.append("                            accumulated.append(text)")
@@ -1005,16 +1106,24 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("                                fc_added = {")
     lines.append('                                    "type": "response.output_item.added",')
     lines.append('                                    "output_index": output_index,')
-    lines.append('                                    "item": {"type": "function_call", "name": tc["name"], "call_id": str(tc_id)},')
+    lines.append(
+        '                                    "item": {"type": "function_call", "name": tc["name"], "call_id": str(tc_id)},'
+    )
     lines.append("                                }")
     lines.append('                                yield {"data": json.dumps(fc_added)}')
     lines.append("                            if tc.get('args'):")
     lines.append("                                key = str(tc_id)")
     lines.append("                                if key in pending_tool_calls:")
-    lines.append("                                    pending_tool_calls[key]['args'] += tc['args']")
+    lines.append(
+        "                                    pending_tool_calls[key]['args'] += tc['args']"
+    )
     lines.append("                                args_delta = {")
-    lines.append('                                    "type": "response.function_call_arguments.delta",')
-    lines.append('                                    "output_index": pending_tool_calls.get(key, {}).get("output_index", output_index),')
+    lines.append(
+        '                                    "type": "response.function_call_arguments.delta",'
+    )
+    lines.append(
+        '                                    "output_index": pending_tool_calls.get(key, {}).get("output_index", output_index),'
+    )
     lines.append('                                    "delta": tc["args"],')
     lines.append("                                }")
     lines.append('                                yield {"data": json.dumps(args_delta)}')
@@ -1037,7 +1146,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('                        "item": {')
     lines.append('                            "type": "function_call_output",')
     lines.append('                            "call_id": str(getattr(msg, "tool_call_id", "")),')
-    lines.append('                            "output": str(msg.content)[:500] if msg.content else "",')
+    lines.append(
+        '                            "output": str(msg.content)[:500] if msg.content else "",'
+    )
     lines.append("                        },")
     lines.append("                    }")
     lines.append('                    yield {"data": json.dumps(tool_output)}')
@@ -1053,7 +1164,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("        }")
     lines.append('        yield {"data": json.dumps(text_done)}')
     lines.append("")
-    lines.append("        final_output = [ResponseOutput(type='message', role='assistant', content=full_text)]")
+    lines.append(
+        "        final_output = [ResponseOutput(type='message', role='assistant', content=full_text)]"
+    )
     lines.append("")
     lines.append("        # response.completed")
     lines.append("        completed_event = {")
@@ -1061,7 +1174,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append('            "response": {')
     lines.append('                "id": response_id,')
     lines.append('                "status": "completed",')
-    lines.append('                "output": [o.model_dump() if hasattr(o, "model_dump") else o for o in final_output],')
+    lines.append(
+        '                "output": [o.model_dump() if hasattr(o, "model_dump") else o for o in final_output],'
+    )
     lines.append('                "model": MODEL_ID,')
     lines.append('                "created_at": created_at,')
     lines.append("            },")
@@ -1083,7 +1198,9 @@ def generate_server_py(agent: Agent) -> str:
     if uses_persistent:
         lines.append("        # Process memory actions from tool messages")
         lines.append("        if tool_messages_for_memory:")
-        lines.append("            await handle_memory_actions(_store, tool_messages_for_memory, user_id=request.user_id, project_id=request.project_id)")
+        lines.append(
+            "            await handle_memory_actions(_store, tool_messages_for_memory, user_id=request.user_id, project_id=request.project_id)"
+        )
 
     lines.append("")
     lines.append('        yield {"data": "[DONE]"}')

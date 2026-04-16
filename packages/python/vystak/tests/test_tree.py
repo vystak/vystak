@@ -1,4 +1,4 @@
-from vystak.hash.tree import AgentHashTree, hash_agent
+from vystak.hash.tree import hash_agent
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType, McpTransport, WorkspaceType
@@ -41,7 +41,9 @@ class TestAgentHashTree:
     def test_model_change_changes_brain_and_root(self):
         agent1 = make_agent()
         anthropic = Provider(name="anthropic", type="anthropic")
-        different_model = Model(name="opus", provider=anthropic, model_name="claude-opus-4-20250514")
+        different_model = Model(
+            name="opus", provider=anthropic, model_name="claude-opus-4-20250514"
+        )
         agent2 = make_agent(model=different_model)
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
@@ -67,14 +69,18 @@ class TestAgentHashTree:
 
     def test_mcp_change_detected(self):
         agent1 = make_agent()
-        agent2 = make_agent(mcp_servers=[McpServer(name="fs", transport=McpTransport.STDIO, command="fs-mcp")])
+        agent2 = make_agent(
+            mcp_servers=[McpServer(name="fs", transport=McpTransport.STDIO, command="fs-mcp")]
+        )
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
         assert tree1.mcp_servers != tree2.mcp_servers
 
     def test_workspace_change_detected(self):
         agent1 = make_agent()
-        agent2 = make_agent(workspace=Workspace(name="sandbox", type=WorkspaceType.SANDBOX, filesystem=True))
+        agent2 = make_agent(
+            workspace=Workspace(name="sandbox", type=WorkspaceType.SANDBOX, filesystem=True)
+        )
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
         assert tree1.workspace != tree2.workspace

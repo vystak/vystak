@@ -5,7 +5,6 @@ from pathlib import Path
 
 import docker
 import docker.errors
-
 from vystak.hash import hash_agent
 from vystak.providers.base import (
     AgentStatus,
@@ -16,6 +15,7 @@ from vystak.providers.base import (
 )
 from vystak.schema.agent import Agent
 from vystak.schema.channel import SlackChannel
+
 from vystak_provider_docker.gateway import (
     build_gateway_image,
     destroy_gateway,
@@ -23,7 +23,6 @@ from vystak_provider_docker.gateway import (
     write_gateway_source,
     write_routes_file,
 )
-
 
 DOCKERFILE_TEMPLATE = """\
 FROM python:3.11-slim
@@ -73,6 +72,7 @@ class DockerProvider(PlatformProvider):
     def _all_services(self) -> list:
         """Collect all services from sessions, memory, services, and legacy resources."""
         from vystak.schema.service import Service
+
         result = []
         if self._agent:
             if self._agent.sessions and isinstance(self._agent.sessions, Service):
@@ -115,18 +115,24 @@ class DockerProvider(PlatformProvider):
                         resolved_config[key] = os.environ.get(value.name, "")
                     else:
                         resolved_config[key] = value
-                gw_info["providers"][cp.name] = {"name": cp.name, "type": cp.type, "config": resolved_config}
+                gw_info["providers"][cp.name] = {
+                    "name": cp.name,
+                    "type": cp.type,
+                    "config": resolved_config,
+                }
 
             agent_url = f"http://{self._container_name(self._agent.name)}:8000"
-            gw_info["routes"].append({
-                "provider_name": cp.name,
-                "agent_name": self._agent.name,
-                "agent_url": agent_url,
-                "channels": channel.channels,
-                "listen": channel.listen,
-                "threads": channel.threads,
-                "dm": channel.dm,
-            })
+            gw_info["routes"].append(
+                {
+                    "provider_name": cp.name,
+                    "agent_name": self._agent.name,
+                    "agent_url": agent_url,
+                    "channels": channel.channels,
+                    "listen": channel.listen,
+                    "threads": channel.threads,
+                    "dm": channel.dm,
+                }
+            )
 
         return gateways
 
@@ -153,7 +159,9 @@ class DockerProvider(PlatformProvider):
                         env[env_key] = value
 
             port = gateway.config.get("port", 8080)
-            provision_gateway(self._client, gw_name, network, routes_path=str(routes_path), env=env, port=port)
+            provision_gateway(
+                self._client, gw_name, network, routes_path=str(routes_path), env=env, port=port
+            )
 
     def destroy_gateways(self) -> None:
         """Destroy gateway containers for the agent's channels."""
@@ -210,6 +218,7 @@ class DockerProvider(PlatformProvider):
 
         try:
             from vystak.provisioning import ProvisionGraph
+
             from vystak_provider_docker.nodes import (
                 DockerAgentNode,
                 DockerGatewayNode,
@@ -230,14 +239,20 @@ class DockerProvider(PlatformProvider):
 
             # Agent container
             agent_node = DockerAgentNode(
-                self._client, self._agent, self._generated_code, plan,
+                self._client,
+                self._agent,
+                self._generated_code,
+                plan,
             )
             graph.add(agent_node)
 
             # Gateways
             for gw_name, gw_info in self._collect_gateway_info().items():
                 gw_node = DockerGatewayNode(
-                    self._client, gw_name, gw_info, self._agent.name,
+                    self._client,
+                    gw_name,
+                    gw_info,
+                    self._agent.name,
                 )
                 graph.add(gw_node)
 
@@ -278,6 +293,7 @@ class DockerProvider(PlatformProvider):
 
         if include_resources and self._agent:
             from vystak_provider_docker.nodes.service import DockerServiceNode
+
             for svc in self._all_services():
                 node = DockerServiceNode(self._client, svc, SECRETS_PATH)
                 node.destroy()
