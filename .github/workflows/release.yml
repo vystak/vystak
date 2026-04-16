@@ -57,6 +57,11 @@ jobs:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
       - name: Publish TypeScript packages to npm
-        run: pnpm -r publish --no-git-checks --access public
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN not set; skipping npm publish."
+            exit 0
+          fi
+          pnpm -r publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
