@@ -32,5 +32,9 @@ Thumbs.db
 .env
 .env.local
 
-# AgentStack generated output
+# Vystak generated output (was .agentstack/ before rename)
+.vystak/
 .agentstack/
+
+# Tooling workspaces (brainstorm sessions, local agent state)
+.superpowers/
