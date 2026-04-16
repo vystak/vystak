@@ -88,7 +88,7 @@ class AzurePostgresNode(Provisionable):
 
             # 4. Create database (idempotent)
             self.emit("Creating database", "agentstack")
-            self._client.databases.begin_create_or_update(
+            self._client.databases.begin_create(
                 self._rg_name,
                 self._server_name,
                 "agentstack",
@@ -116,8 +116,8 @@ class AzurePostgresNode(Provisionable):
             return ProvisionResult(name=self.name, success=False, error=str(e))
 
     def health_check(self) -> HealthCheck:
-        if self._host:
-            return TcpHealthCheck(self._host, 5432)
+        # NoopHealthCheck — Azure Flexible Server is ready when begin_create completes.
+        # TcpHealthCheck would fail from local machine (firewall blocks non-Azure IPs).
         return NoopHealthCheck()
 
     @staticmethod
