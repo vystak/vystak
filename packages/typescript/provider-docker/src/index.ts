@@ -1,3 +1,3 @@
-/** AgentStack Docker platform provider */
+/** Vystak Docker platform provider */
 
-export { VERSION } from "@agentstack/core";
+export { VERSION } from "@vystak/core";
