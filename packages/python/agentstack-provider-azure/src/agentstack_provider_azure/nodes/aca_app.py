@@ -50,7 +50,13 @@ class ContainerAppNode(Provisionable):
 
     @property
     def depends_on(self) -> list[str]:
-        return ["aca-environment", "acr"]
+        deps = ["aca-environment", "acr"]
+        if hasattr(self._agent, "sessions") and self._agent.sessions and self._agent.sessions.is_managed:
+            deps.append(self._agent.sessions.name)
+        if hasattr(self._agent, "memory") and self._agent.memory and self._agent.memory.is_managed:
+            if self._agent.memory.name not in deps:
+                deps.append(self._agent.memory.name)
+        return deps
 
     def provision(self, context: dict) -> ProvisionResult:
         try:
@@ -148,6 +154,30 @@ class ContainerAppNode(Provisionable):
             # Inject extra env vars (gateway URL, peer URLs, etc.)
             for key, value in self._platform_config.get("env", {}).items():
                 env_vars.append({"name": key, "value": value})
+
+            # Inject database connection strings from upstream Postgres nodes
+            if hasattr(self._agent, "sessions") and self._agent.sessions:
+                svc = self._agent.sessions
+                if svc.connection_string_env:
+                    # Bring-your-own: pass the env var name through
+                    env_vars.append({"name": "SESSION_STORE_URL", "value": f"${{{svc.connection_string_env}}}"})
+                else:
+                    pg_result = context.get(svc.name)
+                    if pg_result and pg_result.info.get("connection_string"):
+                        safe = "session-store-url"
+                        aca_secrets.append(Secret(name=safe, value=pg_result.info["connection_string"]))
+                        env_vars.append({"name": "SESSION_STORE_URL", "secretRef": safe})
+
+            if hasattr(self._agent, "memory") and self._agent.memory:
+                svc = self._agent.memory
+                if svc.connection_string_env:
+                    env_vars.append({"name": "MEMORY_STORE_URL", "value": f"${{{svc.connection_string_env}}}"})
+                else:
+                    pg_result = context.get(svc.name)
+                    if pg_result and pg_result.info.get("connection_string"):
+                        safe = "memory-store-url"
+                        aca_secrets.append(Secret(name=safe, value=pg_result.info["connection_string"]))
+                        env_vars.append({"name": "MEMORY_STORE_URL", "secretRef": safe})
 
             # ----------------------------------------------------------
             # 4. Create Container App
