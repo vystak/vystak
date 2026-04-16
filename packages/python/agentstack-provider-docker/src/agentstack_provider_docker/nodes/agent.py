@@ -108,13 +108,16 @@ class DockerAgentNode(Provisionable):
                 value = os.environ.get(secret.name)
                 if value:
                     env[secret.name] = value
-            # Connection strings from context
-            for dep_name in self.depends_on:
-                if dep_name == "network":
-                    continue
-                dep_result = context.get(dep_name)
+            # Connection strings from upstream services
+            if self._agent.sessions:
+                dep_result = context.get(self._agent.sessions.name)
                 if dep_result and dep_result.info.get("connection_string"):
                     env["SESSION_STORE_URL"] = dep_result.info["connection_string"]
+
+            if self._agent.memory:
+                dep_result = context.get(self._agent.memory.name)
+                if dep_result and dep_result.info.get("connection_string"):
+                    env["MEMORY_STORE_URL"] = dep_result.info["connection_string"]
 
             # Build volumes
             volumes = {}
