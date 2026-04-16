@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 
@@ -15,7 +14,9 @@ class TestPlatform:
 
     def test_with_config(self):
         aws = Provider(name="aws", type="aws")
-        platform = Platform(name="prod", type="agentcore", provider=aws, config={"region": "us-east-1"})
+        platform = Platform(
+            name="prod", type="agentcore", provider=aws, config={"region": "us-east-1"}
+        )
         assert platform.config["region"] == "us-east-1"
 
     def test_provider_required(self):

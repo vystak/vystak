@@ -1,9 +1,8 @@
 """ResourceGroupNode — ensures an Azure Resource Group exists."""
 
+from azure.mgmt.resource.resources.models import ResourceGroup
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
-
-from azure.mgmt.resource.resources.models import ResourceGroup
 
 
 class ResourceGroupNode(Provisionable):
@@ -31,7 +30,11 @@ class ResourceGroupNode(Provisionable):
             return ProvisionResult(
                 name=self.name,
                 success=True,
-                info={"rg_name": self._rg_name, "created": not exists, "detail": "created" if not exists else "exists"},
+                info={
+                    "rg_name": self._rg_name,
+                    "created": not exists,
+                    "detail": "created" if not exists else "exists",
+                },
             )
         except Exception as e:
             return ProvisionResult(name=self.name, success=False, error=str(e))

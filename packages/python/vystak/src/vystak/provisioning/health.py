@@ -33,7 +33,7 @@ class TcpHealthCheck(HealthCheck):
         try:
             with socket.create_connection((self.host, self.port), timeout=2):
                 return True
-        except (ConnectionRefusedError, OSError, socket.timeout):
+        except (TimeoutError, ConnectionRefusedError, OSError):
             return False
 
 

@@ -5,7 +5,13 @@ from vystak.schema.agent import Agent
 
 def generate_agent_card_code(agent: Agent) -> str:
     """Generate AGENT_CARD dict constant and /.well-known/agent.json endpoint."""
-    description = (agent.instructions or agent.name).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+    description = (
+        (agent.instructions or agent.name)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
     skills_list = [skill.name for skill in agent.skills]
 
     lines = []
@@ -48,7 +54,9 @@ def generate_task_manager_code() -> str:
     lines.append("")
     lines.append("class TaskManager:")
     lines.append('    """In-memory task manager for A2A protocol."""')
-    lines.append('    # Task states: submitted, working, input_required, completed, canceled, failed')
+    lines.append(
+        "    # Task states: submitted, working, input_required, completed, canceled, failed"
+    )
     lines.append("")
     lines.append("    def __init__(self):")
     lines.append("        self._tasks = {}")
@@ -56,7 +64,7 @@ def generate_task_manager_code() -> str:
     lines.append("    def create_task(self, task_id: str, message: dict) -> dict:")
     lines.append('        """Create a new task with submitted state."""')
     lines.append("        task = {")
-    lines.append(f'            "id": task_id,')
+    lines.append('            "id": task_id,')
     lines.append('            "status": {')
     lines.append('                "state": "submitted",')
     lines.append("            },")
@@ -69,7 +77,9 @@ def generate_task_manager_code() -> str:
     lines.append('        """Get a task by ID."""')
     lines.append("        return self._tasks.get(task_id)")
     lines.append("")
-    lines.append("    def update_task(self, task_id: str, state: str, result: str | None = None) -> dict | None:")
+    lines.append(
+        "    def update_task(self, task_id: str, state: str, result: str | None = None) -> dict | None:"
+    )
     lines.append('        """Update task state and optionally set result."""')
     lines.append("        task = self._tasks.get(task_id)")
     lines.append("        if task is None:")
@@ -117,7 +127,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('    elif method == "tasks/sendSubscribe":')
     lines.append("        return await _handle_tasks_send_subscribe(params, req_id)")
     lines.append("    else:")
-    lines.append('        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}')
+    lines.append(
+        '        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}'
+    )
     lines.append("")
     lines.append('    return {"jsonrpc": "2.0", "id": req_id, "result": result}')
     lines.append("")
@@ -172,18 +184,26 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("        # Check for interrupt / input_required")
     lines.append('        if "__interrupt__" in result:')
     lines.append('            interrupt_value = result["__interrupt__"]')
-    lines.append("            interrupt_text = str(interrupt_value[0].value) if interrupt_value else \"Input required\"")
-    lines.append('            task = _task_manager.update_task(task_id, "input_required", interrupt_text)')
+    lines.append(
+        '            interrupt_text = str(interrupt_value[0].value) if interrupt_value else "Input required"'
+    )
+    lines.append(
+        '            task = _task_manager.update_task(task_id, "input_required", interrupt_text)'
+    )
     lines.append("        else:")
     lines.append('            content = result["messages"][-1].content')
     lines.append("            if isinstance(content, list):")
     lines.append('                response_text = "".join(')
-    lines.append('                    block.get("text", "") if isinstance(block, dict) else str(block)')
+    lines.append(
+        '                    block.get("text", "") if isinstance(block, dict) else str(block)'
+    )
     lines.append("                    for block in content")
     lines.append("                )")
     lines.append("            else:")
     lines.append("                response_text = str(content)")
-    lines.append('            task = _task_manager.update_task(task_id, "completed", response_text)')
+    lines.append(
+        '            task = _task_manager.update_task(task_id, "completed", response_text)'
+    )
     lines.append("    except Exception as exc:")
     lines.append('        task = _task_manager.update_task(task_id, "failed", str(exc))')
     lines.append("")
@@ -214,7 +234,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("")
 
     # tasks/sendSubscribe handler (SSE streaming)
-    lines.append("async def _handle_tasks_send_subscribe(params: dict, req_id) -> EventSourceResponse:")
+    lines.append(
+        "async def _handle_tasks_send_subscribe(params: dict, req_id) -> EventSourceResponse:"
+    )
     lines.append('    """Handle tasks/sendSubscribe — stream agent response via SSE."""')
     lines.append('    task_id = params.get("id") or str(uuid.uuid4())')
     lines.append('    message = params.get("message", {})')
@@ -263,14 +285,20 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("            ):")
     lines.append('                if "__interrupt__" in event:')
     lines.append('                    interrupt_value = event["__interrupt__"]')
-    lines.append("                    interrupt_text = str(interrupt_value[0].value) if interrupt_value else \"Input required\"")
-    lines.append('                    _task_manager.update_task(task_id, "input_required", interrupt_text)')
+    lines.append(
+        '                    interrupt_text = str(interrupt_value[0].value) if interrupt_value else "Input required"'
+    )
+    lines.append(
+        '                    _task_manager.update_task(task_id, "input_required", interrupt_text)'
+    )
     lines.append("                    status_event = {")
     lines.append('                        "jsonrpc": "2.0",')
-    lines.append("                        \"id\": req_id,")
+    lines.append('                        "id": req_id,')
     lines.append('                        "result": {')
     lines.append('                            "id": task_id,')
-    lines.append('                            "status": {"state": "input_required", "message": {"role": "agent", "parts": [{"text": interrupt_text}]}},')
+    lines.append(
+        '                            "status": {"state": "input_required", "message": {"role": "agent", "parts": [{"text": interrupt_text}]}},'
+    )
     lines.append('                            "final": True,')
     lines.append("                        },")
     lines.append("                    }")
@@ -282,7 +310,7 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("                        accumulated.append(token)")
     lines.append("                        chunk_event = {")
     lines.append('                            "jsonrpc": "2.0",')
-    lines.append("                            \"id\": req_id,")
+    lines.append('                            "id": req_id,')
     lines.append('                            "result": {')
     lines.append('                                "id": task_id,')
     lines.append('                                "artifact": {')
@@ -293,11 +321,11 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("                            },")
     lines.append("                        }")
     lines.append('                        yield {"data": json.dumps(chunk_event)}')
-    lines.append("            response_text = \"\".join(accumulated)")
+    lines.append('            response_text = "".join(accumulated)')
     lines.append('            _task_manager.update_task(task_id, "completed", response_text)')
     lines.append("            final_event = {")
     lines.append('                "jsonrpc": "2.0",')
-    lines.append("                \"id\": req_id,")
+    lines.append('                "id": req_id,')
     lines.append('                "result": {')
     lines.append('                    "id": task_id,')
     lines.append('                    "status": {"state": "completed"},')
@@ -309,7 +337,7 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('            _task_manager.update_task(task_id, "failed", str(exc))')
     lines.append("            error_event = {")
     lines.append('                "jsonrpc": "2.0",')
-    lines.append("                \"id\": req_id,")
+    lines.append('                "id": req_id,')
     lines.append('                "error": {"code": -32603, "message": str(exc)},')
     lines.append("            }")
     lines.append('            yield {"data": json.dumps(error_event)}')

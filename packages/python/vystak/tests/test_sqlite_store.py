@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-
 from vystak.stores.sqlite import AsyncSqliteStore
 
 

@@ -31,6 +31,7 @@ class TestGetProvider:
             provider = get_provider(agent)
             # Should return a DockerProvider instance
             from vystak_provider_docker import DockerProvider
+
             assert isinstance(provider, DockerProvider)
 
     def test_docker_provider_when_platform_is_none(self):
@@ -39,6 +40,7 @@ class TestGetProvider:
         agent = _make_agent(None)
         provider = get_provider(agent)
         from vystak_provider_docker import DockerProvider
+
         assert isinstance(provider, DockerProvider)
 
     def test_azure_provider(self):
@@ -47,6 +49,7 @@ class TestGetProvider:
         agent = _make_agent("azure")
         provider = get_provider(agent)
         from vystak_provider_azure import AzureProvider
+
         assert isinstance(provider, AzureProvider)
 
     def test_unknown_provider_raises(self):

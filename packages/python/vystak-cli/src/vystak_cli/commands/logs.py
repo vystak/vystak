@@ -1,11 +1,8 @@
 """vystak logs — tail agent container logs."""
 
-from pathlib import Path
-
 import click
 
 from vystak_cli.loader import find_agent_file, load_agents
-from vystak_cli.provider_factory import get_provider
 
 
 @click.command()
@@ -28,6 +25,7 @@ def logs(file_path, agent_name, follow, tail_lines):
 
     # Logs is Docker-specific for now
     from vystak_provider_docker import DockerProvider
+
     provider = DockerProvider()
     container = provider._get_container(agent_name)
 

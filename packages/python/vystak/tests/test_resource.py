@@ -1,5 +1,4 @@
 import pytest
-
 from vystak.schema.provider import Provider
 from vystak.schema.resource import (
     Cache,
@@ -34,7 +33,9 @@ class TestResource:
         assert resource.config["port"] == 5432
 
     def test_serialization_roundtrip(self, aws):
-        resource = Resource(name="db", provider=aws, engine="postgres", config={"host": "localhost"})
+        resource = Resource(
+            name="db", provider=aws, engine="postgres", config={"host": "localhost"}
+        )
         data = resource.model_dump()
         restored = Resource.model_validate(data)
         assert restored == resource

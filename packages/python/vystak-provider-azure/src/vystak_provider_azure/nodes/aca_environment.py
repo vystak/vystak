@@ -1,13 +1,12 @@
 """ACAEnvironmentNode — creates or reuses an Azure Container Apps Managed Environment."""
 
-from vystak.provisioning.health import HealthCheck, NoopHealthCheck
-from vystak.provisioning.node import Provisionable, ProvisionResult
-
 from azure.mgmt.appcontainers.models import (
     AppLogsConfiguration,
     LogAnalyticsConfiguration,
     ManagedEnvironment,
 )
+from vystak.provisioning.health import HealthCheck, NoopHealthCheck
+from vystak.provisioning.node import Provisionable, ProvisionResult
 
 
 class ACAEnvironmentNode(Provisionable):
@@ -40,9 +39,7 @@ class ACAEnvironmentNode(Provisionable):
     def provision(self, context: dict) -> ProvisionResult:
         try:
             if self._existing:
-                env = self._client.managed_environments.get(
-                    self._rg_name, self._env_name
-                )
+                env = self._client.managed_environments.get(self._rg_name, self._env_name)
             else:
                 la_info = context["log-analytics"].info
                 env = self._client.managed_environments.begin_create_or_update(

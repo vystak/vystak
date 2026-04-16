@@ -8,6 +8,7 @@ from vystak.provisioning.health import (
     NoopHealthCheck,
 )
 from vystak.provisioning.node import Provisionable, ProvisionResult
+
 from vystak_provider_docker.secrets import get_resource_password
 
 
@@ -63,9 +64,7 @@ class DockerServiceNode(Provisionable):
         password = get_resource_password(self._service.name, self._secrets_path)
         network = context["network"].info["network"]
 
-        existing = self._client.containers.list(
-            filters={"name": container_name}, all=True
-        )
+        existing = self._client.containers.list(filters={"name": container_name}, all=True)
         if existing:
             container = existing[0]
             if container.status != "running":
@@ -79,9 +78,7 @@ class DockerServiceNode(Provisionable):
                 info={
                     "engine": "postgres",
                     "container_name": container_name,
-                    "connection_string": _postgres_conn_string(
-                        self._service.name, password
-                    ),
+                    "connection_string": _postgres_conn_string(self._service.name, password),
                 },
             )
 
@@ -94,9 +91,7 @@ class DockerServiceNode(Provisionable):
                 "POSTGRES_USER": "vystak",
                 "POSTGRES_PASSWORD": password,
             },
-            volumes={
-                volume_name: {"bind": "/var/lib/postgresql/data", "mode": "rw"}
-            },
+            volumes={volume_name: {"bind": "/var/lib/postgresql/data", "mode": "rw"}},
             network=network.name,
             labels={
                 "vystak.resource": self._service.name,
@@ -111,9 +106,7 @@ class DockerServiceNode(Provisionable):
             info={
                 "engine": "postgres",
                 "container_name": container_name,
-                "connection_string": _postgres_conn_string(
-                    self._service.name, password
-                ),
+                "connection_string": _postgres_conn_string(self._service.name, password),
             },
         )
 
@@ -156,9 +149,7 @@ class DockerServiceNode(Provisionable):
     def destroy(self) -> None:
         """Stop and remove the service container. Keeps volumes."""
         container_name = _resource_container_name(self._service.name)
-        containers = self._client.containers.list(
-            filters={"name": container_name}, all=True
-        )
+        containers = self._client.containers.list(filters={"name": container_name}, all=True)
         for container in containers:
             container.stop()
             container.remove()

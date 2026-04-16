@@ -1,8 +1,5 @@
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from vystak_provider_docker.gateway import (
     build_gateway_image,
@@ -34,11 +31,23 @@ class TestWriteGatewaySource:
 class TestWriteRoutesFile:
     def test_writes_valid_json(self, tmp_path):
         routes_path = tmp_path / "routes.json"
-        write_routes_file(routes_path, [
-            {"name": "test-slack", "type": "slack", "config": {"bot_token": "xoxb-test"}},
-        ], [
-            {"provider_name": "test-slack", "agent_name": "bot", "agent_url": "http://bot:8000", "channels": ["#test"], "listen": "mentions", "threads": True, "dm": True},
-        ])
+        write_routes_file(
+            routes_path,
+            [
+                {"name": "test-slack", "type": "slack", "config": {"bot_token": "xoxb-test"}},
+            ],
+            [
+                {
+                    "provider_name": "test-slack",
+                    "agent_name": "bot",
+                    "agent_url": "http://bot:8000",
+                    "channels": ["#test"],
+                    "listen": "mentions",
+                    "threads": True,
+                    "dm": True,
+                },
+            ],
+        )
         data = json.loads(routes_path.read_text())
         assert len(data["providers"]) == 1
         assert len(data["routes"]) == 1
@@ -71,7 +80,14 @@ class TestProvisionGateway:
         client.containers.get.side_effect = mock_docker.errors.NotFound("not found")
         network = MagicMock()
         network.name = "vystak-net"
-        provision_gateway(client, "main-gateway", network, routes_path="/tmp/routes.json", env={"SLACK_TOKEN": "test"}, port=8080)
+        provision_gateway(
+            client,
+            "main-gateway",
+            network,
+            routes_path="/tmp/routes.json",
+            env={"SLACK_TOKEN": "test"},
+            port=8080,
+        )
         client.containers.run.assert_called_once()
 
     @patch("vystak_provider_docker.gateway.docker")
@@ -82,7 +98,9 @@ class TestProvisionGateway:
         client.containers.get.return_value = existing
         network = MagicMock()
         network.name = "vystak-net"
-        provision_gateway(client, "main-gateway", network, routes_path="/tmp/routes.json", env={}, port=8080)
+        provision_gateway(
+            client, "main-gateway", network, routes_path="/tmp/routes.json", env={}, port=8080
+        )
         existing.stop.assert_called_once()
         existing.remove.assert_called_once()
         client.containers.run.assert_called_once()

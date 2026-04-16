@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.common import (
     ChannelType,
     McpTransport,

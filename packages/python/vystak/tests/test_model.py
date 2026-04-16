@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.model import Embedding, Model
 from vystak.schema.provider import Provider
 
@@ -57,7 +56,9 @@ class TestEmbedding:
         assert emb.dimensions == 1536
 
     def test_serialization_roundtrip(self, anthropic):
-        emb = Embedding(name="embed", provider=anthropic, model_name="text-embedding-3-small", dimensions=768)
+        emb = Embedding(
+            name="embed", provider=anthropic, model_name="text-embedding-3-small", dimensions=768
+        )
         data = emb.model_dump()
         restored = Embedding.model_validate(data)
         assert restored == emb

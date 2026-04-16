@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.gateway import ChannelProvider, Gateway
 from vystak.schema.provider import Provider
 
@@ -38,7 +37,9 @@ class TestGateway:
 
 class TestChannelProvider:
     def test_create(self, gateway):
-        cp = ChannelProvider(name="internal-slack", type="slack", gateway=gateway, config={"bot_token": "xoxb-test"})
+        cp = ChannelProvider(
+            name="internal-slack", type="slack", gateway=gateway, config={"bot_token": "xoxb-test"}
+        )
         assert cp.name == "internal-slack"
         assert cp.type == "slack"
         assert cp.gateway.name == "main-gateway"
@@ -52,7 +53,9 @@ class TestChannelProvider:
             ChannelProvider(name="test", gateway=gateway)
 
     def test_serialization_roundtrip(self, gateway):
-        cp = ChannelProvider(name="slack", type="slack", gateway=gateway, config={"bot_token": "xoxb-test"})
+        cp = ChannelProvider(
+            name="slack", type="slack", gateway=gateway, config={"bot_token": "xoxb-test"}
+        )
         data = cp.model_dump()
         restored = ChannelProvider.model_validate(data)
         assert restored == cp

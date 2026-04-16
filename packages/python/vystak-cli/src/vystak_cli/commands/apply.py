@@ -3,9 +3,8 @@
 from pathlib import Path
 
 import click
-
-from vystak.hash import hash_agent
 from vystak_adapter_langchain import LangChainAdapter
+
 from vystak_cli.loader import find_agent_file, load_agents
 from vystak_cli.provider_factory import get_provider
 
@@ -13,7 +12,9 @@ from vystak_cli.provider_factory import get_provider
 @click.command()
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option("--file", "file_path", default=None, help="Path to agent definition file (legacy)")
-@click.option("--force", is_flag=True, default=False, help="Force redeploy even if no changes detected")
+@click.option(
+    "--force", is_flag=True, default=False, help="Force redeploy even if no changes detected"
+)
 def apply(files, file_path, force):
     """Deploy or update agents."""
     if files:
@@ -23,7 +24,13 @@ def apply(files, file_path, force):
     else:
         paths = [find_agent_file()]
 
-    base_dir = paths[0].parent if paths[0].is_file() else paths[0].parent if paths[0].is_dir() else Path.cwd()
+    base_dir = (
+        paths[0].parent
+        if paths[0].is_file()
+        else paths[0].parent
+        if paths[0].is_dir()
+        else Path.cwd()
+    )
     agents = load_agents(paths, base_dir=base_dir)
     click.echo(f"Loaded {len(agents)} agent(s)")
 
@@ -68,13 +75,18 @@ def apply(files, file_path, force):
         # Attach progress listener if provider supports it
         if hasattr(provider, "set_listener"):
             from vystak.provisioning import PrintListener
+
             provider.set_listener(PrintListener(indent="    "))
 
         result = provider.apply(deploy_plan)
 
         if result.success:
             click.echo("  OK")
-            url = result.info.get("url", result.message) if hasattr(result, "info") else result.message
+            url = (
+                result.info.get("url", result.message)
+                if hasattr(result, "info")
+                else result.message
+            )
             deployed.append({"name": agent.name, "url": url, "agent": agent, "result": result})
         else:
             click.echo("FAILED")
@@ -86,7 +98,8 @@ def apply(files, file_path, force):
     if len(deployed) > 1:
         click.echo("\nGateway:")
         click.echo("  Deploying... ", nl=False)
-        from vystak_cli.gateway import deploy_gateway, register_agents, inject_gateway_env
+        from vystak_cli.gateway import deploy_gateway, inject_gateway_env, register_agents
+
         gateway_url = deploy_gateway(deployed)
         if gateway_url:
             click.echo("OK")
@@ -122,8 +135,8 @@ def _print_summary(deployed: list[dict], gateway_url: str | None = None) -> None
             if config.get("resource_group"):
                 click.echo(f"  Resource Group: {config['resource_group']}")
         elif provider_type == "docker":
-            click.echo(f"  Provider:     Docker (local)")
-            click.echo(f"  Network:      vystak-net")
+            click.echo("  Provider:     Docker (local)")
+            click.echo("  Network:      vystak-net")
 
     # Agent URLs
     click.echo("\nAgents:")
@@ -133,17 +146,14 @@ def _print_summary(deployed: list[dict], gateway_url: str | None = None) -> None
         if result and hasattr(result, "message"):
             # Extract URL from message like "Deployed X at https://..."
             msg = result.message
-            if " at " in msg:
-                url = msg.split(" at ", 1)[1]
-            else:
-                url = msg
+            url = msg.split(" at ", 1)[1] if " at " in msg else msg
         else:
             url = d.get("url", "")
         click.echo(f"  {d['name']:<{max_name}}  {url}")
 
     # Gateway
     if gateway_url:
-        click.echo(f"\nGateway:")
+        click.echo("\nGateway:")
         click.echo(f"  {gateway_url}")
         click.echo(f"  Agents:  {gateway_url}/agents")
         click.echo(f"  Health:  {gateway_url}/health")

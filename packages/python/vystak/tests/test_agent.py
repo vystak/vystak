@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType, McpTransport, WorkspaceType

@@ -3,21 +3,18 @@
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from vystak.provisioning.health import HttpHealthCheck, NoopHealthCheck
 from vystak.provisioning.node import ProvisionResult
-
-from vystak_provider_azure.nodes.resource_group import ResourceGroupNode
-from vystak_provider_azure.nodes.log_analytics import LogAnalyticsNode
-from vystak_provider_azure.nodes.acr import ACRNode
-from vystak_provider_azure.nodes.aca_environment import ACAEnvironmentNode
 from vystak_provider_azure.nodes.aca_app import ContainerAppNode
-
+from vystak_provider_azure.nodes.aca_environment import ACAEnvironmentNode
+from vystak_provider_azure.nodes.acr import ACRNode
+from vystak_provider_azure.nodes.log_analytics import LogAnalyticsNode
+from vystak_provider_azure.nodes.resource_group import ResourceGroupNode
 
 # ---------------------------------------------------------------------------
 # ResourceGroup
 # ---------------------------------------------------------------------------
+
 
 class TestResourceGroupNode:
     def _make_node(self):
@@ -55,10 +52,13 @@ class TestResourceGroupNode:
 # LogAnalytics
 # ---------------------------------------------------------------------------
 
+
 class TestLogAnalyticsNode:
     def _make_node(self):
         client = MagicMock()
-        return LogAnalyticsNode(client, rg_name="test-rg", workspace_name="test-la", location="eastus")
+        return LogAnalyticsNode(
+            client, rg_name="test-rg", workspace_name="test-la", location="eastus"
+        )
 
     def test_name_and_deps(self):
         node = self._make_node()
@@ -69,7 +69,9 @@ class TestLogAnalyticsNode:
         node = self._make_node()
         workspace_result = MagicMock()
         workspace_result.customer_id = "cust-123"
-        node._client.workspaces.begin_create_or_update.return_value.result.return_value = workspace_result
+        node._client.workspaces.begin_create_or_update.return_value.result.return_value = (
+            workspace_result
+        )
 
         keys_result = MagicMock()
         keys_result.primary_shared_key = "shared-key-abc"
@@ -90,10 +92,13 @@ class TestLogAnalyticsNode:
 # ACR
 # ---------------------------------------------------------------------------
 
+
 class TestACRNode:
     def _make_node(self, existing=False):
         client = MagicMock()
-        return ACRNode(client, rg_name="test-rg", registry_name="testreg", location="eastus", existing=existing)
+        return ACRNode(
+            client, rg_name="test-rg", registry_name="testreg", location="eastus", existing=existing
+        )
 
     def test_name_and_deps(self):
         node = self._make_node()
@@ -143,10 +148,13 @@ class TestACRNode:
 # ACA Environment
 # ---------------------------------------------------------------------------
 
+
 class TestACAEnvironmentNode:
     def _make_node(self, existing=False):
         client = MagicMock()
-        return ACAEnvironmentNode(client, rg_name="test-rg", env_name="test-env", location="eastus", existing=existing)
+        return ACAEnvironmentNode(
+            client, rg_name="test-rg", env_name="test-env", location="eastus", existing=existing
+        )
 
     def test_name_and_deps(self):
         node = self._make_node()
@@ -156,9 +164,13 @@ class TestACAEnvironmentNode:
     def test_provision(self):
         node = self._make_node()
         env_result = MagicMock()
-        env_result.id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/test-env"
+        env_result.id = (
+            "/subscriptions/sub/resourceGroups/rg/providers/"
+            "Microsoft.App/managedEnvironments/test-env"
+        )
         env_result.default_domain = "test-env.eastus.azurecontainerapps.io"
-        node._client.managed_environments.begin_create_or_update.return_value.result.return_value = env_result
+        begin = node._client.managed_environments.begin_create_or_update
+        begin.return_value.result.return_value = env_result
 
         context = {
             "log-analytics": ProvisionResult(
@@ -191,6 +203,7 @@ class TestACAEnvironmentNode:
 # ---------------------------------------------------------------------------
 # ContainerApp
 # ---------------------------------------------------------------------------
+
 
 class TestContainerAppNode:
     def _make_agent(self):
@@ -249,7 +262,9 @@ class TestContainerAppNode:
         # Mock ACA client
         app_result = MagicMock()
         app_result.configuration.ingress.fqdn = "my-agent.eastus.azurecontainerapps.io"
-        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = app_result
+        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = (
+            app_result
+        )
 
         context = {
             "aca-environment": ProvisionResult(
@@ -314,24 +329,41 @@ class TestContainerAppNode:
 
         app_result = MagicMock()
         app_result.configuration.ingress.fqdn = "my-agent.eastus.azurecontainerapps.io"
-        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = app_result
+        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = (
+            app_result
+        )
 
         context = {
             "aca-environment": ProvisionResult(
-                name="aca-environment", success=True,
+                name="aca-environment",
+                success=True,
                 info={"environment_id": "/sub/env-id", "default_domain": "test.io"},
             ),
             "acr": ProvisionResult(
-                name="acr", success=True,
-                info={"login_server": "testreg.azurecr.io", "username": "testreg", "password": "secret-pass", "registry_name": "testreg"},
+                name="acr",
+                success=True,
+                info={
+                    "login_server": "testreg.azurecr.io",
+                    "username": "testreg",
+                    "password": "secret-pass",
+                    "registry_name": "testreg",
+                },
             ),
             "sessions-db": ProvisionResult(
-                name="sessions-db", success=True,
-                info={"engine": "postgres", "connection_string": "postgresql://vystak:pw@host:5432/vystak?sslmode=require"},
+                name="sessions-db",
+                success=True,
+                info={
+                    "engine": "postgres",
+                    "connection_string": "postgresql://vystak:pw@host:5432/vystak?sslmode=require",
+                },
             ),
             "memory-db": ProvisionResult(
-                name="memory-db", success=True,
-                info={"engine": "postgres", "connection_string": "postgresql://vystak:pw2@host2:5432/vystak?sslmode=require"},
+                name="memory-db",
+                success=True,
+                info={
+                    "engine": "postgres",
+                    "connection_string": "postgresql://vystak:pw2@host2:5432/vystak?sslmode=require",
+                },
             ),
         }
 

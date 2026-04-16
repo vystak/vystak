@@ -31,11 +31,11 @@ class SqliteRegistrationStore(RegistrationStore):
 
     async def setup(self) -> None:
         import aiosqlite
+
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self._db_path)
         await self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS registrations "
-            "(agent_name TEXT PRIMARY KEY, data TEXT)"
+            "CREATE TABLE IF NOT EXISTS registrations (agent_name TEXT PRIMARY KEY, data TEXT)"
         )
         await self._conn.commit()
 
@@ -47,9 +47,7 @@ class SqliteRegistrationStore(RegistrationStore):
         await self._conn.commit()
 
     async def delete(self, agent_name: str) -> None:
-        await self._conn.execute(
-            "DELETE FROM registrations WHERE agent_name = ?", (agent_name,)
-        )
+        await self._conn.execute("DELETE FROM registrations WHERE agent_name = ?", (agent_name,))
         await self._conn.commit()
 
     async def list_all(self) -> dict[str, dict]:
@@ -67,11 +65,11 @@ class PostgresRegistrationStore(RegistrationStore):
 
     async def setup(self) -> None:
         import asyncpg
+
         self._pool = await asyncpg.create_pool(self._conn_string)
         async with self._pool.acquire() as conn:
             await conn.execute(
-                "CREATE TABLE IF NOT EXISTS registrations "
-                "(agent_name TEXT PRIMARY KEY, data JSONB)"
+                "CREATE TABLE IF NOT EXISTS registrations (agent_name TEXT PRIMARY KEY, data JSONB)"
             )
 
     async def save(self, agent_name: str, data: dict) -> None:
@@ -79,14 +77,13 @@ class PostgresRegistrationStore(RegistrationStore):
             await conn.execute(
                 "INSERT INTO registrations (agent_name, data) VALUES ($1, $2) "
                 "ON CONFLICT (agent_name) DO UPDATE SET data = $2",
-                agent_name, json.dumps(data),
+                agent_name,
+                json.dumps(data),
             )
 
     async def delete(self, agent_name: str) -> None:
         async with self._pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM registrations WHERE agent_name = $1", agent_name
-            )
+            await conn.execute("DELETE FROM registrations WHERE agent_name = $1", agent_name)
 
     async def list_all(self) -> dict[str, dict]:
         async with self._pool.acquire() as conn:
@@ -134,7 +131,9 @@ def create_store() -> RegistrationStore:
         return PostgresRegistrationStore(store_url)
 
     if store_url.startswith("sqlite://") or store_url.endswith(".db"):
-        db_path = store_url.replace("sqlite://", "") if store_url.startswith("sqlite://") else store_url
+        db_path = (
+            store_url.replace("sqlite://", "") if store_url.startswith("sqlite://") else store_url
+        )
         return SqliteRegistrationStore(db_path)
 
     if store_url:

@@ -1,12 +1,9 @@
 # packages/python/vystak/tests/test_health.py
-import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from vystak.provisioning.health import (
     CommandHealthCheck,
-    HealthCheck,
     HttpHealthCheck,
     NoopHealthCheck,
     TcpHealthCheck,

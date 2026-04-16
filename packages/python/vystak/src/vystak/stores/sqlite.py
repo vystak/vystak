@@ -3,7 +3,7 @@
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -15,7 +15,7 @@ class Item:
     namespace: tuple[str, ...]
     key: str
     value: dict
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class AsyncSqliteStore:
@@ -54,7 +54,7 @@ class AsyncSqliteStore:
     async def aput(self, namespace: tuple[str, ...], key: str, value: dict) -> None:
         """Upsert an item."""
         ns_str = "|".join(namespace)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await self._db.execute(
             """
             INSERT INTO store (namespace, key, value, created_at)
@@ -92,7 +92,8 @@ class AsyncSqliteStore:
         """List items in a namespace. Query parameter is ignored (no embeddings)."""
         ns_str = "|".join(namespace)
         cursor = await self._db.execute(
-            "SELECT namespace, key, value, created_at FROM store WHERE namespace = ? ORDER BY created_at DESC LIMIT ?",
+            "SELECT namespace, key, value, created_at FROM store "
+            "WHERE namespace = ? ORDER BY created_at DESC LIMIT ?",
             (ns_str, limit),
         )
         rows = await cursor.fetchall()

@@ -1,13 +1,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from vystak.providers.base import DeployPlan, GeneratedCode
 from vystak.provisioning.node import ProvisionResult
 from vystak.schema.agent import Agent
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
-
 from vystak_provider_docker.provider import DockerProvider
 
 
@@ -86,6 +84,7 @@ class TestPlan:
 
     def test_no_change(self, provider, sample_agent, mock_docker_client):
         from vystak.hash import hash_agent
+
         client, _ = mock_docker_client
         tree = hash_agent(sample_agent)
         container = MagicMock()
@@ -108,14 +107,24 @@ class TestApply:
         """Graph-based apply returns success when agent node succeeds."""
         provider.set_generated_code(sample_code)
         provider.set_agent(sample_agent)
-        plan = DeployPlan(agent_name="test-bot", actions=["Create"], current_hash=None, target_hash="abc123", changes={})
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
 
         mock_results = {
             "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
             "agent:test-bot": ProvisionResult(
                 name="agent:test-bot",
                 success=True,
-                info={"url": "http://localhost:8080", "container_name": "vystak-test-bot", "port": "8080"},
+                info={
+                    "url": "http://localhost:8080",
+                    "container_name": "vystak-test-bot",
+                    "port": "8080",
+                },
             ),
         }
 
@@ -134,14 +143,24 @@ class TestApply:
         """Graph-based apply handles update plans."""
         provider.set_generated_code(sample_code)
         provider.set_agent(sample_agent)
-        plan = DeployPlan(agent_name="test-bot", actions=["Update"], current_hash="old", target_hash="new", changes={})
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Update"],
+            current_hash="old",
+            target_hash="new",
+            changes={},
+        )
 
         mock_results = {
             "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
             "agent:test-bot": ProvisionResult(
                 name="agent:test-bot",
                 success=True,
-                info={"url": "http://localhost:9090", "container_name": "vystak-test-bot", "port": "9090"},
+                info={
+                    "url": "http://localhost:9090",
+                    "container_name": "vystak-test-bot",
+                    "port": "9090",
+                },
             ),
         }
 
@@ -155,7 +174,13 @@ class TestApply:
 
     def test_no_generated_code(self, provider, mock_docker_client):
         """apply() returns failure when no generated code is set."""
-        plan = DeployPlan(agent_name="test-bot", actions=["Create"], current_hash=None, target_hash="abc123", changes={})
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
         result = provider.apply(plan)
         assert result.success is False
         assert "set_generated_code" in result.message

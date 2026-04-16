@@ -22,10 +22,7 @@ def resolve_env_file(directory: Path, env: str | None = None) -> Path | None:
     if env is None:
         env = os.environ.get("VYSTAK_ENV")
 
-    if env:
-        path = directory / f"vystak.env.{env}.yaml"
-    else:
-        path = directory / "vystak.env.yaml"
+    path = directory / f"vystak.env.{env}.yaml" if env else directory / "vystak.env.yaml"
 
     return path if path.exists() else None
 

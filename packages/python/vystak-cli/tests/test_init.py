@@ -1,7 +1,7 @@
-import yaml
-from click.testing import CliRunner
 from pathlib import Path
 
+import yaml
+from click.testing import CliRunner
 from vystak.schema.agent import Agent
 from vystak_cli.commands.init import init
 

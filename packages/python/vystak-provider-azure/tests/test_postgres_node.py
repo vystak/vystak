@@ -1,13 +1,9 @@
 """Tests for AzurePostgresNode."""
 
-import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-from vystak.provisioning.health import NoopHealthCheck, TcpHealthCheck
+from vystak.provisioning.health import NoopHealthCheck
 from vystak.provisioning.node import ProvisionResult
-
 from vystak_provider_azure.nodes.postgres import AzurePostgresNode
 
 
@@ -37,6 +33,7 @@ class TestAzurePostgresNode:
         node = self._make_node()
 
         from azure.core.exceptions import ResourceNotFoundError
+
         node._client.servers.get.side_effect = ResourceNotFoundError("not found")
 
         server_result = MagicMock()
@@ -44,10 +41,18 @@ class TestAzurePostgresNode:
         server_result.fully_qualified_domain_name = "test-rg-main-db.postgres.database.azure.com"
         node._client.servers.begin_create.return_value.result.return_value = server_result
 
-        node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = MagicMock()
+        node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = (
+            MagicMock()
+        )
         node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
-        result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
+        result = node.provision(
+            {
+                "resource-group": ProvisionResult(
+                    name="resource-group", success=True, info={"rg_name": "test-rg"}
+                )
+            }
+        )
 
         assert result.success is True
         assert result.info["engine"] == "postgres"
@@ -71,31 +76,48 @@ class TestAzurePostgresNode:
 
         node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
-        result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
+        result = node.provision(
+            {
+                "resource-group": ProvisionResult(
+                    name="resource-group", success=True, info={"rg_name": "test-rg"}
+                )
+            }
+        )
 
         assert result.success is True
         assert result.info["host"] == "test-rg-main-db.postgres.database.azure.com"
         node._client.servers.begin_create.assert_not_called()
 
     def test_provision_with_custom_config(self):
-        node = self._make_node(config={
-            "sku": "Standard_B2s",
-            "version": "15",
-            "storage_gb": 64,
-            "backup_retention_days": 14,
-        })
+        node = self._make_node(
+            config={
+                "sku": "Standard_B2s",
+                "version": "15",
+                "storage_gb": 64,
+                "backup_retention_days": 14,
+            }
+        )
 
         from azure.core.exceptions import ResourceNotFoundError
+
         node._client.servers.get.side_effect = ResourceNotFoundError("not found")
 
         server_result = MagicMock()
         server_result.state = "Ready"
         server_result.fully_qualified_domain_name = "test-rg-main-db.postgres.database.azure.com"
         node._client.servers.begin_create.return_value.result.return_value = server_result
-        node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = MagicMock()
+        node._client.firewall_rules.begin_create_or_update.return_value.result.return_value = (
+            MagicMock()
+        )
         node._client.databases.begin_create.return_value.result.return_value = MagicMock()
 
-        result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
+        result = node.provision(
+            {
+                "resource-group": ProvisionResult(
+                    name="resource-group", success=True, info={"rg_name": "test-rg"}
+                )
+            }
+        )
         assert result.success is True
 
         call_args = node._client.servers.begin_create.call_args
@@ -109,10 +131,17 @@ class TestAzurePostgresNode:
         node = self._make_node()
 
         from azure.core.exceptions import ResourceNotFoundError
+
         node._client.servers.get.side_effect = ResourceNotFoundError("not found")
         node._client.servers.begin_create.side_effect = Exception("Azure API error")
 
-        result = node.provision({"resource-group": ProvisionResult(name="resource-group", success=True, info={"rg_name": "test-rg"})})
+        result = node.provision(
+            {
+                "resource-group": ProvisionResult(
+                    name="resource-group", success=True, info={"rg_name": "test-rg"}
+                )
+            }
+        )
         assert result.success is False
         assert "Azure API error" in result.error
 

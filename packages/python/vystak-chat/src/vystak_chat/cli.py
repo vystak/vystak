@@ -3,7 +3,7 @@
 import click
 
 from vystak_chat import __version__
-from vystak_chat.chat import run_repl, run_oneshot
+from vystak_chat.chat import run_oneshot, run_repl
 
 
 @click.command()

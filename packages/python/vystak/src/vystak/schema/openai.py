@@ -6,8 +6,8 @@ to implement OpenAI Chat Completions, Models, and Responses APIs.
 
 from pydantic import BaseModel
 
-
 # === Models Resource ===
+
 
 class ModelObject(BaseModel):
     id: str
@@ -22,6 +22,7 @@ class ModelList(BaseModel):
 
 
 # === Chat Completions ===
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -80,6 +81,7 @@ class ChatCompletionChunk(BaseModel):
 
 # === Responses API ===
 
+
 class InputMessage(BaseModel):
     role: str
     content: str
@@ -121,6 +123,7 @@ class ResponseObject(BaseModel):
 
 
 # === Error Response ===
+
 
 class ErrorDetail(BaseModel):
     message: str

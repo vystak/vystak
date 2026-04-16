@@ -1,7 +1,8 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
-
-from vystak_gateway.server import app, router, providers, response_store
+from vystak_gateway.server import app, providers, response_store, router
 
 
 @pytest.fixture(autouse=True)
@@ -27,24 +28,30 @@ class TestHealth:
 
 class TestRegisterRoute:
     def test_register(self):
-        response = client.post("/register-route", json={
-            "provider_name": "internal-slack",
-            "agent_name": "support-bot",
-            "agent_url": "http://vystak-support-bot:8000",
-            "channels": ["#support"],
-            "listen": "mentions",
-            "threads": True,
-            "dm": True,
-        })
+        response = client.post(
+            "/register-route",
+            json={
+                "provider_name": "internal-slack",
+                "agent_name": "support-bot",
+                "agent_url": "http://vystak-support-bot:8000",
+                "channels": ["#support"],
+                "listen": "mentions",
+                "threads": True,
+                "dm": True,
+            },
+        )
         assert response.status_code == 200
 
     def test_list_after_register(self):
-        client.post("/register-route", json={
-            "provider_name": "internal-slack",
-            "agent_name": "support-bot",
-            "agent_url": "http://vystak-support-bot:8000",
-            "channels": ["#support"],
-        })
+        client.post(
+            "/register-route",
+            json={
+                "provider_name": "internal-slack",
+                "agent_name": "support-bot",
+                "agent_url": "http://vystak-support-bot:8000",
+                "channels": ["#support"],
+            },
+        )
         response = client.get("/routes")
         assert response.status_code == 200
         routes = response.json()
@@ -54,12 +61,15 @@ class TestRegisterRoute:
 
 class TestRemoveRoutes:
     def test_remove(self):
-        client.post("/register-route", json={
-            "provider_name": "internal-slack",
-            "agent_name": "support-bot",
-            "agent_url": "http://vystak-support-bot:8000",
-            "channels": ["#support"],
-        })
+        client.post(
+            "/register-route",
+            json={
+                "provider_name": "internal-slack",
+                "agent_name": "support-bot",
+                "agent_url": "http://vystak-support-bot:8000",
+                "channels": ["#support"],
+            },
+        )
         response = client.delete("/routes/support-bot")
         assert response.status_code == 200
         routes = client.get("/routes").json()
@@ -68,38 +78,43 @@ class TestRemoveRoutes:
 
 class TestRegisterProvider:
     def test_register(self):
-        response = client.post("/register-provider", json={
-            "name": "internal-slack",
-            "type": "slack",
-            "config": {"bot_token": "xoxb-test", "app_token": "xapp-test"},
-        })
+        response = client.post(
+            "/register-provider",
+            json={
+                "name": "internal-slack",
+                "type": "slack",
+                "config": {"bot_token": "xoxb-test", "app_token": "xapp-test"},
+            },
+        )
         assert response.status_code == 200
         assert response.json()["status"] == "registered"
-
-
-import json
 
 
 class TestLoadRoutesFile:
     def test_loads_routes(self, tmp_path):
         from vystak_gateway.server import load_routes_file, router
+
         router._routes.clear()
 
         routes_file = tmp_path / "routes.json"
-        routes_file.write_text(json.dumps({
-            "providers": [],
-            "routes": [
+        routes_file.write_text(
+            json.dumps(
                 {
-                    "provider_name": "test-slack",
-                    "agent_name": "support-bot",
-                    "agent_url": "http://agent:8000",
-                    "channels": ["#support"],
-                    "listen": "mentions",
-                    "threads": True,
-                    "dm": True,
+                    "providers": [],
+                    "routes": [
+                        {
+                            "provider_name": "test-slack",
+                            "agent_name": "support-bot",
+                            "agent_url": "http://agent:8000",
+                            "channels": ["#support"],
+                            "listen": "mentions",
+                            "threads": True,
+                            "dm": True,
+                        }
+                    ],
                 }
-            ],
-        }))
+            )
+        )
 
         load_routes_file(str(routes_file))
         routes = router.list_routes()
@@ -109,6 +124,7 @@ class TestLoadRoutesFile:
 
     def test_missing_file_no_error(self):
         from vystak_gateway.server import load_routes_file
+
         load_routes_file("/nonexistent/routes.json")
 
 
@@ -121,10 +137,13 @@ class TestV1Models:
         assert data["data"] == []
 
     def test_models_after_registration(self):
-        client.post("/register", json={
-            "name": "test-bot",
-            "url": "http://test-bot:8000",
-        })
+        client.post(
+            "/register",
+            json={
+                "name": "test-bot",
+                "url": "http://test-bot:8000",
+            },
+        )
         response = client.get("/v1/models")
         data = response.json()
         assert len(data["data"]) == 1
@@ -135,10 +154,13 @@ class TestV1Models:
 
 class TestV1ChatCompletions:
     def test_unknown_model_returns_404(self):
-        response = client.post("/v1/chat/completions", json={
-            "model": "vystak/nonexistent",
-            "messages": [{"role": "user", "content": "hi"}],
-        })
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "vystak/nonexistent",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
         assert response.status_code == 404
         data = response.json()
         assert data["error"]["code"] == "model_not_found"
@@ -146,10 +168,13 @@ class TestV1ChatCompletions:
 
 class TestV1Responses:
     def test_create_response_unknown_model(self):
-        response = client.post("/v1/responses", json={
-            "model": "vystak/nonexistent",
-            "input": "hi",
-        })
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "vystak/nonexistent",
+                "input": "hi",
+            },
+        )
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "model_not_found"
 

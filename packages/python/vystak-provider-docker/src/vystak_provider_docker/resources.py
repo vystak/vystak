@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-import docker
-import docker.errors
-
+import docker  # noqa: F401 — re-exported for test patching (vystak_provider_docker.resources.docker)
+import docker.errors  # noqa: F401 — re-exported for test patching
 from vystak.schema.resource import Resource
+
 from vystak_provider_docker.secrets import get_resource_password
 
 
@@ -17,9 +17,7 @@ def _volume_name(resource_name: str) -> str:
     return f"vystak-data-{resource_name}"
 
 
-def provision_resource(
-    client, resource: Resource, network, secrets_path: Path
-) -> dict:
+def provision_resource(client, resource: Resource, network, secrets_path: Path) -> dict:
     """Provision backing infrastructure for a resource. Returns connection info."""
     if resource.engine == "postgres":
         return _provision_postgres(client, resource, network, secrets_path)
@@ -32,6 +30,7 @@ def provision_resource(
 def _wait_for_postgres(client, container_name: str, timeout: int = 60) -> None:
     """Wait until postgres is ready to accept connections."""
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -45,7 +44,9 @@ def _wait_for_postgres(client, container_name: str, timeout: int = 60) -> None:
         except Exception:
             pass
         time.sleep(1)
-    raise TimeoutError(f"Postgres container {container_name} did not become ready within {timeout}s")
+    raise TimeoutError(
+        f"Postgres container {container_name} did not become ready within {timeout}s"
+    )
 
 
 def _sync_postgres_password(client, container_name: str, password: str) -> None:
