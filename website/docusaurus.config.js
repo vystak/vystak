@@ -122,7 +122,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Vystak.`,
+        copyright: `Copyright © ${new Date().getFullYear()} ANKO Technologies Corp. Vystak is released under the Apache 2.0 License.`,
       },
       colorMode: {
         defaultMode: 'light',
