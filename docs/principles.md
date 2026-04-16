@@ -1,10 +1,10 @@
-# AgentStack Principles
+# Vystak Principles
 
-AgentStack is a declarative, platform-agnostic orchestration layer for AI agents. It defines, provisions, deploys, updates, and manages agents across any framework, any platform, and any cloud — from a single codebase.
+Vystak is a declarative, platform-agnostic orchestration layer for AI agents. It defines, provisions, deploys, updates, and manages agents across any framework, any platform, and any cloud — from a single codebase.
 
-AgentStack builds nothing. It wires everything.
+Vystak builds nothing. It wires everything.
 
-Terraform and Pulumi didn't build AWS. They gave you one language to describe what you want and provisioned it. AgentStack does the same for AI agents.
+Terraform and Pulumi didn't build AWS. They gave you one language to describe what you want and provisioned it. Vystak does the same for AI agents.
 
 ---
 
@@ -22,9 +22,9 @@ A single agent definition deploys to Docker, AWS AgentCore, Azure Foundry, Digit
 
 ## 3. Build nothing, integrate everything
 
-AgentStack does not build runtimes, tracing backends, vector stores, session stores, workflow engines, or sandbox environments. It integrates with existing best-in-class products through thin adapter plugins. Every external product is a provider.
+Vystak does not build runtimes, tracing backends, vector stores, session stores, workflow engines, or sandbox environments. It integrates with existing best-in-class products through thin adapter plugins. Every external product is a provider.
 
-*In practice:* Need a vector store? AgentStack provisions Pinecone, Chroma, or Qdrant — it doesn't build its own. Need tracing? It hooks into Langfuse, LangSmith, or Datadog. The plugin system means any product can be integrated.
+*In practice:* Need a vector store? Vystak provisions Pinecone, Chroma, or Qdrant — it doesn't build its own. Need tracing? It hooks into Langfuse, LangSmith, or Datadog. The plugin system means any product can be integrated.
 
 ## 4. Code over config
 
@@ -48,21 +48,21 @@ Level 5:  fleet management, environments, promotion
 
 ## 6. Stateless tool
 
-AgentStack holds no state. No state files, no remote backend, no state locking. The agent definition is the desired state. The platform is the actual state. AgentStack diffs the two using content hashes stored as platform labels.
+Vystak holds no state. No state files, no remote backend, no state locking. The agent definition is the desired state. The platform is the actual state. Vystak diffs the two using content hashes stored as platform labels.
 
-*In practice:* There is no `agentstack.tfstate` equivalent. Run `agentstack plan` on any machine and it computes the diff from scratch by hashing your definition and comparing it to what's deployed. No state corruption, no locking conflicts.
+*In practice:* There is no `vystak.tfstate` equivalent. Run `vystak plan` on any machine and it computes the diff from scratch by hashing your definition and comparing it to what's deployed. No state corruption, no locking conflicts.
 
 ## 7. The framework is a runtime target, not an abstraction
 
-AgentStack does not abstract frameworks. It targets them. Each framework adapter generates native code using that framework's idioms. Mastra adapter produces Mastra code. LangChain adapter produces LangChain code. No lowest common denominator.
+Vystak does not abstract frameworks. It targets them. Each framework adapter generates native code using that framework's idioms. Mastra adapter produces Mastra code. LangChain adapter produces LangChain code. No lowest common denominator.
 
-*In practice:* When you choose Mastra as your framework, the generated code is idiomatic Mastra — not a generic wrapper. You can read it, debug it, and extend it using Mastra's documentation. AgentStack doesn't hide the framework from you.
+*In practice:* When you choose Mastra as your framework, the generated code is idiomatic Mastra — not a generic wrapper. You can read it, debug it, and extend it using Mastra's documentation. Vystak doesn't hide the framework from you.
 
 ---
 
 ## The Seven Concepts
 
-Everything in AgentStack maps to one of seven concepts:
+Everything in Vystak maps to one of seven concepts:
 
 | Concept | What it is | Example |
 |---------|-----------|---------|

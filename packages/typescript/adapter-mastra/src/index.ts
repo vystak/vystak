@@ -1,3 +1,3 @@
-/** AgentStack Mastra framework adapter */
+/** Vystak Mastra framework adapter */
 
-export { VERSION } from "@agentstack/core";
+export { VERSION } from "@vystak/core";

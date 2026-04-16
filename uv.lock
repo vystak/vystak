@@ -4,210 +4,16 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
-    "agentstack",
-    "agentstack-adapter-langchain",
-    "agentstack-adapter-mastra",
-    "agentstack-channel-api",
-    "agentstack-chat",
-    "agentstack-cli",
-    "agentstack-gateway",
-    "agentstack-provider-azure",
-    "agentstack-provider-docker",
-    "agentstack-workspace",
-]
-
-[[package]]
-name = "agentstack"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack" }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-]
-
-[[package]]
-name = "agentstack-adapter-langchain"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-adapter-langchain" }
-dependencies = [
-    { name = "agentstack" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "agentstack", editable = "packages/python/agentstack" }]
-
-[[package]]
-name = "agentstack-adapter-mastra"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-adapter-mastra" }
-dependencies = [
-    { name = "agentstack" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "agentstack", editable = "packages/python/agentstack" }]
-
-[[package]]
-name = "agentstack-channel-api"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-channel-api" }
-dependencies = [
-    { name = "agentstack" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "agentstack", editable = "packages/python/agentstack" }]
-
-[[package]]
-name = "agentstack-chat"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-chat" }
-dependencies = [
-    { name = "click" },
-    { name = "httpx" },
-    { name = "prompt-toolkit" },
-    { name = "pyyaml" },
-    { name = "rich" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "prompt-toolkit", specifier = ">=3.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rich", specifier = ">=13.0" },
-]
-
-[[package]]
-name = "agentstack-cli"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-cli" }
-dependencies = [
-    { name = "agentstack" },
-    { name = "agentstack-adapter-langchain" },
-    { name = "agentstack-provider-docker" },
-    { name = "click" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentstack", editable = "packages/python/agentstack" },
-    { name = "agentstack-adapter-langchain", editable = "packages/python/agentstack-adapter-langchain" },
-    { name = "agentstack-provider-docker", editable = "packages/python/agentstack-provider-docker" },
-    { name = "click", specifier = ">=8.0" },
-]
-
-[[package]]
-name = "agentstack-gateway"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-gateway" }
-dependencies = [
-    { name = "agentstack" },
-    { name = "aiohttp" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "slack-bolt" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentstack", editable = "packages/python/agentstack" },
-    { name = "aiohttp", specifier = ">=3.9" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "slack-bolt", specifier = ">=1.21" },
-    { name = "uvicorn", specifier = ">=0.34" },
-]
-
-[[package]]
-name = "agentstack-provider-azure"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-provider-azure" }
-dependencies = [
-    { name = "agentstack" },
-    { name = "azure-identity" },
-    { name = "azure-mgmt-appcontainers" },
-    { name = "azure-mgmt-containerregistry" },
-    { name = "azure-mgmt-loganalytics" },
-    { name = "azure-mgmt-resource" },
-    { name = "docker" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentstack", editable = "packages/python/agentstack" },
-    { name = "azure-identity", specifier = ">=1.15" },
-    { name = "azure-mgmt-appcontainers", specifier = ">=3.0" },
-    { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
-    { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
-    { name = "azure-mgmt-resource", specifier = ">=23.0" },
-    { name = "docker", specifier = ">=7.0" },
-]
-
-[[package]]
-name = "agentstack-provider-docker"
-version = "0.1.0"
-source = { editable = "packages/python/agentstack-provider-docker" }
-dependencies = [
-    { name = "agentstack" },
-    { name = "docker" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentstack", editable = "packages/python/agentstack" },
-    { name = "docker", specifier = ">=7.0" },
-]
-
-[[package]]
-name = "agentstack-workspace"
-version = "0.0.0"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "agentstack" },
-    { name = "agentstack-adapter-langchain" },
-    { name = "agentstack-adapter-mastra" },
-    { name = "agentstack-channel-api" },
-    { name = "agentstack-chat" },
-    { name = "agentstack-cli" },
-    { name = "agentstack-gateway" },
-    { name = "agentstack-provider-azure" },
-    { name = "agentstack-provider-docker" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "agentstack", editable = "packages/python/agentstack" },
-    { name = "agentstack-adapter-langchain", editable = "packages/python/agentstack-adapter-langchain" },
-    { name = "agentstack-adapter-mastra", editable = "packages/python/agentstack-adapter-mastra" },
-    { name = "agentstack-channel-api", editable = "packages/python/agentstack-channel-api" },
-    { name = "agentstack-chat", editable = "packages/python/agentstack-chat" },
-    { name = "agentstack-cli", editable = "packages/python/agentstack-cli" },
-    { name = "agentstack-gateway", editable = "packages/python/agentstack-gateway" },
-    { name = "agentstack-provider-azure", editable = "packages/python/agentstack-provider-azure" },
-    { name = "agentstack-provider-docker", editable = "packages/python/agentstack-provider-docker" },
-    { name = "pyright", specifier = ">=1.1" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.25" },
-    { name = "ruff", specifier = ">=0.8" },
+    "vystak",
+    "vystak-adapter-langchain",
+    "vystak-adapter-mastra",
+    "vystak-channel-api",
+    "vystak-chat",
+    "vystak-cli",
+    "vystak-gateway",
+    "vystak-provider-azure",
+    "vystak-provider-docker",
+    "vystak-workspace",
 ]
 
 [[package]]
@@ -464,6 +270,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/01/d782a0e58a8cbf49afabef7872c029872b6e5b12d7a5f89d635f219795e3/azure_mgmt_loganalytics-13.1.1.tar.gz", hash = "sha256:4f971ee9d43fdc99e8299f44ca9f8f7a3b5f100be139fb0a9dac7efef8b698af", size = 134047, upload-time = "2026-01-05T09:52:25.827Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/30/041fcaac73e26b76f162bf1eee0bf5637bcb1b76f479bec077095f59d19a/azure_mgmt_loganalytics-13.1.1-py3-none-any.whl", hash = "sha256:73382d5036f478d3f6e856a0effc3637be2ebc782ab667fc45b25707edceaa55", size = 218285, upload-time = "2026-01-05T09:52:27.226Z" },
+]
+
+[[package]]
+name = "azure-mgmt-rdbms"
+version = "10.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "msrest" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/04/47ffeb3959a6722d74be12e5d26a7da425a28b0f5150adf1ff2e910e2b5f/azure_mgmt_rdbms-10.1.1.tar.gz", hash = "sha256:963455ace0d6566d299826713e54ed8fa87a88fec6467e8fd3932387ca0a2e8c", size = 384512, upload-time = "2025-11-25T19:43:12.658Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/c4/7443bbb09a160edcd9a03374e6758e080ff43c748f6070c1b5ee73d2bf80/azure_mgmt_rdbms-10.1.1-py3-none-any.whl", hash = "sha256:cb0d85c016e616727f7be89132b288b26a1edcac2729bc769ec93eede61fcbfa", size = 774670, upload-time = "2025-11-25T19:43:14.803Z" },
 ]
 
 [[package]]
@@ -1655,6 +1475,202 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5e/da/6eee1ff8b6cbeed47eeb5229749168e81eb4b7b999a1a15a7176e51410c9/uvicorn-0.44.0.tar.gz", hash = "sha256:6c942071b68f07e178264b9152f1f16dfac5da85880c4ce06366a96d70d4f31e", size = 86947, upload-time = "2026-04-06T09:23:22.826Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/23/a5bbd9600dd607411fa644c06ff4951bec3a4d82c4b852374024359c19c0/uvicorn-0.44.0-py3-none-any.whl", hash = "sha256:ce937c99a2cc70279556967274414c087888e8cec9f9c94644dfca11bd3ced89", size = 69425, upload-time = "2026-04-06T09:23:21.524Z" },
+]
+
+[[package]]
+name = "vystak"
+version = "0.1.0"
+source = { editable = "packages/python/vystak" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "vystak-adapter-langchain"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-adapter-langchain" }
+dependencies = [
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
+
+[[package]]
+name = "vystak-adapter-mastra"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-adapter-mastra" }
+dependencies = [
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
+
+[[package]]
+name = "vystak-channel-api"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-channel-api" }
+dependencies = [
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
+
+[[package]]
+name = "vystak-chat"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-chat" }
+dependencies = [
+    { name = "click" },
+    { name = "httpx" },
+    { name = "prompt-toolkit" },
+    { name = "pyyaml" },
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.0" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "prompt-toolkit", specifier = ">=3.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.0" },
+]
+
+[[package]]
+name = "vystak-cli"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-cli" }
+dependencies = [
+    { name = "click" },
+    { name = "vystak" },
+    { name = "vystak-adapter-langchain" },
+    { name = "vystak-provider-docker" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.0" },
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-adapter-langchain", editable = "packages/python/vystak-adapter-langchain" },
+    { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
+]
+
+[[package]]
+name = "vystak-gateway"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-gateway" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "slack-bolt" },
+    { name = "uvicorn" },
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "slack-bolt", specifier = ">=1.21" },
+    { name = "uvicorn", specifier = ">=0.34" },
+    { name = "vystak", editable = "packages/python/vystak" },
+]
+
+[[package]]
+name = "vystak-provider-azure"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-provider-azure" }
+dependencies = [
+    { name = "azure-identity" },
+    { name = "azure-mgmt-appcontainers" },
+    { name = "azure-mgmt-containerregistry" },
+    { name = "azure-mgmt-loganalytics" },
+    { name = "azure-mgmt-rdbms" },
+    { name = "azure-mgmt-resource" },
+    { name = "docker" },
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "azure-identity", specifier = ">=1.15" },
+    { name = "azure-mgmt-appcontainers", specifier = ">=3.0" },
+    { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
+    { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
+    { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
+    { name = "azure-mgmt-resource", specifier = ">=23.0" },
+    { name = "docker", specifier = ">=7.0" },
+    { name = "vystak", editable = "packages/python/vystak" },
+]
+
+[[package]]
+name = "vystak-provider-docker"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-provider-docker" }
+dependencies = [
+    { name = "docker" },
+    { name = "vystak" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "docker", specifier = ">=7.0" },
+    { name = "vystak", editable = "packages/python/vystak" },
+]
+
+[[package]]
+name = "vystak-workspace"
+version = "0.0.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "vystak" },
+    { name = "vystak-adapter-langchain" },
+    { name = "vystak-adapter-mastra" },
+    { name = "vystak-channel-api" },
+    { name = "vystak-chat" },
+    { name = "vystak-cli" },
+    { name = "vystak-gateway" },
+    { name = "vystak-provider-azure" },
+    { name = "vystak-provider-docker" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.25" },
+    { name = "ruff", specifier = ">=0.8" },
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-adapter-langchain", editable = "packages/python/vystak-adapter-langchain" },
+    { name = "vystak-adapter-mastra", editable = "packages/python/vystak-adapter-mastra" },
+    { name = "vystak-channel-api", editable = "packages/python/vystak-channel-api" },
+    { name = "vystak-chat", editable = "packages/python/vystak-chat" },
+    { name = "vystak-cli", editable = "packages/python/vystak-cli" },
+    { name = "vystak-gateway", editable = "packages/python/vystak-gateway" },
+    { name = "vystak-provider-azure", editable = "packages/python/vystak-provider-azure" },
+    { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
 ]
 
 [[package]]

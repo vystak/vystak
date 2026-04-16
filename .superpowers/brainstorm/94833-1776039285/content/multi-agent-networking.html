@@ -1,0 +1,40 @@
+<h2>How should agents discover each other on Azure?</h2>
+<p class="subtitle">Today on Docker, agents use container names on a shared network. What's the Azure equivalent?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Shared Container App Environment</h3>
+      <p>All agents in the same workspace deploy into one ACA Environment. They discover each other via internal DNS names (like Docker network). No public exposure needed for agent-to-agent calls. <strong>Closest to how Docker works today.</strong></p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Simple DNS-based discovery</li><li>No public endpoints for internal traffic</li><li>Minimal config change from Docker</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>All agents share scaling/region</li><li>One environment per workspace</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>VNet + Private DNS Zone</h3>
+      <p>Each agent gets its own ACA Environment but they share a VNet with private DNS. More isolated but more infrastructure to manage.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Independent scaling per agent</li><li>Better isolation</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>More resources to provision</li><li>Slower deploys</li><li>More complex networking</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Public HTTPS + FQDN</h3>
+      <p>Each agent gets an external HTTPS URL. Agents call each other via public endpoints. Simplest to set up but traffic goes over the internet.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Simplest to provision</li><li>Works across regions/subscriptions</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Traffic over public internet</li><li>Need auth between agents</li><li>Latency overhead</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

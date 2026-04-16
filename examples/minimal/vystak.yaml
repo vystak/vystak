@@ -1,0 +1,26 @@
+# examples/minimal/vystak.yaml
+name: minimal-agent
+instructions: |
+  You are a minimal agent. You have no tools and no memory.
+  Just chat and be helpful.
+model:
+  name: minimax
+  provider:
+    name: anthropic
+    type: anthropic
+  model_name: MiniMax-M2.7
+  parameters:
+    temperature: 0.7
+    anthropic_api_url: https://api.minimax.io/anthropic
+platform:
+  name: docker
+  type: docker
+  provider:
+    name: docker
+    type: docker
+channels:
+  - name: api
+    type: api
+secrets:
+  - name: ANTHROPIC_API_KEY
+port: 8090

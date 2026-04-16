@@ -1,30 +1,30 @@
-# AgentStack
+# Vystak
 
 Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.
 
-AgentStack builds nothing. It wires everything. Define your agent in Python or YAML, and AgentStack generates native framework code, provisions infrastructure, and deploys to Docker — from a single command.
+Vystak builds nothing. It wires everything. Define your agent in Python or YAML, and Vystak generates native framework code, provisions infrastructure, and deploys to Docker — from a single command.
 
 ## Quick Start
 
 ```bash
 # Install
-pip install agentstack agentstack-cli agentstack-adapter-langchain agentstack-provider-docker
+pip install vystak vystak-cli vystak-adapter-langchain vystak-provider-docker
 
 # Create an agent
-agentstack init
+vystak init
 
 # Preview what will be generated
-agentstack plan
+vystak plan
 
 # Deploy to Docker
 export ANTHROPIC_API_KEY=your-key
-agentstack apply
+vystak apply
 
 # Talk to your agent (interactive REPL)
-agentstack-chat --url http://localhost:PORT
+vystak-chat --url http://localhost:PORT
 
 # Or one-shot
-agentstack-chat --url http://localhost:PORT -p "Hello!"
+vystak-chat --url http://localhost:PORT -p "Hello!"
 
 # Or via curl
 curl -X POST http://localhost:PORT/invoke \
@@ -32,7 +32,7 @@ curl -X POST http://localhost:PORT/invoke \
   -d '{"message": "Hello!"}'
 
 # Tear down
-agentstack destroy
+vystak destroy
 ```
 
 ## Define an Agent
@@ -76,7 +76,7 @@ secrets:
 **Python (code-first):**
 
 ```python
-import agentstack as ast
+import vystak as ast
 
 anthropic = ast.Provider(name="anthropic", type="anthropic")
 docker = ast.Provider(name="docker", type="docker")
@@ -93,10 +93,10 @@ agent = ast.Agent(
 )
 ```
 
-## What `agentstack apply` Does
+## What `vystak apply` Does
 
 ```
-agentstack.yaml
+vystak.yaml
        |
    [1] Validate agent definition
        |
@@ -118,14 +118,14 @@ agentstack.yaml
 
 ## Chat Client
 
-Talk to your deployed agents from the terminal with `agentstack-chat`:
+Talk to your deployed agents from the terminal with `vystak-chat`:
 
 ```bash
 # Interactive REPL — connect and chat
-agentstack-chat --url http://localhost:8080
+vystak-chat --url http://localhost:8080
 
 # One-shot prompt
-agentstack-chat --url http://localhost:8080 -p "What is the weather in NYC?"
+vystak-chat --url http://localhost:8080 -p "What is the weather in NYC?"
 ```
 
 Inside the REPL, use slash commands:
@@ -162,19 +162,19 @@ Features: streaming responses, tool call visibility, tab completion, persistent 
 
 ## Multi-Agent (A2A Protocol)
 
-AgentStack agents implement Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Agents discover each other via Agent Cards and communicate via JSON-RPC 2.0 over HTTP.
+Vystak agents implement Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Agents discover each other via Agent Cards and communicate via JSON-RPC 2.0 over HTTP.
 
 **Deploy multiple agents:**
 
 ```bash
 # Deploy a weather specialist
-cd examples/multi-agent/weather && agentstack apply
+cd examples/multi-agent/weather && vystak apply
 
 # Deploy a time specialist
-cd examples/multi-agent/time && agentstack apply
+cd examples/multi-agent/time && vystak apply
 
 # Deploy an assistant that calls both
-cd examples/multi-agent/assistant && agentstack apply
+cd examples/multi-agent/assistant && vystak apply
 ```
 
 **Agents call each other via A2A tools:**
@@ -185,7 +185,7 @@ async def ask_weather_agent(question: str) -> str:
     """Ask the weather agent via A2A protocol."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://agentstack-weather-agent:8000/a2a",
+            "http://vystak-weather-agent:8000/a2a",
             json={"jsonrpc": "2.0", "method": "tasks/send", ...}
         )
     return extract_response(response.json())
@@ -245,31 +245,31 @@ data: {"type": "done"}
 
 | Command | Description |
 |---------|-------------|
-| `agentstack init` | Create a starter `agentstack.yaml` |
-| `agentstack plan` | Show what would change |
-| `agentstack apply` | Deploy or update the agent |
-| `agentstack destroy` | Stop and remove the agent |
-| `agentstack status` | Show running agent status |
-| `agentstack logs` | Tail agent container logs |
+| `vystak init` | Create a starter `vystak.yaml` |
+| `vystak plan` | Show what would change |
+| `vystak apply` | Deploy or update the agent |
+| `vystak destroy` | Stop and remove the agent |
+| `vystak status` | Show running agent status |
+| `vystak logs` | Tail agent container logs |
 
 ## Project Structure
 
 ```
 packages/
   python/
-    agentstack/                  # Core SDK — schema, hash, loader, stores
-    agentstack-cli/              # CLI tool
-    agentstack-adapter-langchain/ # LangChain/LangGraph code generator
-    agentstack-provider-docker/  # Docker deployment provider
-    agentstack-gateway/          # Channel gateway (Slack routing)
-    agentstack-chat/             # Interactive chat client
-    agentstack-adapter-mastra/   # Mastra adapter (stub)
-    agentstack-channel-api/      # REST API channel (stub)
+    vystak/                  # Core SDK — schema, hash, loader, stores
+    vystak-cli/              # CLI tool
+    vystak-adapter-langchain/ # LangChain/LangGraph code generator
+    vystak-provider-docker/  # Docker deployment provider
+    vystak-gateway/          # Channel gateway (Slack routing)
+    vystak-chat/             # Interactive chat client
+    vystak-adapter-mastra/   # Mastra adapter (stub)
+    vystak-channel-api/      # REST API channel (stub)
   typescript/
-    core/                        # @agentstack/core (stub)
-    cli/                         # @agentstack/cli (stub)
-    adapter-mastra/              # @agentstack/adapter-mastra (stub)
-    provider-docker/             # @agentstack/provider-docker (stub)
+    core/                        # @vystak/core (stub)
+    cli/                         # @vystak/cli (stub)
+    adapter-mastra/              # @vystak/adapter-mastra (stub)
+    provider-docker/             # @vystak/provider-docker (stub)
 ```
 
 ## Development

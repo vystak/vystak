@@ -1,0 +1,27 @@
+[project]
+name = "vystak-cli"
+version = "0.1.0"
+description = "Vystak CLI — manage and deploy AI agents"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "vystak>=0.1.0",
+    "vystak-adapter-langchain>=0.1.0",
+    "vystak-provider-docker>=0.1.0",
+    "click>=8.0",
+]
+
+[project.scripts]
+vystak = "vystak_cli.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vystak_cli"]
+
+[tool.uv.sources]
+vystak = { workspace = true }
+vystak-adapter-langchain = { workspace = true }
+vystak-provider-docker = { workspace = true }

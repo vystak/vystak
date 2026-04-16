@@ -1,6 +1,6 @@
-AgentStack Project Overview
+Vystak Project Overview
 
-AgentStack is a declarative, platform-agnostic orchestration layer for AI agents.
+Vystak is a declarative, platform-agnostic orchestration layer for AI agents.
 It defines, provisions, deploys, updates, and manages agents across any framework,
 any platform, and any cloud — from a single command.
 

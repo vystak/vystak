@@ -1,0 +1,130 @@
+<h2>Azure Provider — Code Declaration Options</h2>
+<p class="subtitle">How much Azure config lives in the agent definition vs environment?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Minimal — Environment-Driven</h3>
+      <p>YAML just declares the provider type. Everything else from <code>az login</code> context or env vars.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>azure = ast.Provider(name="azure", type="azure-container-apps")
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
+    resources=[ast.Resource(name="sessions", provider=azure, engine="postgres")],
+)
+# Region, subscription, RG all come from:
+#   az login context, or
+#   AZURE_SUBSCRIPTION_ID, AZURE_LOCATION, AZURE_RESOURCE_GROUP</code></pre>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="mockup-header">YAML</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>name: support-bot
+resources:
+  - name: sessions
+    provider:
+      name: azure
+      type: azure-container-apps
+    engine: postgres</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Explicit — Fully Self-Describing</h3>
+      <p>Everything in the definition. Portable across machines but tied to one Azure account.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>azure = ast.Provider(
+    name="azure",
+    type="azure-container-apps",
+    config={
+        "subscription_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "location": "eastus2",
+        "resource_group": "agentstack-prod",
+        "container_registry": "myregistry.azurecr.io",
+        "sku": "Consumption",
+    },
+)
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    resources=[ast.Resource(name="sessions", provider=azure, engine="postgres")],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Layered — Logical Intent in Code, Credentials from Env</h3>
+      <p>Definition says <em>where</em> and <em>how</em>, but not <em>who</em>. Credentials always from environment.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>azure = ast.Provider(
+    name="azure",
+    type="azure-container-apps",
+    config={
+        "location": "eastus2",
+        "resource_group": "agentstack-prod",  # optional, auto-generated if omitted
+    },
+)
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    resources=[
+        ast.Resource(name="sessions", provider=azure, engine="postgres"),
+        # OR bring your own:
+        ast.Resource(
+            name="sessions",
+            provider=azure,
+            engine="postgres",
+            config={"connection_string_env": "DATABASE_URL"},  # skip provisioning
+        ),
+    ],
+)</code></pre>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="mockup-header">YAML</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>name: support-bot
+resources:
+  - name: sessions
+    provider:
+      name: azure
+      type: azure-container-apps
+      config:
+        location: eastus2
+        resource_group: agentstack-prod
+    engine: postgres
+
+# Or bring your own Postgres:
+  - name: sessions
+    provider:
+      name: azure
+      type: azure-container-apps
+    engine: postgres
+    config:
+      connection_string_env: DATABASE_URL</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

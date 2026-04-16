@@ -1,25 +1,25 @@
-# AgentStack — Project Plan
+# Vystak — Project Plan
 
-## What Is AgentStack
+## What Is Vystak
 
-AgentStack is a declarative, platform-agnostic orchestration layer for AI agents. It defines, provisions, deploys, updates, and manages agents across any framework, any platform, and any cloud — from a single codebase.
+Vystak is a declarative, platform-agnostic orchestration layer for AI agents. It defines, provisions, deploys, updates, and manages agents across any framework, any platform, and any cloud — from a single codebase.
 
-**AgentStack builds nothing. It wires everything.**
+**Vystak builds nothing. It wires everything.**
 
-Terraform/Pulumi didn't build AWS. They gave you one language to describe what you want and provisioned it. AgentStack does the same for AI agents.
+Terraform/Pulumi didn't build AWS. They gave you one language to describe what you want and provisioned it. Vystak does the same for AI agents.
 
 ---
 
 ## Current State
 
-**Status:** MVP complete and running in production-like Docker deployments.
+**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway.
 
 **Numbers:**
-- 123 commits
-- 319 tests across 40 test files
-- ~4,400 lines of Python source code
-- 8 Python packages + 4 TypeScript stubs
-- 2 design sessions (April 11-12, 2026)
+- 230+ commits
+- 390+ tests across 50+ test files
+- 9 Python packages + 4 TypeScript stubs
+- 9 examples (Docker + Azure)
+- 4 design sessions (April 11-15, 2026)
 
 ## What We Built
 
@@ -32,20 +32,30 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - GitHub Actions Release (PyPI + npm publishing via changesets)
 - Pre-commit hooks (ruff, eslint, prettier, conventional commits)
 
-**Core SDK (`agentstack`):**
+**Core SDK (`vystak`):**
 - Pydantic v2 schema models for all 7 concepts: Agent, Skill, Channel, Resource, Workspace, Provider, Platform
 - Plus: McpServer, Secret, Model, Embedding, Gateway, ChannelProvider, SlackChannel
+- Service types: Postgres, Sqlite, Redis, Qdrant — replace generic Resource
+- First-class `sessions` and `memory` fields on Agent
 - Content-addressable hash engine (SHA-256 hash tree for change detection)
 - YAML/JSON loader (`load_agent`, `dump_agent`)
+- Multi-agent YAML loader with named references (providers, platforms, models)
+- Base + env config loading (`vystak.base.yaml` + `vystak.env.yaml`)
 - AsyncSqliteStore for long-term memory persistence
 - Provider ABCs: FrameworkAdapter, PlatformProvider, ChannelAdapter
+- Provisioning engine:
+  - ProvisionGraph — DAG with topological sort (Kahn's algorithm)
+  - Provisionable protocol — name, depends_on, provision(), health_check()
+  - HealthCheck ABCs: Noop, TCP, Command, HTTP
+  - ProvisionListener — event callbacks for progress reporting (on_start/on_step/on_complete/on_error)
+  - Platform fingerprint grouping for shared infrastructure dedup
 
 ### Phase 2: LangChain Adapter (Complete)
 
-**Code generation (`agentstack-adapter-langchain`):**
+**Code generation (`vystak-adapter-langchain`):**
 - Generates native LangGraph react agents from schema definitions
 - Generated files: `agent.py`, `server.py`, `requirements.txt`, `tools/`, `store.py`
-- FastAPI harness with `/invoke`, `/stream` (SSE), `/health` endpoints
+- FastAPI harness with OpenAI-compatible endpoints (see Phase 14)
 - Supports Anthropic and OpenAI model providers
 - Custom base URL support (tested with MiniMax's Anthropic-compatible API)
 - `instructions` field for agent system prompt
@@ -57,20 +67,20 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
   - Postgres (`AsyncPostgresSaver`) — production-grade
 - Long-term memory with three scopes (user, project, global):
   - `save_memory` and `forget_memory` tools
-  - Automatic memory recall on each request
+  - Ephemeral memory recall via LangGraph `prompt` callable (never checkpointed)
   - Backed by AsyncPostgresStore or AsyncSqliteStore
 
 ### Phase 3: Docker Provider (Complete)
 
-**Container management (`agentstack-provider-docker`):**
+**Container management (`vystak-provider-docker`):**
 - Build Docker images from generated code
 - Deploy, update, and destroy agent containers
 - Hash-based change detection (skip deploy if nothing changed)
-- Docker network management (`agentstack-net`)
+- Docker network management (`vystak-net`)
 - Resource provisioning:
   - Postgres containers with auto-generated passwords
   - SQLite volumes
-  - Secrets stored in `.agentstack/secrets.json`
+  - Secrets stored in `.vystak/secrets.json`
 - Port pinning (optional fixed host port)
 - MCP install commands in Dockerfile
 - Environment variable injection (secrets, session store URLs)
@@ -78,19 +88,19 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ### Phase 4: CLI (Complete)
 
-**Commands (`agentstack-cli`):**
+**Commands (`vystak-cli`):**
 
 | Command | Description |
 |---------|-------------|
-| `agentstack init` | Create starter `agentstack.yaml` |
-| `agentstack plan` | Show what would change |
-| `agentstack apply` | Deploy or update agent |
-| `agentstack destroy` | Stop and remove agent |
-| `agentstack status` | Show running agent status |
-| `agentstack logs` | Tail container logs |
+| `vystak init` | Create starter `vystak.yaml` |
+| `vystak plan` | Show what would change |
+| `vystak apply` | Deploy or update agent |
+| `vystak destroy` | Stop and remove agent |
+| `vystak status` | Show running agent status |
+| `vystak logs` | Tail container logs |
 
-- Agent definition discovery: convention (`agentstack.yaml/yml/py`) + `--file` override
-- Python file loading (`agentstack.py` with `agent` variable)
+- Agent definition discovery: convention (`vystak.yaml/yml/py`) + `--file` override
+- Python file loading (`vystak.py` with `agent` variable)
 - `--include-resources` flag for destroy
 
 ### Phase 5: A2A Protocol (Complete)
@@ -113,7 +123,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 ### Phase 6: Multi-Agent (Complete)
 
 **Agent collaboration:**
-- Multiple agents on shared Docker network (`agentstack-net`)
+- Multiple agents on shared Docker network (`vystak-net`)
 - Agents call each other via A2A protocol tools (async httpx)
 - Parallel agent calls (LangGraph runs async tools concurrently)
 - Nested streaming — client sees full activity across agent chain:
@@ -122,27 +132,220 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ### Phase 7: Gateway (Complete)
 
-**Unified entry point (`agentstack-gateway`):**
+**Unified entry point (`vystak-gateway`):**
 - Routes requests to agents on the Docker network
-- Agent discovery via Agent Cards (`GET /agents`)
-- Proxy endpoints: `/proxy/{agent}/invoke`, `/proxy/{agent}/stream`
+- Agent discovery via Agent Cards (`GET /agents`) and `/v1/models`
+- OpenAI-compatible proxy: `/v1/chat/completions`, `/v1/responses`, `/v1/models`
 - A2A proxy: `/a2a/{agent}`
+- Response-to-agent mapping store for `GET /v1/responses/{id}` routing
 - Slack channel provider with route-based dispatching
 - `routes.json` for static configuration
 
 ### Phase 8: Chat Client (Complete)
 
-**Interactive terminal client (`agentstack-chat`):**
-- Streaming responses with tool call visibility
+**Interactive terminal client (`vystak-chat`):**
+- Uses OpenAI Responses API with `previous_response_id` chaining for multi-turn
+- Streaming responses with function call visibility (OpenAI SSE event format)
 - Auto-detects gateway vs direct agent connection
 - Slash commands: `/connect`, `/use`, `/agents`, `/gateway`, `/sessions`, `/new`, `/resume`, `/status`, `/help`
 - Interactive agent picker (arrow keys)
-- Session management (create, list, resume)
 - Tab completion for agent names and commands
 - Persistent prompt history
-- Token usage tracking
+- Token usage tracking with user_id-scoped memory
 - Rich markdown rendering for agent responses
 - One-shot mode (`-p "question"`) for scripting
+
+### Phase 9: Schema Refactor (Complete — April 13, 2026)
+
+**Provider/Platform/Service separation:**
+- Provider = cloud account (azure, docker, anthropic)
+- Platform = where agents run (container-apps, docker)
+- Service = typed infrastructure (Postgres, Sqlite, Redis, Qdrant)
+- `sessions` and `memory` as first-class Agent fields
+- `depends_on` for explicit service dependencies
+- Backward compatible — old `resources` field still works
+
+### Phase 10: Provision Graph (Complete — April 13, 2026)
+
+**Dependency-aware provisioning:**
+- ProvisionGraph with Kahn's topological sort
+- Provisionable protocol (name, depends_on, provision, health_check)
+- HealthCheck hierarchy (Noop, TCP, Command, HTTP)
+- ProvisionListener for progress events
+- Docker provider rewired to use graph
+- Implicit dependencies: network → services → agent → gateways
+
+### Phase 11: Azure Provider — Phase 2a (Complete — April 13, 2026)
+
+**Minimal Azure Container Apps deployment:**
+- `vystak-provider-azure` package
+- Auth: DefaultAzureCredential (az CLI → service principal)
+- 5 Azure node types: ResourceGroup, LogAnalytics, ACR, ACA Environment, ContainerApp
+- Cross-platform build (docker buildx linux/amd64 for ARM Macs)
+- Hash-based change detection via ACA tags
+- Tag-based destroy (`--include-resources`)
+- CLI provider factory — auto-selects Docker vs Azure
+- Tested: 3 agents deployed to ACA, A2A working
+
+### Phase 12: Multi-Agent Deployment (Complete — April 14, 2026)
+
+**Pulumi-style resource deduplication:**
+- Python: same object `id()` → shared infrastructure
+- YAML: named `providers`, `platforms`, `models` blocks — agents reference by name
+- Base + env config: `vystak.base.yaml` + `vystak.env.yaml` + `VYSTAK_ENV`
+- CLI accepts multiple files/directories: `vystak apply weather/ time/ assistant/`
+- Platform fingerprint grouping — shared RG, ACR, ACA Environment
+- All CLI commands updated: apply, destroy, status, plan, logs
+- `--force` flag to redeploy without changes
+- `--name` flag to target individual agents
+
+### Phase 13: Gateway + Agent Registration (Complete — April 14, 2026)
+
+**Auto-deployed gateway with CLI-driven registration:**
+- Gateway auto-deploys after multi-agent apply (Docker + Azure)
+- CLI registers agents via `POST /register` after deploy
+- Persistent registration store (Postgres, SQLite, in-memory)
+- Health tracking: marks agents offline after 3 consecutive proxy failures
+- Gateway URL injection into Azure Container Apps
+- Deployment summary with shared infra, agent URLs, connect command
+
+### Phase 14: OpenAI-Compatible API (Complete — April 14-15, 2026)
+
+**Stateless Chat Completions + Stateful Responses API:**
+
+Every agent and the gateway expose OpenAI-compatible endpoints. Any OpenAI SDK client works as a drop-in:
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+client.chat.completions.create(model="vystak/my-agent", messages=[...])
+```
+
+- Agent endpoints:
+  - `GET /v1/models` — agent listed as `vystak/{name}`
+  - `POST /v1/chat/completions` — **stateless**, client sends full messages array, no checkpointer
+  - `POST /v1/responses` — **stateful**, `previous_response_id` chaining backed by LangGraph checkpointer
+  - `GET /v1/responses/{id}` — retrieve stored response (polling for background runs)
+- Gateway endpoints: same `/v1/` routes, routes by `model` field to agents
+- Responses API features:
+  - `store: true/false` — persist to checkpointer or one-shot
+  - `previous_response_id` — conversation chaining (response ID = LangGraph thread_id)
+  - `background: true` — async execution, poll via GET
+  - `stream: true` — OpenAI Responses SSE event types:
+    - `response.created`, `response.output_text.delta`, `response.output_text.done`
+    - `response.function_call_arguments.delta`, `response.function_call_arguments.done`
+    - `response.output_item.added` (function_call, function_call_output)
+    - `response.completed`, `[DONE]`
+  - `input` accepts string or message array
+  - `user_id`/`project_id` for memory scoping
+- Memory recall via LangGraph `prompt` callable — ephemeral, never checkpointed
+  - Follows LangMem canonical pattern: prompt function reconstructs system message fresh every turn
+  - Eliminates duplicate system message errors on multi-turn conversations
+- Removed: `/invoke`, `/stream`, `/proxy/*`, `/v1/threads/*`
+- A2A protocol unchanged for agent-to-agent communication
+- `openai_types.py` bundled into Docker builds for agent and gateway containers
+- Chat REPL uses Responses API with `previous_response_id` chaining
+- OpenAI error format on all `/v1/` endpoints
+
+---
+
+## Planned: Phase 16 — Azure Provider Phase 2b/2c
+
+### Phase 2b: Postgres + VNet + Key Vault
+
+**Goal:** Full production Azure deployment with private networking and managed database.
+
+- [ ] **Azure Database for PostgreSQL Flexible Server**
+  - AzurePostgresNode in provision graph
+  - SKU: Standard_B1ms (burstable), configurable via `config.sku`
+  - Auto-create database `vystak`
+  - Connection string injected into Container App env
+  - Bring-your-own via `connection_string_env` (skip provisioning)
+
+- [ ] **Virtual Network**
+  - AzureVNetNode with two subnets: ACA (10.0.0.0/23) + Postgres (10.0.2.0/24)
+  - ACA Environment integrated with VNet for private networking
+  - Postgres private access via VNet subnet delegation
+  - Agents reach Postgres via private IP (no public endpoint)
+
+- [ ] **Key Vault**
+  - AzureKeyVaultNode for secret management
+  - Store ANTHROPIC_API_KEY, database passwords, ACR credentials
+  - Container Apps reference secrets from Key Vault (managed identity)
+  - Replaces plaintext secret injection in env vars
+
+- [ ] **Managed Identity**
+  - User-assigned managed identity for ACA → ACR pull (no admin user)
+  - Key Vault access policy for Container Apps
+  - Postgres Azure AD auth (optional, alongside password auth)
+
+- [ ] **Session/memory examples on Azure**
+  - `sessions-postgres` example deployed to Azure with managed Postgres
+  - `memory-agent` example with both sessions + memory on Azure Postgres
+  - Verify session persistence survives Container App restarts
+
+### Phase 2c: Full Lifecycle
+
+**Goal:** Complete Azure operational commands.
+
+- [ ] **`vystak destroy` — full tag-based cleanup**
+  - Delete resources in reverse dependency order
+  - Respect shared resources (don't delete ACR if other agents use it)
+  - Auto-delete RG only if Vystak created it (not user-specified)
+  - Confirmation prompt before deleting infrastructure
+
+- [ ] **`vystak status` — rich Azure status**
+  - Show provisioning state, replica count, FQDN
+  - Show resource group contents
+  - Show cost estimate (based on SKU + replica hours)
+
+- [ ] **`vystak logs` — Azure Monitor integration**
+  - Query Log Analytics workspace for container logs
+  - `--follow` for live tail via streaming query
+  - `--tail N` for last N log lines
+  - Filter by agent name
+
+- [ ] **`vystak plan` — Azure diff**
+  - Compare local hash with deployed hash (from ACA tags)
+  - Show which resources would be created/updated/unchanged
+  - Show infrastructure changes (new VNet, new Postgres, etc.)
+  - Estimate cost impact
+
+---
+
+## Planned: Phase 17 — Parallel Provisioning
+
+**Goal:** Provision independent graph nodes concurrently for faster deployments.
+
+- [ ] **Parallel graph execution**
+  - Identify independent nodes (same depth in topo-sort, no shared dependencies)
+  - Execute independent nodes concurrently via `asyncio.gather()`
+  - Sequential execution for dependent chains
+  - Example: RG → (LogAnalytics + ACR + VNet in parallel) → ACA Environment → (3 Container Apps in parallel)
+
+- [ ] **Async Provisionable protocol**
+  - `async def provision(self, context)` — awaitable
+  - `async def health_check().wait()` — async health polling
+  - Backward compat: sync nodes wrapped in `asyncio.to_thread()`
+
+- [ ] **Concurrency control**
+  - `ProvisionGraph.execute(max_concurrency=N)` — limit parallel operations
+  - Default: 5 concurrent provisions (Azure ARM has rate limits)
+  - Per-provider throttling (Azure: 5, Docker: 10)
+
+- [ ] **Progress reporting for parallel execution**
+  - ProvisionListener events include concurrency info
+  - `on_start` shows which nodes are running in parallel
+  - `on_complete` shows remaining nodes
+  - CLI output: `[3/7] Creating ACR + Log Analytics + VNet...`
+
+- [ ] **Docker parallel provisioning**
+  - Independent services (postgres for sessions + postgres for memory) in parallel
+  - Multiple agent containers built + started in parallel
+  - Network must be created first (dependency)
+
+- [ ] **Estimated speed improvements**
+  - Azure multi-agent: ~8 min sequential → ~4 min parallel (2 Container Apps at once)
+  - Docker multi-agent: ~30s sequential → ~15s parallel
 
 ---
 
@@ -161,8 +364,9 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
        └────────┬──┘  └─────┬─────┘  └───┬────────┘
                 │            │            │
           LangChain     Docker       REST API
-          LangGraph   Kubernetes      Slack
-          (future)   AWS AgentCore   (future)
+          LangGraph   Azure ACA      Slack
+          (future)   Kubernetes     (future)
+                     AWS AgentCore
 
                     ┌─────────────────┐
                     │    Gateway      │  ← Unified entry point
@@ -181,18 +385,19 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 | Package | Description | Status |
 |---------|-------------|--------|
-| `agentstack` | Core SDK — schema, hash, loader, stores | Complete |
-| `agentstack-cli` | CLI tool — init, plan, apply, destroy, status, logs | Complete |
-| `agentstack-adapter-langchain` | LangChain/LangGraph code generator | Complete |
-| `agentstack-provider-docker` | Docker deployment provider | Complete |
-| `agentstack-gateway` | Channel gateway (Slack, API routing) | Complete |
-| `agentstack-chat` | Interactive chat client | Complete |
-| `agentstack-adapter-mastra` | Mastra framework adapter | Stub |
-| `agentstack-channel-api` | REST API channel adapter | Stub |
-| `@agentstack/core` | TypeScript core SDK | Stub |
-| `@agentstack/cli` | TypeScript CLI | Stub |
-| `@agentstack/adapter-mastra` | TypeScript Mastra adapter | Stub |
-| `@agentstack/provider-docker` | TypeScript Docker provider | Stub |
+| `vystak` | Core SDK — schema, hash, loader, provisioning engine | Complete |
+| `vystak-cli` | CLI — init, plan, apply, destroy, status, logs | Complete |
+| `vystak-adapter-langchain` | LangChain/LangGraph code generator | Complete |
+| `vystak-provider-docker` | Docker deployment provider (provision graph) | Complete |
+| `vystak-provider-azure` | Azure Container Apps provider | Complete (Phase 2a) |
+| `vystak-gateway` | Gateway — routing, registration, health tracking | Complete |
+| `vystak-chat` | Interactive chat client | Complete |
+| `vystak-adapter-mastra` | Mastra framework adapter | Stub |
+| `vystak-channel-api` | REST API channel adapter | Stub |
+| `@vystak/core` | TypeScript core SDK | Stub |
+| `@vystak/cli` | TypeScript CLI | Stub |
+| `@vystak/adapter-mastra` | TypeScript Mastra adapter | Stub |
+| `@vystak/provider-docker` | TypeScript Docker provider | Stub |
 
 ---
 
@@ -201,15 +406,15 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 ### Near Term (Next Sprint)
 
 **Publishing:**
-- [ ] Publish to PyPI (`pip install agentstack agentstack-cli`)
-- [ ] Publish to npm (`npm install @agentstack/core`)
+- [ ] Publish to PyPI (`pip install vystak vystak-cli`)
+- [ ] Publish to npm (`npm install @vystak/core`)
 - [ ] Proper versioning with changesets
 
 **Developer Experience:**
-- [ ] `agentstack dev` — local dev server without Docker (fast iteration)
-- [ ] `agentstack compose` — deploy multiple agents from a single YAML file
-- [ ] `agentstack generate` — write generated code to disk without deploying
-- [ ] Agent registry — agents auto-register with gateway on deploy
+- [ ] `vystak dev` — local dev server without Docker (fast iteration)
+- [ ] `vystak compose` — deploy multiple agents from a single YAML file
+- [ ] `vystak generate` — write generated code to disk without deploying
+- [x] Agent registry — agents auto-register with gateway on deploy
 
 **Documentation:**
 - [ ] Documentation site (VitePress or Starlight)
@@ -220,10 +425,10 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 ### Near-Medium Term
 
 **Authentication & Security:**
-- [ ] Gateway authentication — API key or JWT for client → gateway
-- [ ] `agentstack login` — CLI authentication command
-- [ ] Agent endpoint protection — bearer token on `/invoke`, `/stream`, `/a2a`
-- [ ] mTLS between agents on `agentstack-net` (under discussion — adds complexity vs container network isolation)
+- [ ] Gateway authentication — API key or JWT for client → gateway (OpenAI `Authorization: Bearer` header)
+- [ ] `vystak login` — CLI authentication command
+- [ ] Agent endpoint protection — bearer token on `/v1/chat/completions`, `/v1/responses`, `/a2a`
+- [ ] mTLS between agents on `vystak-net` (under discussion — adds complexity vs container network isolation)
 - [ ] Secret rotation for auto-generated resource passwords
 - [ ] Audit log for agent access (who called which agent, when)
 
@@ -233,7 +438,7 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - [ ] Token budget per request (max_tokens enforcement)
 - [ ] Message pruning strategies (sliding window, summarize, truncate)
 - [ ] Token usage tracking per agent/user/project (already captured, needs storage)
-- [ ] Cost estimation in `agentstack plan` (model pricing × estimated tokens)
+- [ ] Cost estimation in `vystak plan` (model pricing × estimated tokens)
 
 **LLM Cache Optimization:**
 - [ ] Prompt caching — leverage Anthropic/OpenAI prompt caching for system prompts and tool definitions
@@ -274,9 +479,9 @@ Agent modes beyond simple react (respond to message → call tools → respond):
   mode: supervisor
   agents:
     - name: researcher
-      url: http://agentstack-researcher:8000
+      url: http://vystak-researcher:8000
     - name: math-expert  
-      url: http://agentstack-math:8000
+      url: http://vystak-math:8000
   ```
 - [ ] Handoff tools auto-generated — supervisor can delegate to any sub-agent
 - [ ] Custom handoff descriptions — control how the LLM routes tasks
@@ -321,13 +526,13 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 **Knowledge / RAG:**
 - [ ] Knowledge resource type — declare vector stores as agent resources (`engine: pinecone/chroma/qdrant/pgvector`)
 - [ ] Auto-provisioning — Docker provider spins up Chroma/Qdrant container or pgvector extension
-- [ ] Document ingestion — `agentstack ingest` CLI command to load docs into the knowledge base
+- [ ] Document ingestion — `vystak ingest` CLI command to load docs into the knowledge base
 - [ ] Generated retrieval tool — adapter generates a `search_knowledge` tool wired to the vector store
 - [ ] Embedding model configuration — specify embedding provider/model in the knowledge resource
 - [ ] Chunking strategies — configurable chunk size, overlap, splitter (recursive, semantic)
 - [ ] Source tracking — retrieved chunks include source metadata (file, page, URL)
 - [ ] Multi-knowledge support — agent can have multiple knowledge bases (e.g., docs + codebase)
-- [ ] Knowledge sync — `agentstack sync` re-indexes changed documents
+- [ ] Knowledge sync — `vystak sync` re-indexes changed documents
 - [ ] Hybrid search — combine vector similarity with keyword search (BM25)
 
 **Queue-Based Transport:**
@@ -340,7 +545,7 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Queue resource type — declare queues in agent schema (`engine: sqs/rabbitmq/redis/kafka`)
 - [ ] Auto-provisioning — Docker provider spins up RabbitMQ/Redis container
 - [ ] Backpressure handling — agents signal when overloaded, queue throttles
-- [ ] Queue monitoring — message depth, processing rate, error rate in `agentstack status`
+- [ ] Queue monitoring — message depth, processing rate, error rate in `vystak status`
 - [ ] Durable workflows — multi-step agent pipelines with guaranteed delivery (retry, exactly-once)
 
 **Workspaces:**
@@ -348,18 +553,18 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Persistent workspace — survives across sessions, agent accumulates work (S3, GCS, local volume)
 - [ ] Mounted workspace — connect to existing storage (Google Drive, SharePoint, S3)
 - [ ] Workspace capabilities: filesystem, terminal, browser, network, GPU
-- [ ] Skill validation against workspace — skills declare what they need, `agentstack plan` validates
+- [ ] Skill validation against workspace — skills declare what they need, `vystak plan` validates
 - [ ] Workspace lifecycle management (per-session, per-request, persistent, shared)
 - [ ] Workspace providers: e2b, Daytona, Docker volumes, cloud storage
 
 **Testing & Evaluation:**
-- [ ] `agentstack test` — run test fixtures against a deployed or local agent
+- [ ] `vystak test` — run test fixtures against a deployed or local agent
 - [ ] Test fixture format — YAML files with input/expected output pairs
 - [ ] Replay testing — replay production conversations against a new config, compare results
 - [ ] Regression detection — catch when a prompt/model/tool change makes the agent worse
 - [ ] Evaluation metrics — response quality scoring (LLM-as-judge, keyword matching, semantic similarity)
 - [ ] Benchmark suite — standard test cases per agent, tracked over time
-- [ ] CI integration — `agentstack test` in GitHub Actions before deploy
+- [ ] CI integration — `vystak test` in GitHub Actions before deploy
 
 **Reliability & Resilience:**
 - [ ] Model fallback — if primary model provider is down, fall back to secondary (`fallback_model` in schema)
@@ -369,9 +574,9 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Circuit breaker — disable a tool/model after repeated failures, auto-recover
 
 **Environment Management:**
-- [ ] Dev / staging / prod environments — `agentstack apply --env production`
+- [ ] Dev / staging / prod environments — `vystak apply --env production`
 - [ ] Environment-specific config — different models, secrets, resources per environment
-- [ ] Promotion flow — `agentstack promote staging production` (verified deploy)
+- [ ] Promotion flow — `vystak promote staging production` (verified deploy)
 - [ ] Environment variables in YAML — `${ENV_VAR}` substitution in agent definitions
 - [ ] Lock files — pin exact versions of models, tools, deps for reproducible deploys
 
@@ -393,8 +598,8 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] Agent debugging — step-through execution, inspect state at each graph node
 - [ ] Time-travel debugging — rewind to any checkpoint and re-run from that point
 - [ ] Hot reload in dev mode — change tools/prompts, agent restarts automatically
-- [ ] `agentstack diff` — show what changed between two agent versions (prompt, tools, model)
-- [ ] `agentstack inspect` — show generated code without deploying
+- [ ] `vystak diff` — show what changed between two agent versions (prompt, tools, model)
+- [ ] `vystak inspect` — show generated code without deploying
 - [ ] Agent REPL — interactive mode where you can test tools individually
 
 ### Medium Term
@@ -402,7 +607,7 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 **Observability:**
 - [ ] OpenTelemetry integration (trace_id → real OTel spans)
 - [ ] Cost tracking per agent (model usage)
-- [ ] `agentstack dashboard` — web UI for monitoring agents
+- [ ] `vystak dashboard` — web UI for monitoring agents
 
 **Production Hardening:**
 - [ ] Health check retries and readiness probes
@@ -430,23 +635,23 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 
 **Agent Versioning & Deployment Strategies:**
 - [ ] Immutable agent versions — each deploy creates a version tag (content hash as version)
-- [ ] `agentstack rollback <version>` — instant rollback to any previous version
+- [ ] `vystak rollback <version>` — instant rollback to any previous version
 - [ ] A/B testing — route percentage of traffic to a new version (`traffic_split: {v1: 80, v2: 20}`)
 - [ ] Canary deployments — gradual rollout with automatic rollback on error spike
 - [ ] Blue-green deployments — swap between two identical environments
-- [ ] Deploy history — `agentstack history` shows all deploys with hashes and timestamps
+- [ ] Deploy history — `vystak history` shows all deploys with hashes and timestamps
 
 **SDK & Client Libraries:**
-- [ ] Python client — `from agentstack import AgentClient; client.invoke("hello")`
+- [ ] Python client — `from vystak import AgentClient; client.invoke("hello")`
 - [ ] TypeScript/JS client — for web apps and Node.js backends
 - [ ] OpenAPI spec auto-generated from agent endpoints — any language can codegen a client
 - [ ] A2A client SDK — typed wrapper for calling agents via A2A protocol
 - [ ] Webhook client — receive agent responses asynchronously via callback URL
 
 **Composability:**
-- [ ] `agentstack compose` — single YAML defining multiple agents, gateway, routing, and resources
-- [ ] Agent templates — `agentstack init --template customer-support` (pre-built archetypes)
-- [ ] Shared skill library — reusable skill packages across agents (`agentstack-skill-*`)
+- [ ] `vystak compose` — single YAML defining multiple agents, gateway, routing, and resources
+- [ ] Agent templates — `vystak init --template customer-support` (pre-built archetypes)
+- [ ] Shared skill library — reusable skill packages across agents (`vystak-skill-*`)
 - [ ] Agent inheritance — base agent with shared config, specialized agents extend it
 - [ ] Import agents — reference other agent definitions (`agents: [./weather-agent, ./time-agent]`)
 
@@ -460,19 +665,19 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] User satisfaction — thumbs up/down feedback, integrated into chat CLI and API response
 - [ ] Tool usage analytics — which tools are called most, which fail most, avg latency
 - [ ] Cost analytics — token usage and estimated cost per agent/user/project over time
-- [ ] Dashboard views — `agentstack dashboard` or web UI for visual analytics
+- [ ] Dashboard views — `vystak dashboard` or web UI for visual analytics
 
 ### Long Term
 
 **Fleet Management:**
-- [ ] `agentstack fleet status` — what's running, versions, costs
-- [ ] `agentstack fleet upgrade` — bulk update models or frameworks
-- [ ] `agentstack fleet rollback` — roll back to previous hash
-- [ ] `agentstack fleet promote` — staging → production promotion
+- [ ] `vystak fleet status` — what's running, versions, costs
+- [ ] `vystak fleet upgrade` — bulk update models or frameworks
+- [ ] `vystak fleet rollback` — roll back to previous hash
+- [ ] `vystak fleet promote` — staging → production promotion
 - [ ] Replay testing (replay production traces against new config)
 
 **Skill Marketplace:**
-- [ ] Skill packaging and distribution (`pip install agentstack-skill-*`)
+- [ ] Skill packaging and distribution (`pip install vystak-skill-*`)
 - [ ] Skill registry and discovery
 - [ ] Skill validation (requirements check at plan time)
 
@@ -505,6 +710,11 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `specs/2026-04-12-real-tool-loading-design.md`
 - `specs/2026-04-12-a2a-server-design.md`
 - `specs/2026-04-12-mcp-integration-design.md`
+- `specs/2026-04-12-schema-refactor-design.md`
+- `specs/2026-04-13-test-examples-design.md`
+- `specs/2026-04-13-provision-graph-design.md`
+- `specs/2026-04-13-azure-provider-design.md`
+- `specs/2026-04-13-multi-agent-deploy-design.md`
 
 **Plans:**
 - `plans/2026-04-11-monorepo-scaffold.md`
@@ -516,6 +726,11 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `plans/2026-04-12-real-tool-loading.md`
 - `plans/2026-04-12-a2a-server.md`
 - `plans/2026-04-12-mcp-integration.md`
+- `plans/2026-04-12-schema-refactor.md`
+- `plans/2026-04-13-test-examples.md`
+- `plans/2026-04-13-provision-graph.md`
+- `plans/2026-04-13-azure-provider-phase2a.md`
+- `plans/2026-04-14-multi-agent-loader.md`
 
 ---
 
@@ -550,7 +765,7 @@ Additional revenue: unified billing passthrough, skill marketplace, managed conn
 
 ```bash
 # Clone and setup
-git clone <repo-url> && cd AgentsStack
+git clone <repo-url> && cd Vystak
 uv sync && pnpm install
 
 # Run tests
@@ -559,8 +774,8 @@ just test
 # Create and deploy an agent
 cd examples/hello-agent
 cp .env.example .env  # add your API key
-agentstack apply
+vystak apply
 
 # Talk to it
-agentstack-chat --url http://localhost:8080
+vystak-chat --url http://localhost:8080
 ```

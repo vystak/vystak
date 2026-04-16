@@ -6,13 +6,13 @@ Run: uv run python examples/hello-agent/preview.py
 
 from pathlib import Path
 
-from agentstack.schema.loader import load_agent
-from agentstack.hash import hash_agent
-from agentstack_adapter_langchain import LangChainAdapter
+from vystak.schema.loader import load_agent
+from vystak.hash import hash_agent
+from vystak_adapter_langchain import LangChainAdapter
 
 
 def main():
-    agent_path = Path(__file__).parent / "agentstack.yaml"
+    agent_path = Path(__file__).parent / "vystak.yaml"
     agent = load_agent(agent_path)
 
     print(f"Agent: {agent.name}")

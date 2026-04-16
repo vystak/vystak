@@ -1,7 +1,7 @@
 {
-  "name": "@agentstack/core",
+  "name": "@vystak/core",
   "version": "0.1.0",
-  "description": "AgentStack core SDK",
+  "description": "Vystak core SDK",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {

@@ -1,6 +1,6 @@
 # Hello Agent
 
-A minimal AgentStack example that deploys a LangGraph agent with two stub tools to a Docker container, using MiniMax's Anthropic-compatible API.
+A minimal Vystak example that deploys a LangGraph agent with two stub tools to a Docker container, using MiniMax's Anthropic-compatible API.
 
 ## Prerequisites
 
@@ -20,13 +20,13 @@ cp .env.example .env
 uv run python preview.py
 
 # 3. See what would be deployed
-source .env && agentstack plan
+source .env && vystak plan
 
 # 4. Deploy to Docker
-source .env && agentstack apply
+source .env && vystak apply
 
 # 5. Check status
-agentstack status
+vystak status
 
 # 6. Talk to your agent
 curl -X POST http://localhost:PORT/invoke \
@@ -42,14 +42,14 @@ curl -X POST http://localhost:PORT/stream \
 curl http://localhost:PORT/health
 
 # 9. Tear down
-agentstack destroy
+vystak destroy
 ```
 
-Replace `PORT` with the port shown in `agentstack status`.
+Replace `PORT` with the port shown in `vystak status`.
 
 ## How It Works
 
-This example uses MiniMax's MiniMax-M2.7 model via their Anthropic-compatible API endpoint. The `agentstack.yaml` sets:
+This example uses MiniMax's MiniMax-M2.7 model via their Anthropic-compatible API endpoint. The `vystak.yaml` sets:
 
 ```yaml
 model:
@@ -62,9 +62,9 @@ model:
 
 The `MINIMAX_API_KEY` env var holds your MiniMax token. LangChain's `ChatAnthropic` sends requests to MiniMax's endpoint instead of Anthropic's.
 
-## What `agentstack apply` Creates
+## What `vystak apply` Creates
 
-1. Reads `agentstack.yaml` and validates the agent definition
+1. Reads `vystak.yaml` and validates the agent definition
 2. Generates three files using the LangChain adapter:
    - `agent.py` — LangGraph react agent with MiniMax model, stub tools, and system prompt
    - `server.py` — FastAPI server with `/invoke`, `/stream`, and `/health` endpoints
@@ -74,7 +74,7 @@ The `MINIMAX_API_KEY` env var holds your MiniMax token. LangChain's `ChatAnthrop
 
 ## Customizing
 
-Edit `agentstack.yaml` to change:
+Edit `vystak.yaml` to change:
 
 - **model** — switch model_name to `MiniMax-M2.5`, `MiniMax-M2.1`, etc.
 - **skills** — add tools and prompts
@@ -86,10 +86,10 @@ The generated tool functions are stubs. To add real tool implementations, replac
 
 ## Using Python Instead of YAML
 
-You can also define agents in Python. Create `agentstack.py`:
+You can also define agents in Python. Create `vystak.py`:
 
 ```python
-from agentstack import Agent, Model, Provider, Skill, Channel, ChannelType, Secret
+from vystak import Agent, Model, Provider, Skill, Channel, ChannelType, Secret
 
 provider = Provider(name="anthropic", type="anthropic")
 
@@ -118,4 +118,4 @@ agent = Agent(
 )
 ```
 
-Then run `agentstack plan` / `agentstack apply` as usual.
+Then run `vystak plan` / `vystak apply` as usual.
