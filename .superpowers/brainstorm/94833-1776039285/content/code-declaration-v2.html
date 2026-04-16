@@ -1,0 +1,115 @@
+<h2>Separated Provider — Azure as cloud, services as targets</h2>
+<p class="subtitle">The provider is Azure. Container Apps and Postgres are independent choices on that provider.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Provider + Platform + Resource as separate concepts</h3>
+      <p>Azure is the provider. Container Apps is the platform. Postgres is a resource. Each references the provider independently.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>import agentstack as ast
+
+# 1. Declare the cloud provider
+azure = ast.Provider(
+    name="azure",
+    type="azure",
+    config={
+        "location": "eastus2",
+        "resource_group": "agentstack-prod",  # optional
+    },
+)
+
+# 2. Model
+anthropic = ast.Provider(name="anthropic", type="anthropic")
+model = ast.Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
+
+# 3. Agent — platform and resources reference the azure provider
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(name="aca", type="container-apps", provider=azure),
+    resources=[
+        ast.Resource(name="sessions", engine="postgres", provider=azure),
+    ],
+    channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
+)</code></pre>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="mockup-header">YAML</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>name: support-bot
+model:
+  name: claude
+  provider: { name: anthropic, type: anthropic }
+  model_name: claude-sonnet-4-20250514
+platform:
+  name: aca
+  type: container-apps
+  provider: { name: azure, type: azure }
+resources:
+  - name: sessions
+    engine: postgres
+    provider: { name: azure, type: azure }
+channels:
+  - name: api
+    type: api</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Same but with bring-your-own resource</h3>
+      <p>Skip provisioning for a resource by providing a connection string. Provider is still Azure for the platform.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python — existing Postgres</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(name="aca", type="container-apps", provider=azure),
+    resources=[
+        # Bring your own — no provider, just a connection string
+        ast.Resource(
+            name="sessions",
+            engine="postgres",
+            config={"connection_string_env": "DATABASE_URL"},
+        ),
+    ],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Mix providers — Azure compute, Docker Postgres</h3>
+      <p>Platform on Azure, but resource on a different provider. Each is independent.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python — mixed providers</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:13px;line-height:1.5"><code>azure = ast.Provider(name="azure", type="azure", config={"location": "eastus2"})
+docker = ast.Provider(name="docker", type="docker")
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(name="aca", type="container-apps", provider=azure),
+    resources=[
+        # Postgres runs locally in Docker
+        ast.Resource(name="sessions", engine="postgres", provider=docker),
+    ],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

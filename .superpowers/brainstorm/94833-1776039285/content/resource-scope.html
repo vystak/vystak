@@ -1,0 +1,60 @@
+<h2>Which Azure resources should <code>agentstack apply</code> provision?</h2>
+<p class="subtitle">Select all that should be in scope for the first version. Click multiple options.</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="aca" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>Azure Container Apps</h3>
+      <p>The agent container itself — Container App Environment + Container App. Core requirement.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="acr" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>Azure Container Registry</h3>
+      <p>Push built images to ACR so ACA can pull them. Alternative: use Docker Hub or another registry.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="postgres" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>Azure Database for PostgreSQL (Flexible Server)</h3>
+      <p>For session persistence and long-term memory. The equivalent of the Docker provider's Postgres container.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="keyvault" onclick="toggleSelect(this)">
+    <div class="letter">4</div>
+    <div class="content">
+      <h3>Azure Key Vault</h3>
+      <p>Store ANTHROPIC_API_KEY and other secrets securely. Alternative: pass as ACA env vars / ACA secrets.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="rg" onclick="toggleSelect(this)">
+    <div class="letter">5</div>
+    <div class="content">
+      <h3>Resource Group</h3>
+      <p>Create a dedicated resource group per workspace/agent. Makes cleanup easy (<code>agentstack destroy</code> = delete RG).</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="vnet" onclick="toggleSelect(this)">
+    <div class="letter">6</div>
+    <div class="content">
+      <h3>Virtual Network</h3>
+      <p>Private networking between ACA and Postgres. More secure but adds complexity.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="log" onclick="toggleSelect(this)">
+    <div class="letter">7</div>
+    <div class="content">
+      <h3>Log Analytics Workspace</h3>
+      <p>Required by ACA Environment for container logs. Enables <code>agentstack logs</code> to work on Azure.</p>
+    </div>
+  </div>
+</div>

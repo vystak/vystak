@@ -1,4 +1,4 @@
-# AgentStack monorepo task runner
+# Vystak monorepo task runner
 
 # Run all tests
 test: test-python test-typescript

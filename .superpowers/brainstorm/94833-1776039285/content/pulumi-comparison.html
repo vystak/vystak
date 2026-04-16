@@ -1,0 +1,158 @@
+<h2>Pulumi vs AgentStack — Azure Container Apps + Postgres</h2>
+<p class="subtitle">How Pulumi declares the same infrastructure, and what we can learn from it.</p>
+
+<div class="split">
+  <div class="mockup" style="flex:1">
+    <div class="mockup-header">Pulumi (Python) — ~60 lines</div>
+    <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>import pulumi
+import pulumi_azure_native as azure
+
+# Provider is implicit — from `az login` or config
+# But can be explicit:
+provider = azure.Provider("azure", location="eastus2")
+
+rg = azure.resources.ResourceGroup("rg",
+    resource_group_name="agentstack-prod",
+    opts=pulumi.ResourceOptions(provider=provider),
+)
+
+logs = azure.operationalinsights.Workspace("logs",
+    resource_group_name=rg.name,
+    sku=azure.operationalinsights.WorkspaceSkuArgs(name="PerGB2018"),
+)
+
+env = azure.app.ManagedEnvironment("env",
+    resource_group_name=rg.name,
+    app_logs_configuration=azure.app.AppLogsConfigurationArgs(
+        destination="log-analytics",
+        log_analytics_configuration=azure.app.LogAnalyticsConfigurationArgs(
+            customer_id=logs.customer_id,
+            shared_key=logs...
+        ),
+    ),
+)
+
+acr = azure.containerregistry.Registry("acr",
+    resource_group_name=rg.name,
+    sku=azure.containerregistry.SkuArgs(name="Basic"),
+    admin_user_enabled=True,
+)
+
+postgres = azure.dbforpostgresql.Server("pg",
+    resource_group_name=rg.name,
+    sku=azure.dbforpostgresql.SkuArgs(
+        name="Standard_B1ms", tier="Burstable",
+    ),
+    version="16",
+    storage=azure.dbforpostgresql.StorageArgs(
+        storage_size_gb=32,
+    ),
+    administrator_login="agentstack",
+    administrator_login_password=secret,
+)
+
+db = azure.dbforpostgresql.Database("db",
+    resource_group_name=rg.name,
+    server_name=postgres.name,
+    database_name="agent_sessions",
+)
+
+app = azure.app.ContainerApp("support-bot",
+    resource_group_name=rg.name,
+    managed_environment_id=env.id,
+    configuration=azure.app.ConfigurationArgs(
+        ingress=azure.app.IngressArgs(
+            external=True, target_port=8000,
+        ),
+        secrets=[...],
+        registries=[...],
+    ),
+    template=azure.app.TemplateArgs(
+        containers=[azure.app.ContainerArgs(
+            name="support-bot",
+            image=f"{acr.login_server}/support-bot:latest",
+            resources=azure.app.ContainerResourcesArgs(
+                cpu=0.5, memory="1Gi",
+            ),
+            env=[
+                azure.app.EnvironmentVarArgs(
+                    name="DATABASE_URL",
+                    secret_ref="db-url",
+                ),
+            ],
+        )],
+    ),
+)</code></pre>
+    </div>
+  </div>
+
+  <div class="mockup" style="flex:1">
+    <div class="mockup-header">AgentStack (Python) — ~15 lines</div>
+    <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>import agentstack as ast
+
+azure = ast.Provider(
+    name="azure",
+    type="azure",
+    config={"location": "eastus2"},
+)
+
+anthropic = ast.Provider(
+    name="anthropic",
+    type="anthropic",
+)
+
+model = ast.Model(
+    name="claude",
+    provider=anthropic,
+    model_name="claude-sonnet-4-20250514",
+)
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(
+        name="aca",
+        type="container-apps",
+        provider=azure,
+    ),
+    resources=[
+        ast.Resource(
+            name="sessions",
+            engine="postgres",
+            provider=azure,
+        ),
+    ],
+    channels=[
+        ast.Channel(name="api", type=ast.ChannelType.API),
+    ],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+    ],
+)</code></pre>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <h3>Key Patterns from Pulumi</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:16px">
+      <p class="label">Provider is a first-class object</p>
+      <p style="font-size:14px">Pulumi passes <code>provider</code> to each resource. AgentStack does the same — <code>azure</code> is referenced by both platform and resources independently.</p>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:16px">
+      <p class="label">Implicit vs explicit config</p>
+      <p style="font-size:14px">Pulumi tries <code>az login</code> first, falls back to explicit config. AgentStack should do the same — provider config is optional overrides on top of CLI context.</p>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:16px">
+      <p class="label">Resources are wired by reference</p>
+      <p style="font-size:14px">Pulumi passes <code>rg.name</code>, <code>env.id</code> between resources. AgentStack hides this — the provider knows how to wire RG → ACR → ACA → Postgres internally.</p>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:16px">
+      <p class="label">AgentStack's job is the 45-line gap</p>
+      <p style="font-size:14px">Pulumi: ~60 lines of infra code. AgentStack: ~15 lines of intent. The provider plugin fills in the 45 lines of Azure-specific wiring automatically.</p>
+    </div>
+  </div>
+</div>

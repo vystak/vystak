@@ -1,0 +1,138 @@
+<h2>What should replace <code>ast.Resource</code>?</h2>
+<p class="subtitle">Resource is too generic. What better captures the intent?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Typed resource classes</h3>
+      <p>Each resource type is its own class. Explicit, discoverable, IDE-friendly.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure),
+    session_store=ast.PostgresStore(provider=azure),
+    memory_store=ast.PostgresStore(
+        provider=azure,
+        config={"sku": "Standard_B1ms"},
+    ),
+)
+
+# Or bring your own:
+agent = ast.Agent(
+    ...
+    session_store=ast.PostgresStore(
+        connection_string_env="DATABASE_URL",
+    ),
+)</code></pre>
+        </div>
+      </div>
+      <p style="opacity:0.6;font-size:13px">Clear what each thing is. No <code>engine="postgres"</code> string. Type-safe config per store type.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Named fields on Agent, generic Store</h3>
+      <p>Agent has explicit fields for each concern. One <code>Store</code> class handles backing config.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure),
+    sessions=ast.Store(engine="postgres", provider=azure),
+    memory=ast.Store(engine="postgres", provider=azure, config={
+        "sku": "Standard_B1ms",
+    }),
+)
+
+# Bring your own:
+agent = ast.Agent(
+    ...
+    sessions=ast.Store(
+        engine="postgres",
+        connection_string_env="DATABASE_URL",
+    ),
+)</code></pre>
+        </div>
+      </div>
+      <p style="opacity:0.6;font-size:13px">Agent shape is clear (sessions, memory are named fields). Store is flexible but still generic.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Keep Resource but scope it to services</h3>
+      <p>Rename to <code>Service</code>. Resources list infra services the agent depends on.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure),
+    services=[
+        ast.Postgres(name="sessions", provider=azure),
+        ast.Postgres(name="memory", provider=azure, config={
+            "sku": "Standard_B1ms",
+        }),
+        ast.Redis(name="cache", provider=azure),
+    ],
+)
+
+# Bring your own:
+agent = ast.Agent(
+    ...
+    services=[
+        ast.Postgres(name="sessions",
+            connection_string_env="DATABASE_URL",
+        ),
+    ],
+)</code></pre>
+        </div>
+      </div>
+      <p style="opacity:0.6;font-size:13px">Extensible list. Each service is a typed class. Easy to add Redis, Qdrant, etc. later.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="d" onclick="toggleSelect(this)">
+    <div class="letter">D</div>
+    <div class="content">
+      <h3>Hybrid — named fields + services list</h3>
+      <p>Common concerns (sessions, memory) are named fields. Extra infra goes in services.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure),
+    # First-class agent concerns
+    sessions=ast.Postgres(provider=azure),
+    memory=ast.Postgres(provider=azure),
+    # Additional services the agent needs
+    services=[
+        ast.Redis(name="cache", provider=azure),
+        ast.Qdrant(name="vectors", provider=azure),
+    ],
+)
+
+# Bring your own:
+agent = ast.Agent(
+    ...
+    sessions=ast.Postgres(connection_string_env="DATABASE_URL"),
+    memory=ast.Postgres(connection_string_env="MEMORY_URL"),
+)</code></pre>
+        </div>
+      </div>
+      <p style="opacity:0.6;font-size:13px">Best of both: sessions/memory are obvious, but you can still attach arbitrary services.</p>
+    </div>
+  </div>
+</div>

@@ -6,11 +6,11 @@ import httpx
 from langgraph.config import get_config, get_stream_writer
 
 
-_gateway = os.environ.get("AGENTSTACK_GATEWAY_URL", "")
+_gateway = os.environ.get("VYSTAK_GATEWAY_URL", "")
 if _gateway:
     WEATHER_AGENT_URL = f"{_gateway}/a2a/weather-agent"
 else:
-    WEATHER_AGENT_URL = os.environ.get("WEATHER_AGENT_URL", "http://agentstack-weather-agent:8000") + "/a2a"
+    WEATHER_AGENT_URL = os.environ.get("WEATHER_AGENT_URL", "http://vystak-weather-agent:8000") + "/a2a"
 
 
 async def ask_weather_agent(question: str) -> str:

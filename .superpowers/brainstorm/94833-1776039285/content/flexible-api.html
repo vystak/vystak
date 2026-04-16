@@ -1,0 +1,167 @@
+<h2>Flexible API — Pulumi-level control, agent-level focus</h2>
+<p class="subtitle">Progressive complexity: simple defaults, full overrides when you need them.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Level 1 — Minimal (today's experience)</h3>
+      <p>Just declare intent. Provider fills in all defaults.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python — 10 lines</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>azure = ast.Provider(name="azure", type="azure")
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure),
+    resources=[ast.Resource(name="sessions", engine="postgres", provider=azure)],
+)</code></pre>
+        </div>
+      </div>
+      <p style="opacity:0.6;font-size:13px">Provider auto-detects subscription, picks cheapest SKU, generates RG name, wires everything.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Level 2 — Configure provider &amp; platform</h3>
+      <p>Control where and how things run. Resources still use smart defaults.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>azure = ast.Provider(
+    name="azure",
+    type="azure",
+    config={
+        "subscription_id": "xxxx-xxxx",
+        "location": "eastus2",
+        "resource_group": "my-agents-rg",
+        "tags": {"team": "platform", "env": "prod"},
+    },
+)
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(
+        type="container-apps",
+        provider=azure,
+        config={
+            "cpu": 1.0,
+            "memory": "2Gi",
+            "min_replicas": 1,
+            "max_replicas": 5,
+            "ingress": "external",
+        },
+    ),
+    resources=[ast.Resource(name="sessions", engine="postgres", provider=azure)],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Level 3 — Full resource control</h3>
+      <p>Override every resource. Mix provisioned and existing. Pulumi-level control.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>azure = ast.Provider(
+    name="azure",
+    type="azure",
+    config={
+        "location": "eastus2",
+        "resource_group": "my-agents-rg",
+        "tags": {"team": "platform"},
+    },
+)
+
+agent = ast.Agent(
+    name="support-bot",
+    model=model,
+    platform=ast.Platform(
+        type="container-apps",
+        provider=azure,
+        config={
+            "environment": "my-existing-env",   # use existing ACA env
+            "registry": "myacr.azurecr.io",     # use existing ACR
+            "cpu": 0.5,
+            "memory": "1Gi",
+            "min_replicas": 0,                  # scale to zero
+            "max_replicas": 10,
+            "ingress": "internal",              # no public endpoint
+        },
+    ),
+    resources=[
+        # Provision new Postgres with specific config
+        ast.Resource(
+            name="sessions",
+            engine="postgres",
+            provider=azure,
+            config={
+                "sku": "Standard_B1ms",
+                "storage_gb": 64,
+                "version": "16",
+                "high_availability": False,
+            },
+        ),
+        # Bring your own — skip provisioning entirely
+        ast.Resource(
+            name="memory",
+            engine="postgres",
+            config={"connection_string_env": "MEMORY_DATABASE_URL"},
+        ),
+    ],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="MEMORY_DATABASE_URL"),  # injected from Key Vault or env
+    ],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="d" onclick="toggleSelect(this)">
+    <div class="letter">D</div>
+    <div class="content">
+      <h3>Level 4 — Multi-provider fleet</h3>
+      <p>Multiple Azure providers for different regions/subscriptions. Independent wiring.</p>
+      <div class="mockup">
+        <div class="mockup-header">Python</div>
+        <div class="mockup-body">
+<pre style="margin:0;font-size:12px;line-height:1.4"><code>azure_east = ast.Provider(
+    name="azure-east", type="azure",
+    config={"location": "eastus2", "resource_group": "agents-east"},
+)
+azure_west = ast.Provider(
+    name="azure-west", type="azure",
+    config={"location": "westus2", "resource_group": "agents-west"},
+)
+
+# Frontend agent in east
+frontend = ast.Agent(
+    name="frontend-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure_east),
+    resources=[ast.Resource(name="sessions", engine="postgres", provider=azure_east)],
+)
+
+# Backend agent in west
+backend = ast.Agent(
+    name="backend-bot",
+    model=model,
+    platform=ast.Platform(type="container-apps", provider=azure_west),
+    resources=[ast.Resource(name="sessions", engine="postgres", provider=azure_west)],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
