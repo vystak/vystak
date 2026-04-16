@@ -11,6 +11,7 @@ dependencies = [
     "azure-mgmt-containerregistry>=10.0",
     "azure-mgmt-appcontainers>=3.0",
     "azure-mgmt-loganalytics>=13.0",
+    "azure-mgmt-rdbms>=10.1.1",
     "docker>=7.0",
 ]
 

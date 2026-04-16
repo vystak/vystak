@@ -139,6 +139,7 @@ dependencies = [
     { name = "azure-mgmt-appcontainers" },
     { name = "azure-mgmt-containerregistry" },
     { name = "azure-mgmt-loganalytics" },
+    { name = "azure-mgmt-rdbms" },
     { name = "azure-mgmt-resource" },
     { name = "docker" },
 ]
@@ -150,6 +151,7 @@ requires-dist = [
     { name = "azure-mgmt-appcontainers", specifier = ">=3.0" },
     { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
     { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
+    { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
     { name = "azure-mgmt-resource", specifier = ">=23.0" },
     { name = "docker", specifier = ">=7.0" },
 ]
@@ -464,6 +466,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/01/d782a0e58a8cbf49afabef7872c029872b6e5b12d7a5f89d635f219795e3/azure_mgmt_loganalytics-13.1.1.tar.gz", hash = "sha256:4f971ee9d43fdc99e8299f44ca9f8f7a3b5f100be139fb0a9dac7efef8b698af", size = 134047, upload-time = "2026-01-05T09:52:25.827Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/30/041fcaac73e26b76f162bf1eee0bf5637bcb1b76f479bec077095f59d19a/azure_mgmt_loganalytics-13.1.1-py3-none-any.whl", hash = "sha256:73382d5036f478d3f6e856a0effc3637be2ebc782ab667fc45b25707edceaa55", size = 218285, upload-time = "2026-01-05T09:52:27.226Z" },
+]
+
+[[package]]
+name = "azure-mgmt-rdbms"
+version = "10.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "msrest" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/04/47ffeb3959a6722d74be12e5d26a7da425a28b0f5150adf1ff2e910e2b5f/azure_mgmt_rdbms-10.1.1.tar.gz", hash = "sha256:963455ace0d6566d299826713e54ed8fa87a88fec6467e8fd3932387ca0a2e8c", size = 384512, upload-time = "2025-11-25T19:43:12.658Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/c4/7443bbb09a160edcd9a03374e6758e080ff43c748f6070c1b5ee73d2bf80/azure_mgmt_rdbms-10.1.1-py3-none-any.whl", hash = "sha256:cb0d85c016e616727f7be89132b288b26a1edcac2729bc769ec93eede61fcbfa", size = 774670, upload-time = "2025-11-25T19:43:14.803Z" },
 ]
 
 [[package]]
