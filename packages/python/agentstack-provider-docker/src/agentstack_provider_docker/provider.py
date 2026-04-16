@@ -270,7 +270,7 @@ class DockerProvider(PlatformProvider):
                 message=f"Deployment failed: {e}",
             )
 
-    def destroy(self, agent_name: str, include_resources: bool = False) -> None:
+    def destroy(self, agent_name: str, include_resources: bool = False, **kwargs) -> None:
         container = self._get_container(agent_name)
         if container is not None:
             container.stop()
