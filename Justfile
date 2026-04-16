@@ -46,3 +46,15 @@ fmt-typescript:
 
 # Run full CI check (what GitHub Actions runs)
 ci: lint typecheck test
+
+# Run docs site locally
+docs-dev:
+    pnpm --filter vystak-docs start
+
+# Build docs site
+docs-build:
+    pnpm --filter vystak-docs build
+
+# Serve built docs
+docs-serve:
+    pnpm --filter vystak-docs serve
