@@ -202,6 +202,8 @@ class TestContainerAppNode:
         secret2 = MagicMock()
         secret2.name = "DB_PASS"
         agent.secrets = [secret1, secret2]
+        agent.sessions = None
+        agent.memory = None
         return agent
 
     def _make_node(self):
@@ -289,3 +291,72 @@ class TestContainerAppNode:
         node._fqdn = "my-agent.eastus.azurecontainerapps.io"
         hc = node.health_check()
         assert isinstance(hc, HttpHealthCheck)
+
+    @patch.dict(os.environ, {"API_KEY": "key-val", "DB_PASS": "db-val"})
+    @patch("agentstack_provider_azure.nodes.aca_app.subprocess.run")
+    def test_provision_with_postgres_env_vars(self, mock_subprocess, tmp_path):
+        node = self._make_node()
+
+        # Give the agent sessions and memory fields
+        sessions_svc = MagicMock()
+        sessions_svc.name = "sessions-db"
+        sessions_svc.connection_string_env = None
+        sessions_svc.is_managed = True
+        memory_svc = MagicMock()
+        memory_svc.name = "memory-db"
+        memory_svc.connection_string_env = None
+        memory_svc.is_managed = True
+        node._agent.sessions = sessions_svc
+        node._agent.memory = memory_svc
+        node._agent.services = []
+
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+
+        app_result = MagicMock()
+        app_result.configuration.ingress.fqdn = "my-agent.eastus.azurecontainerapps.io"
+        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = app_result
+
+        context = {
+            "aca-environment": ProvisionResult(
+                name="aca-environment", success=True,
+                info={"environment_id": "/sub/env-id", "default_domain": "test.io"},
+            ),
+            "acr": ProvisionResult(
+                name="acr", success=True,
+                info={"login_server": "testreg.azurecr.io", "username": "testreg", "password": "secret-pass", "registry_name": "testreg"},
+            ),
+            "sessions-db": ProvisionResult(
+                name="sessions-db", success=True,
+                info={"engine": "postgres", "connection_string": "postgresql://agentstack:pw@host:5432/agentstack?sslmode=require"},
+            ),
+            "memory-db": ProvisionResult(
+                name="memory-db", success=True,
+                info={"engine": "postgres", "connection_string": "postgresql://agentstack:pw2@host2:5432/agentstack?sslmode=require"},
+            ),
+        }
+
+        with patch("agentstack_provider_azure.nodes.aca_app.Path") as mock_path_cls:
+            mock_build_dir = MagicMock()
+            mock_path_cls.return_value.__truediv__ = lambda self, other: mock_build_dir
+            mock_build_dir.__truediv__ = lambda self, other: MagicMock()
+            mock_build_dir.mkdir = MagicMock()
+            mock_build_dir.__str__ = lambda self: "/tmp/fake-build"
+            result = node.provision(context)
+
+        assert result.success is True
+
+        # Verify the ContainerApp was created with correct secrets and env vars
+        create_call = node._aca_client.container_apps.begin_create_or_update
+        call_args = create_call.call_args
+        container_app = call_args[0][2]  # Third positional arg is the ContainerApp object
+
+        # Check secrets contain session-store-url and memory-store-url
+        secret_names = [s.name for s in container_app.configuration.secrets]
+        assert "session-store-url" in secret_names
+        assert "memory-store-url" in secret_names
+
+        # Check env vars reference the secrets
+        env_list = container_app.template.containers[0].env
+        env_names = [e["name"] if isinstance(e, dict) else e.name for e in env_list]
+        assert "SESSION_STORE_URL" in env_names
+        assert "MEMORY_STORE_URL" in env_names
