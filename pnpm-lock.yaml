@@ -35,10 +35,6 @@ importers:
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.6.0)(jiti@1.21.7)(terser@5.46.1)
 
   packages/typescript/cli:
-    dependencies:
-      '@vystak/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^25.6.0

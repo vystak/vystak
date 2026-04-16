@@ -1,9 +1,24 @@
 {
   "name": "vystak",
-  "version": "0.1.0",
-  "description": "Vystak CLI",
+  "version": "0.0.1",
+  "description": "Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.",
   "type": "module",
   "license": "Apache-2.0",
+  "homepage": "https://vystak.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vystak/vystak.git",
+    "directory": "packages/typescript/cli"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestration",
+    "langchain",
+    "mastra",
+    "deploy",
+    "cli"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -22,9 +37,6 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "fmt": "prettier --write src/ tests/"
-  },
-  "dependencies": {
-    "@vystak/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

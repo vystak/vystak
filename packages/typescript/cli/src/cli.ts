@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { VERSION } from "@vystak/core";
+const VERSION = "0.0.1";
 
 console.log(`hello vystak v${VERSION}`);
