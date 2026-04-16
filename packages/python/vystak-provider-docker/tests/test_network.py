@@ -16,7 +16,7 @@ class TestEnsureNetwork:
         from vystak_provider_docker.network import ensure_network
 
         mock_docker_client.networks.list.return_value = []
-        network = ensure_network(mock_docker_client)
+        ensure_network(mock_docker_client)
         mock_docker_client.networks.create.assert_called_once_with("vystak-net", driver="bridge")
 
     def test_reuses_existing(self, mock_docker_client):

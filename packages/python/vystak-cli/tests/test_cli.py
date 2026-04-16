@@ -2,9 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 from click.testing import CliRunner
-
 from vystak_cli.cli import cli
-
 
 SAMPLE_AGENT_YAML = {
     "name": "test-bot",
@@ -34,6 +32,7 @@ def test_plan_new(mock_get_provider, tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
         from pathlib import Path
+
         Path(td).joinpath("vystak.yaml").write_text(yaml.dump(SAMPLE_AGENT_YAML))
         result = runner.invoke(cli, ["plan"])
 
@@ -60,6 +59,7 @@ def test_plan_up_to_date(mock_get_provider, tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
         from pathlib import Path
+
         Path(td).joinpath("vystak.yaml").write_text(yaml.dump(SAMPLE_AGENT_YAML))
         result = runner.invoke(cli, ["plan"])
 
@@ -91,6 +91,7 @@ def test_apply_success(mock_get_provider, tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
         from pathlib import Path
+
         Path(td).joinpath("vystak.yaml").write_text(yaml.dump(SAMPLE_AGENT_YAML))
         result = runner.invoke(cli, ["apply"])
 
@@ -108,7 +109,9 @@ def test_destroy_success(mock_provider_cls):
 
     assert result.exit_code == 0
     assert "Destroyed" in result.output
-    mock_provider.destroy.assert_called_once_with("test-bot", include_resources=False, no_wait=False)
+    mock_provider.destroy.assert_called_once_with(
+        "test-bot", include_resources=False, no_wait=False
+    )
 
 
 @patch("vystak_provider_docker.DockerProvider")

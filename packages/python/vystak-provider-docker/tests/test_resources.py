@@ -1,16 +1,17 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from vystak.schema.provider import Provider
 from vystak.schema.resource import SessionStore
 
 
 @pytest.fixture()
 def mock_docker_client():
-    with patch("vystak_provider_docker.resources.docker") as mock_docker, \
-         patch("vystak_provider_docker.resources._wait_for_postgres") as mock_wait, \
-         patch("vystak_provider_docker.resources._sync_postgres_password") as mock_sync:
+    with (
+        patch("vystak_provider_docker.resources.docker") as mock_docker,
+        patch("vystak_provider_docker.resources._wait_for_postgres"),
+        patch("vystak_provider_docker.resources._sync_postgres_password"),
+    ):
         client = MagicMock()
         mock_docker.from_env.return_value = client
         mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
@@ -84,7 +85,7 @@ class TestProvisionSqlite:
         resource = SessionStore(name="sessions", provider=docker_provider, engine="sqlite")
         secrets_path = tmp_path / ".vystak" / "secrets.json"
 
-        result = provision_resource(mock_docker_client, resource, network, secrets_path)
+        provision_resource(mock_docker_client, resource, network, secrets_path)
         mock_docker_client.volumes.create.assert_not_called()
 
 

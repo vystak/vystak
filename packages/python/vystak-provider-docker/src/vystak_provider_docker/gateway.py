@@ -1,12 +1,10 @@
 """Gateway container provisioning for Docker."""
 
 import json
-import shutil
 from pathlib import Path
 
 import docker
 import docker.errors
-
 
 GATEWAY_DOCKERFILE = """\
 FROM python:3.11-slim
@@ -36,6 +34,7 @@ def write_gateway_source(gateway_dir: Path) -> None:
     gateway_dir.mkdir(parents=True, exist_ok=True)
 
     import vystak_gateway
+
     pkg_dir = Path(vystak_gateway.__file__).parent
 
     for filename in ["server.py", "router.py", "store.py", "__init__.py"]:
@@ -44,11 +43,14 @@ def write_gateway_source(gateway_dir: Path) -> None:
             content = src.read_text()
             # Rewrite package imports to local imports for Docker deployment
             content = content.replace("from vystak_gateway.", "from ")
-            content = content.replace("from vystak.schema.openai import", "from openai_types import")
+            content = content.replace(
+                "from vystak.schema.openai import", "from openai_types import"
+            )
             (gateway_dir / filename).write_text(content)
 
     # Bundle OpenAI-compatible schema types
     import vystak.schema.openai as _openai_schema
+
     _openai_src = Path(_openai_schema.__file__)
     if _openai_src.exists():
         (gateway_dir / "openai_types.py").write_text(_openai_src.read_text())
@@ -80,7 +82,9 @@ def build_gateway_image(client, gateway_name: str, gateway_dir: str) -> None:
     client.images.build(path=gateway_dir, tag=image_tag)
 
 
-def provision_gateway(client, gateway_name: str, network, routes_path: str, env: dict, port: int = 8080) -> None:
+def provision_gateway(
+    client, gateway_name: str, network, routes_path: str, env: dict, port: int = 8080
+) -> None:
     """Start or restart a gateway container."""
     container_name = _gateway_container_name(gateway_name)
 

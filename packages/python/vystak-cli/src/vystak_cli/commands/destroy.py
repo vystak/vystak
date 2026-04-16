@@ -12,14 +12,20 @@ from vystak_cli.provider_factory import get_provider
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option("--file", "file_path", default=None, help="Path to agent definition file (legacy)")
 @click.option("--name", "agent_name", default=None, help="Destroy a specific agent by name")
-@click.option("--include-resources", is_flag=True, default=False,
-              help="Also remove backing infrastructure")
-@click.option("--no-wait", is_flag=True, default=False,
-              help="Don't wait for Azure resource deletion to complete")
+@click.option(
+    "--include-resources", is_flag=True, default=False, help="Also remove backing infrastructure"
+)
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    default=False,
+    help="Don't wait for Azure resource deletion to complete",
+)
 def destroy(files, file_path, agent_name, include_resources, no_wait):
     """Stop and remove deployed agents."""
     if agent_name and not files and not file_path:
         from vystak_provider_docker import DockerProvider
+
         provider = DockerProvider()
         click.echo(f"Destroying: {agent_name}")
         provider.destroy(agent_name, include_resources=include_resources, no_wait=no_wait)

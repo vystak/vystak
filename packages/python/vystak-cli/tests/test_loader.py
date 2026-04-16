@@ -1,6 +1,5 @@
 import pytest
 import yaml
-
 from vystak_cli.loader import find_agent_file, load_agent_from_file, load_agents
 
 
@@ -97,7 +96,9 @@ class TestLoadAgents:
         data = {
             "providers": {"anthropic": {"type": "anthropic"}},
             "platforms": {},
-            "models": {"claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}},
+            "models": {
+                "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
+            },
             "agents": [
                 {"name": "a", "model": "claude", "channels": [{"name": "api", "type": "api"}]},
                 {"name": "b", "model": "claude", "channels": [{"name": "api", "type": "api"}]},
@@ -115,7 +116,8 @@ class TestLoadAgents:
             "from vystak.schema.model import Model\n"
             "from vystak.schema.provider import Provider\n"
             "anthropic = Provider(name='anthropic', type='anthropic')\n"
-            "model = Model(name='claude', provider=anthropic, model_name='claude-sonnet-4-20250514')\n"
+            "model = Model(name='claude', provider=anthropic, "
+            "model_name='claude-sonnet-4-20250514')\n"
             "bot_a = Agent(name='bot-a', model=model)\n"
             "bot_b = Agent(name='bot-b', model=model)\n"
         )
@@ -128,7 +130,11 @@ class TestLoadAgents:
         for name in ("a", "b"):
             data = {
                 "name": f"bot-{name}",
-                "model": {"name": "claude", "provider": {"name": "anthropic", "type": "anthropic"}, "model_name": "claude-sonnet-4-20250514"},
+                "model": {
+                    "name": "claude",
+                    "provider": {"name": "anthropic", "type": "anthropic"},
+                    "model_name": "claude-sonnet-4-20250514",
+                },
             }
             (tmp_path / f"{name}.yaml").write_text(yaml.dump(data))
         agents = load_agents([tmp_path / "a.yaml", tmp_path / "b.yaml"])
@@ -139,7 +145,11 @@ class TestLoadAgents:
         subdir.mkdir()
         data = {
             "name": "weather-bot",
-            "model": {"name": "claude", "provider": {"name": "anthropic", "type": "anthropic"}, "model_name": "claude-sonnet-4-20250514"},
+            "model": {
+                "name": "claude",
+                "provider": {"name": "anthropic", "type": "anthropic"},
+                "model_name": "claude-sonnet-4-20250514",
+            },
         }
         (subdir / "vystak.yaml").write_text(yaml.dump(data))
         agents = load_agents([subdir])
@@ -148,15 +158,25 @@ class TestLoadAgents:
 
     def test_base_config_merged(self, tmp_path):
         base = {
-            "providers": {"azure": {"type": "azure", "config": {"location": "eastus2"}}, "anthropic": {"type": "anthropic"}},
+            "providers": {
+                "azure": {"type": "azure", "config": {"location": "eastus2"}},
+                "anthropic": {"type": "anthropic"},
+            },
             "platforms": {"aca": {"type": "container-apps", "provider": "azure"}},
-            "models": {"claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}},
+            "models": {
+                "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
+            },
         }
         (tmp_path / "vystak.base.yaml").write_text(yaml.dump(base))
 
         subdir = tmp_path / "bot"
         subdir.mkdir()
-        agent_data = {"name": "bot", "model": "claude", "platform": "aca", "channels": [{"name": "api", "type": "api"}]}
+        agent_data = {
+            "name": "bot",
+            "model": "claude",
+            "platform": "aca",
+            "channels": [{"name": "api", "type": "api"}],
+        }
         (subdir / "vystak.yaml").write_text(yaml.dump(agent_data))
 
         agents = load_agents([subdir], base_dir=tmp_path)

@@ -1,15 +1,16 @@
 """LogAnalyticsNode — creates a Log Analytics workspace for ACA logging."""
 
+from azure.mgmt.loganalytics.models import Workspace, WorkspaceSku
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
-
-from azure.mgmt.loganalytics.models import Workspace, WorkspaceSku
 
 
 class LogAnalyticsNode(Provisionable):
     """Creates a Log Analytics workspace and retrieves shared keys."""
 
-    def __init__(self, client, rg_name: str, workspace_name: str, location: str, tags: dict | None = None):
+    def __init__(
+        self, client, rg_name: str, workspace_name: str, location: str, tags: dict | None = None
+    ):
         self._client = client
         self._rg_name = rg_name
         self._workspace_name = workspace_name

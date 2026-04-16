@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from vystak.schema.channel import SlackChannel
 from vystak.schema.gateway import ChannelProvider, Gateway
 from vystak.schema.provider import Provider
@@ -10,7 +9,12 @@ from vystak.schema.provider import Provider
 def slack_provider():
     docker = Provider(name="docker", type="docker")
     gw = Gateway(name="main", provider=docker)
-    return ChannelProvider(name="internal-slack", type="slack", gateway=gw, config={"bot_token": "xoxb-test", "app_token": "xapp-test"})
+    return ChannelProvider(
+        name="internal-slack",
+        type="slack",
+        gateway=gw,
+        config={"bot_token": "xoxb-test", "app_token": "xapp-test"},
+    )
 
 
 class TestSlackChannel:
@@ -22,7 +26,14 @@ class TestSlackChannel:
         assert ch.dm is True
 
     def test_create_full(self, slack_provider):
-        ch = SlackChannel(name="support", provider=slack_provider, channels=["#support", "#help"], listen="messages", threads=False, dm=False)
+        ch = SlackChannel(
+            name="support",
+            provider=slack_provider,
+            channels=["#support", "#help"],
+            listen="messages",
+            threads=False,
+            dm=False,
+        )
         assert ch.channels == ["#support", "#help"]
         assert ch.listen == "messages"
         assert ch.threads is False
@@ -33,7 +44,9 @@ class TestSlackChannel:
             SlackChannel(name="support")
 
     def test_serialization_roundtrip(self, slack_provider):
-        ch = SlackChannel(name="support", provider=slack_provider, channels=["#support"], listen="mentions")
+        ch = SlackChannel(
+            name="support", provider=slack_provider, channels=["#support"], listen="mentions"
+        )
         data = ch.model_dump()
         restored = SlackChannel.model_validate(data)
         assert restored == ch

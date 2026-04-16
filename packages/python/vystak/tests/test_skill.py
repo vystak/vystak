@@ -1,5 +1,3 @@
-import pytest
-
 from vystak.schema.skill import Skill, SkillRequirements
 
 
@@ -11,7 +9,11 @@ class TestSkillRequirements:
         assert req.mcp_servers is None
 
     def test_with_values(self):
-        req = SkillRequirements(session_store=True, workspace={"filesystem": True, "terminal": True}, mcp_servers=["github", "filesystem"])
+        req = SkillRequirements(
+            session_store=True,
+            workspace={"filesystem": True, "terminal": True},
+            mcp_servers=["github", "filesystem"],
+        )
         assert req.session_store is True
         assert len(req.mcp_servers) == 2
 
@@ -38,7 +40,12 @@ class TestSkill:
         assert skill.dependencies == ["order-tracking"]
 
     def test_serialization_roundtrip(self):
-        skill = Skill(name="test", tools=["tool_a", "tool_b"], prompt="Do the thing.", requires=SkillRequirements(session_store=True))
+        skill = Skill(
+            name="test",
+            tools=["tool_a", "tool_b"],
+            prompt="Do the thing.",
+            requires=SkillRequirements(session_store=True),
+        )
         data = skill.model_dump()
         restored = Skill.model_validate(data)
         assert restored == skill

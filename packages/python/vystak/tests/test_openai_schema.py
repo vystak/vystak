@@ -1,7 +1,5 @@
 """Tests for OpenAI-compatible schema models."""
 
-import pytest
-
 from vystak.schema.openai import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -31,10 +29,12 @@ class TestModelObject:
         assert m.owned_by == "vystak"
 
     def test_model_list(self):
-        ml = ModelList(data=[
-            ModelObject(id="vystak/a", created=1),
-            ModelObject(id="vystak/b", created=2),
-        ])
+        ml = ModelList(
+            data=[
+                ModelObject(id="vystak/a", created=1),
+                ModelObject(id="vystak/b", created=2),
+            ]
+        )
         assert ml.object == "list"
         assert len(ml.data) == 2
 
@@ -149,10 +149,12 @@ class TestResponse:
 
 class TestError:
     def test_error_response(self):
-        err = ErrorResponse(error=ErrorDetail(
-            message="Agent not found",
-            type="invalid_request_error",
-            param="model",
-            code="model_not_found",
-        ))
+        err = ErrorResponse(
+            error=ErrorDetail(
+                message="Agent not found",
+                type="invalid_request_error",
+                param="model",
+                code="model_not_found",
+            )
+        )
         assert err.error.code == "model_not_found"

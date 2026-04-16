@@ -6,8 +6,11 @@ from vystak_chat.client import ResponseResult, StreamEvent, StreamResult
 class TestDataClasses:
     def test_response_result(self):
         r = ResponseResult(
-            response="hi", response_id="resp-123",
-            input_tokens=5, output_tokens=3, total_tokens=8,
+            response="hi",
+            response_id="resp-123",
+            input_tokens=5,
+            output_tokens=3,
+            total_tokens=8,
         )
         assert r.response == "hi"
         assert r.response_id == "resp-123"

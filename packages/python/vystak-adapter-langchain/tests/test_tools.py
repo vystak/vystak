@@ -1,13 +1,10 @@
 import ast as python_ast
-from pathlib import Path
 
 import pytest
-
 from vystak.schema.agent import Agent
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
 from vystak.schema.skill import Skill
-
 from vystak_adapter_langchain.tools import (
     discover_tools,
     generate_tools_init,
@@ -37,14 +34,14 @@ def tools_dir(tmp_path):
     tools = tmp_path / "tools"
     tools.mkdir()
     (tools / "get_weather.py").write_text(
-        'import requests\n\ndef get_weather(city: str) -> str:\n'
+        "import requests\n\ndef get_weather(city: str) -> str:\n"
         '    """Get current weather for a city."""\n'
         '    return f"Weather in {city}: sunny"\n'
     )
     (tools / "get_time.py").write_text(
-        'from datetime import datetime\n\ndef get_time(timezone: str) -> str:\n'
+        "from datetime import datetime\n\ndef get_time(timezone: str) -> str:\n"
         '    """Get current time in a timezone."""\n'
-        '    return datetime.now().isoformat()\n'
+        "    return datetime.now().isoformat()\n"
     )
     return tools
 
@@ -69,7 +66,11 @@ class TestDiscoverTools:
     def test_no_tools_in_agent(self, tmp_path):
         agent = Agent(
             name="bot",
-            model=Model(name="claude", provider=Provider(name="anthropic", type="anthropic"), model_name="claude-sonnet-4-20250514"),
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
         )
         found, missing = discover_tools(agent, tmp_path)
         assert found == {}
@@ -82,7 +83,7 @@ class TestReadToolFile:
         assert "def get_weather(" in content
 
     def test_missing_function(self, tools_dir):
-        (tools_dir / "bad_tool.py").write_text('def something_else():\n    pass\n')
+        (tools_dir / "bad_tool.py").write_text("def something_else():\n    pass\n")
         with pytest.raises(ValueError, match="get_weather"):
             read_tool_file(tools_dir / "bad_tool.py", "get_weather")
 

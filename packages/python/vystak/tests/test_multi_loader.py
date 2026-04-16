@@ -16,8 +16,18 @@ class TestLoadMultiAgentYaml:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"},
             },
             "agents": [
-                {"name": "bot-a", "model": "claude", "platform": "local", "channels": [{"name": "api", "type": "api"}]},
-                {"name": "bot-b", "model": "claude", "platform": "local", "channels": [{"name": "api", "type": "api"}]},
+                {
+                    "name": "bot-a",
+                    "model": "claude",
+                    "platform": "local",
+                    "channels": [{"name": "api", "type": "api"}],
+                },
+                {
+                    "name": "bot-b",
+                    "model": "claude",
+                    "platform": "local",
+                    "channels": [{"name": "api", "type": "api"}],
+                },
             ],
         }
         agents = load_multi_agent_yaml(data)
@@ -31,8 +41,18 @@ class TestLoadMultiAgentYaml:
             "platforms": {"local": {"type": "docker", "provider": "docker"}},
             "models": {"claude": {"provider": "docker", "model_name": "claude-sonnet-4-20250514"}},
             "agents": [
-                {"name": "a", "model": "claude", "platform": "local", "channels": [{"name": "api", "type": "api"}]},
-                {"name": "b", "model": "claude", "platform": "local", "channels": [{"name": "api", "type": "api"}]},
+                {
+                    "name": "a",
+                    "model": "claude",
+                    "platform": "local",
+                    "channels": [{"name": "api", "type": "api"}],
+                },
+                {
+                    "name": "b",
+                    "model": "claude",
+                    "platform": "local",
+                    "channels": [{"name": "api", "type": "api"}],
+                },
             ],
         }
         agents = load_multi_agent_yaml(data)
@@ -42,7 +62,9 @@ class TestLoadMultiAgentYaml:
         data = {
             "providers": {"anthropic": {"type": "anthropic"}},
             "platforms": {},
-            "models": {"claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}},
+            "models": {
+                "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
+            },
             "agents": [
                 {"name": "a", "model": "claude", "channels": [{"name": "api", "type": "api"}]},
                 {"name": "b", "model": "claude", "channels": [{"name": "api", "type": "api"}]},
@@ -66,29 +88,51 @@ class TestLoadMultiAgentYaml:
             "providers": {"anthropic": {"type": "anthropic"}},
             "platforms": {},
             "models": {},
-            "agents": [{"name": "a", "model": "nonexistent", "channels": [{"name": "api", "type": "api"}]}],
+            "agents": [
+                {"name": "a", "model": "nonexistent", "channels": [{"name": "api", "type": "api"}]}
+            ],
         }
         with pytest.raises(KeyError, match="nonexistent"):
             load_multi_agent_yaml(data)
 
     def test_provider_with_config(self):
         data = {
-            "providers": {"azure": {"type": "azure", "config": {"location": "eastus2", "resource_group": "my-rg"}}},
+            "providers": {
+                "azure": {
+                    "type": "azure",
+                    "config": {"location": "eastus2", "resource_group": "my-rg"},
+                }
+            },
             "platforms": {"aca": {"type": "container-apps", "provider": "azure"}},
             "models": {"claude": {"provider": "azure", "model_name": "claude-sonnet-4-20250514"}},
-            "agents": [{"name": "bot", "model": "claude", "platform": "aca", "channels": [{"name": "api", "type": "api"}]}],
+            "agents": [
+                {
+                    "name": "bot",
+                    "model": "claude",
+                    "platform": "aca",
+                    "channels": [{"name": "api", "type": "api"}],
+                }
+            ],
         }
         agents = load_multi_agent_yaml(data)
         assert agents[0].platform.provider.config["location"] == "eastus2"
 
     def test_inline_model_still_works(self):
         data = {
-            "providers": {}, "platforms": {}, "models": {},
-            "agents": [{
-                "name": "bot",
-                "model": {"name": "claude", "provider": {"name": "anthropic", "type": "anthropic"}, "model_name": "claude-sonnet-4-20250514"},
-                "channels": [{"name": "api", "type": "api"}],
-            }],
+            "providers": {},
+            "platforms": {},
+            "models": {},
+            "agents": [
+                {
+                    "name": "bot",
+                    "model": {
+                        "name": "claude",
+                        "provider": {"name": "anthropic", "type": "anthropic"},
+                        "model_name": "claude-sonnet-4-20250514",
+                    },
+                    "channels": [{"name": "api", "type": "api"}],
+                }
+            ],
         }
         agents = load_multi_agent_yaml(data)
         assert agents[0].model.model_name == "claude-sonnet-4-20250514"

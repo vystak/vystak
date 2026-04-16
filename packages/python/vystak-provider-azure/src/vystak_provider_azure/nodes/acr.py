@@ -1,9 +1,8 @@
 """ACRNode — creates or reuses an Azure Container Registry."""
 
+from azure.mgmt.containerregistry.models import Registry, Sku
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
-
-from azure.mgmt.containerregistry.models import Registry, Sku
 
 
 class ACRNode(Provisionable):
@@ -36,9 +35,7 @@ class ACRNode(Provisionable):
     def provision(self, context: dict) -> ProvisionResult:
         try:
             if self._existing:
-                registry = self._client.registries.get(
-                    self._rg_name, self._registry_name
-                )
+                registry = self._client.registries.get(self._rg_name, self._registry_name)
             else:
                 registry = self._client.registries.begin_create(
                     self._rg_name,
@@ -51,9 +48,7 @@ class ACRNode(Provisionable):
                     ),
                 ).result()
 
-            creds = self._client.registries.list_credentials(
-                self._rg_name, self._registry_name
-            )
+            creds = self._client.registries.list_credentials(self._rg_name, self._registry_name)
 
             return ProvisionResult(
                 name=self.name,

@@ -1,9 +1,7 @@
 import json
-from pathlib import Path
 
 import pytest
 import yaml
-
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType

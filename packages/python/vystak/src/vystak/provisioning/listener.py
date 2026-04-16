@@ -54,7 +54,7 @@ class PrintListener(ProvisionListener):
             print("OK")
 
     def on_error(self, event: ProvisionEvent) -> None:
-        print(f"FAILED")
+        print("FAILED")
         if event.detail:
             print(f"{self._indent}  Error: {event.detail}")
 
@@ -64,4 +64,5 @@ class PrintListener(ProvisionListener):
 
 class NullListener(ProvisionListener):
     """Does nothing. Used when no listener is provided."""
+
     pass

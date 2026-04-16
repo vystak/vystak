@@ -19,6 +19,7 @@ class ResponseResult:
 @dataclass
 class StreamResult:
     """Collected after streaming completes."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -27,7 +28,10 @@ class StreamResult:
 @dataclass
 class StreamEvent:
     """A single event from the stream."""
-    type: str  # "token", "function_call_start", "function_call_args", "function_call_output", "done"
+
+    type: (
+        str  # "token", "function_call_start", "function_call_args", "function_call_output", "done"
+    )
     token: str = ""
     tool: str = ""
     args: str = ""
@@ -37,9 +41,12 @@ class StreamEvent:
 
 
 async def send_response(
-    url: str, message: str, model: str = "",
+    url: str,
+    message: str,
+    model: str = "",
     previous_response_id: str | None = None,
-    user_id: str | None = None, project_id: str | None = None,
+    user_id: str | None = None,
+    project_id: str | None = None,
 ) -> ResponseResult:
     """Send a message via /v1/responses (non-streaming, store=true)."""
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -70,14 +77,17 @@ async def send_response(
 
 
 async def stream_response(
-    url: str, message: str, model: str = "",
+    url: str,
+    message: str,
+    model: str = "",
     previous_response_id: str | None = None,
     result: StreamResult | None = None,
     user_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream via /v1/responses with stream=true."""
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        async with client.stream(
+    async with (
+        httpx.AsyncClient(timeout=120.0) as client,
+        client.stream(
             "POST",
             f"{url}/v1/responses",
             json={
@@ -88,48 +98,49 @@ async def stream_response(
                 "stream": True,
                 "user_id": user_id,
             },
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    yield StreamEvent(type="done")
-                    return
-                try:
-                    data = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
+        ) as response,
+    ):
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                yield StreamEvent(type="done")
+                return
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
 
-                event_type = data.get("type", "")
+            event_type = data.get("type", "")
 
-                if event_type == "response.output_text.delta":
-                    yield StreamEvent(type="token", token=data.get("delta", ""))
+            if event_type == "response.output_text.delta":
+                yield StreamEvent(type="token", token=data.get("delta", ""))
 
-                elif event_type == "response.output_item.added":
-                    item = data.get("item", {})
-                    if item.get("type") == "function_call":
-                        yield StreamEvent(type="function_call_start", tool=item.get("name", ""))
-                    elif item.get("type") == "function_call_output":
-                        yield StreamEvent(type="function_call_output", result=item.get("output", ""))
+            elif event_type == "response.output_item.added":
+                item = data.get("item", {})
+                if item.get("type") == "function_call":
+                    yield StreamEvent(type="function_call_start", tool=item.get("name", ""))
+                elif item.get("type") == "function_call_output":
+                    yield StreamEvent(type="function_call_output", result=item.get("output", ""))
 
-                elif event_type == "response.function_call_arguments.delta":
-                    yield StreamEvent(type="function_call_args", args=data.get("delta", ""))
+            elif event_type == "response.function_call_arguments.delta":
+                yield StreamEvent(type="function_call_args", args=data.get("delta", ""))
 
-                elif event_type == "response.completed":
-                    resp = data.get("response", {})
-                    usage = resp.get("usage") or {}
-                    if result is not None:
-                        result.input_tokens = usage.get("input_tokens", 0)
-                        result.output_tokens = usage.get("output_tokens", 0)
-                        result.total_tokens = usage.get("total_tokens", 0)
-                    yield StreamEvent(
-                        type="done",
-                        response_id=resp.get("id", ""),
-                        usage=usage,
-                    )
-                    return
+            elif event_type == "response.completed":
+                resp = data.get("response", {})
+                usage = resp.get("usage") or {}
+                if result is not None:
+                    result.input_tokens = usage.get("input_tokens", 0)
+                    result.output_tokens = usage.get("output_tokens", 0)
+                    result.total_tokens = usage.get("total_tokens", 0)
+                yield StreamEvent(
+                    type="done",
+                    response_id=resp.get("id", ""),
+                    usage=usage,
+                )
+                return
 
 
 async def get_response(url: str, response_id: str) -> dict | None:
