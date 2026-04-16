@@ -417,7 +417,8 @@ client.chat.completions.create(model="vystak/my-agent", messages=[...])
 - [x] Agent registry — agents auto-register with gateway on deploy
 
 **Documentation:**
-- [ ] Documentation site (VitePress or Starlight)
+- [x] Documentation site scaffold (Docusaurus 3 at `website/`, deployed to GitHub Pages)
+- [ ] Documentation content (writing the actual guides, references, examples)
 - [ ] API reference
 - [ ] Tutorial: "Build your first agent in 5 minutes"
 - [ ] Tutorial: "Multi-agent system with A2A"
