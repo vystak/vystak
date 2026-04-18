@@ -30,3 +30,15 @@ class McpTransport(StrEnum):
     STDIO = "stdio"
     SSE = "sse"
     STREAMABLE_HTTP = "streamable_http"
+
+
+class RuntimeMode(StrEnum):
+    SHARED = "shared"
+    DEDICATED = "dedicated"
+    PER_SESSION = "per-session"
+
+
+class AgentProtocol(StrEnum):
+    A2A_TURN = "a2a-turn"
+    A2A_STREAM = "a2a-stream"
+    MEDIA_BRIDGE = "media-bridge"

@@ -9,4 +9,5 @@ class Platform(NamedModel):
 
     type: str
     provider: Provider
+    namespace: str = "default"
     config: dict = {}

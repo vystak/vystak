@@ -1,10 +1,18 @@
-"""Abstract base classes for framework adapters, platform providers, and channel adapters."""
+"""Abstract base classes for framework adapters, platform providers, and channel plugins."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
+from vystak.schema.platform import Platform
+
+if TYPE_CHECKING:
+    from vystak.provisioning import Provisionable
 
 
 @dataclass
@@ -69,9 +77,28 @@ class PlatformProvider(ABC):
     def get_hash(self, agent_name: str) -> str | None: ...
 
 
-class ChannelAdapter(ABC):
-    @abstractmethod
-    def setup(self, agent: Agent, channel: Channel) -> None: ...
+class ChannelPlugin(ABC):
+    """Contract for a channel type. Registered via entry point `vystak.channels`.
+
+    Implementations produce channel-pod source code, provisioning DAG fragments,
+    thread URNs, and health signals. Core knows nothing about Slack, voice, etc.
+    """
+
+    type: ChannelType
+    default_runtime_mode: RuntimeMode
+    agent_protocol: AgentProtocol
+    config_schema: type[BaseModel]
 
     @abstractmethod
-    def teardown(self, channel: Channel) -> None: ...
+    def generate_code(self, channel: Channel) -> GeneratedCode: ...
+
+    @abstractmethod
+    def provision_nodes(
+        self, channel: Channel, platform: Platform
+    ) -> list["Provisionable"]: ...
+
+    @abstractmethod
+    def thread_name(self, event: dict) -> str: ...
+
+    @abstractmethod
+    def health_check(self, deployment: dict) -> str: ...

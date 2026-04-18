@@ -1,7 +1,8 @@
 import pytest
+from pydantic import BaseModel
 from vystak.providers.base import (
     AgentStatus,
-    ChannelAdapter,
+    ChannelPlugin,
     DeployPlan,
     DeployResult,
     FrameworkAdapter,
@@ -9,6 +10,7 @@ from vystak.providers.base import (
     PlatformProvider,
     ValidationError,
 )
+from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 
 
 class TestSupportingTypes:
@@ -90,18 +92,32 @@ class TestPlatformProviderABC:
         assert provider is not None
 
 
-class TestChannelAdapterABC:
+class TestChannelPluginABC:
     def test_cannot_instantiate(self):
         with pytest.raises(TypeError):
-            ChannelAdapter()
+            ChannelPlugin()
 
     def test_valid_subclass(self):
-        class GoodChannel(ChannelAdapter):
-            def setup(self, agent, channel):
-                pass
+        class NoopConfig(BaseModel):
+            pass
 
-            def teardown(self, channel):
-                pass
+        class GoodPlugin(ChannelPlugin):
+            type = ChannelType.API
+            default_runtime_mode = RuntimeMode.SHARED
+            agent_protocol = AgentProtocol.A2A_TURN
+            config_schema = NoopConfig
 
-        adapter = GoodChannel()
-        assert adapter is not None
+            def generate_code(self, channel):
+                return GeneratedCode(files={}, entrypoint="main.py")
+
+            def provision_nodes(self, channel, platform):
+                return []
+
+            def thread_name(self, event):
+                return "thread:api:default:1"
+
+            def health_check(self, deployment):
+                return "ok"
+
+        plugin = GoodPlugin()
+        assert plugin is not None

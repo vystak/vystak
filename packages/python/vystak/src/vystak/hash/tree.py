@@ -1,10 +1,11 @@
-"""Hash tree composition for agent definitions."""
+"""Hash tree composition for agent and channel definitions."""
 
 import hashlib
 from dataclasses import dataclass
 
 from vystak.hash.hasher import hash_model
 from vystak.schema.agent import Agent
+from vystak.schema.channel import Channel
 
 
 @dataclass
@@ -14,13 +15,22 @@ class AgentHashTree:
     brain: str
     skills: str
     mcp_servers: str
-    channels: str
     workspace: str
     resources: str
     secrets: str
     sessions: str
     memory: str
     services: str
+    root: str
+
+
+@dataclass
+class ChannelHashTree:
+    """Per-section hashes for a channel, enabling partial deploy detection."""
+
+    config: str
+    routes: str
+    runtime: str
     root: str
 
 
@@ -38,12 +48,17 @@ def _hash_optional(item) -> str:
     return hash_model(item)
 
 
+def _hash_str(value: str | None) -> str:
+    if value is None:
+        return hashlib.sha256(b"null").hexdigest()
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 def hash_agent(agent: Agent) -> AgentHashTree:
     """Compute the full hash tree for an agent definition."""
     brain = hash_model(agent.model)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
-    channels = _hash_list(agent.channels)
     workspace = _hash_optional(agent.workspace)
     resources = _hash_list(agent.resources)
     secrets = _hash_list(agent.secrets)
@@ -56,7 +71,6 @@ def hash_agent(agent: Agent) -> AgentHashTree:
             brain,
             skills,
             mcp_servers,
-            channels,
             workspace,
             resources,
             secrets,
@@ -71,12 +85,29 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         brain=brain,
         skills=skills,
         mcp_servers=mcp_servers,
-        channels=channels,
         workspace=workspace,
         resources=resources,
         secrets=secrets,
         sessions=sessions,
         memory=memory,
         services=services,
+        root=root,
+    )
+
+
+def hash_channel(channel: Channel) -> ChannelHashTree:
+    """Compute the full hash tree for a channel definition."""
+    config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()
+    routes = _hash_list(channel.routes)
+    mode = channel.runtime_mode.value if channel.runtime_mode else "default"
+    runtime = _hash_str(f"{channel.type.value}|{mode}")
+
+    sections = "|".join([config, routes, runtime])
+    root = hashlib.sha256(sections.encode()).hexdigest()
+
+    return ChannelHashTree(
+        config=config,
+        routes=routes,
+        runtime=runtime,
         root=root,
     )

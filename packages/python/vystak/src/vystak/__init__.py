@@ -2,14 +2,20 @@
 
 __version__ = "0.1.0"
 
-# Schema models
 # Hash engine
-from vystak.hash import AgentHashTree, hash_agent, hash_dict, hash_model
+from vystak.hash import (
+    AgentHashTree,
+    ChannelHashTree,
+    hash_agent,
+    hash_channel,
+    hash_dict,
+    hash_model,
+)
 
 # Provider ABCs and supporting types
 from vystak.providers import (
     AgentStatus,
-    ChannelAdapter,
+    ChannelPlugin,
     DeployPlan,
     DeployResult,
     FrameworkAdapter,
@@ -33,13 +39,12 @@ from vystak.provisioning import (
 )
 from vystak.schema import (
     Agent,
+    AgentProtocol,
     Cache,
     Channel,
-    ChannelProvider,
     ChannelType,
     Database,
     Embedding,
-    Gateway,
     McpServer,
     McpTransport,
     Model,
@@ -52,12 +57,13 @@ from vystak.schema import (
     Queue,
     Redis,
     Resource,
+    RouteRule,
+    RuntimeMode,
     Secret,
     Service,
     SessionStore,
     Skill,
     SkillRequirements,
-    SlackChannel,
     Sqlite,
     VectorStore,
     Workspace,
@@ -70,13 +76,12 @@ from vystak.schema.loader import dump_agent, load_agent
 __all__ = [
     "__version__",
     "Agent",
+    "AgentProtocol",
     "Cache",
     "Channel",
-    "ChannelProvider",
     "ChannelType",
     "Database",
     "Embedding",
-    "Gateway",
     "McpServer",
     "McpTransport",
     "Model",
@@ -89,24 +94,27 @@ __all__ = [
     "Queue",
     "Redis",
     "Resource",
+    "RouteRule",
+    "RuntimeMode",
     "Secret",
     "Service",
     "SessionStore",
     "Skill",
     "SkillRequirements",
-    "SlackChannel",
     "Sqlite",
     "VectorStore",
     "Workspace",
     "WorkspaceType",
     "AgentHashTree",
+    "ChannelHashTree",
     "hash_agent",
+    "hash_channel",
     "hash_dict",
     "hash_model",
     "dump_agent",
     "load_agent",
     "AgentStatus",
-    "ChannelAdapter",
+    "ChannelPlugin",
     "DeployPlan",
     "DeployResult",
     "FrameworkAdapter",

@@ -1,8 +1,7 @@
 import pytest
 from pydantic import ValidationError
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType, McpTransport, WorkspaceType
+from vystak.schema.common import McpTransport, WorkspaceType
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
@@ -30,7 +29,6 @@ class TestAgent:
         assert agent.name == "bot"
         assert agent.model.model_name == "claude-sonnet-4-20250514"
         assert agent.skills == []
-        assert agent.channels == []
         assert agent.mcp_servers == []
         assert agent.workspace is None
         assert agent.resources == []
@@ -48,10 +46,6 @@ class TestAgent:
                 Skill(name="refund-handling", tools=["lookup_order", "process_refund"]),
                 Skill(name="order-tracking", tools=["get_order_status"]),
             ],
-            channels=[
-                Channel(name="api", type=ChannelType.API),
-                Channel(name="slack", type=ChannelType.SLACK, config={"channel": "#support"}),
-            ],
             mcp_servers=[
                 McpServer(name="github", transport=McpTransport.STDIO, command="github-mcp"),
             ],
@@ -66,12 +60,21 @@ class TestAgent:
             platform=Platform(name="local", type="docker", provider=docker_provider),
         )
         assert len(agent.skills) == 2
-        assert len(agent.channels) == 2
         assert len(agent.mcp_servers) == 1
         assert agent.workspace.filesystem is True
         assert len(agent.resources) == 1
         assert len(agent.secrets) == 1
         assert agent.platform.type == "docker"
+
+    def test_canonical_name_no_platform(self, sonnet):
+        agent = Agent(name="bot", model=sonnet)
+        assert agent.canonical_name == "bot.agents.default"
+
+    def test_canonical_name_with_platform(self, sonnet):
+        docker = Provider(name="docker", type="docker")
+        platform = Platform(name="local", type="docker", provider=docker, namespace="prod")
+        agent = Agent(name="bot", model=sonnet, platform=platform)
+        assert agent.canonical_name == "bot.agents.prod"
 
     def test_model_required(self):
         with pytest.raises(ValidationError):
@@ -82,7 +85,6 @@ class TestAgent:
             name="bot",
             model=sonnet,
             skills=[Skill(name="greeting", tools=["say_hello"])],
-            channels=[Channel(name="api", type=ChannelType.API)],
         )
         data = agent.model_dump()
         restored = Agent.model_validate(data)
@@ -159,7 +161,6 @@ class TestAgentServices:
             sessions=Postgres(provider=docker),
             memory=Postgres(provider=docker),
             services=[Redis(name="cache", provider=docker)],
-            channels=[Channel(name="api", type=ChannelType.API)],
         )
         assert agent.sessions.engine == "postgres"
         assert agent.memory.engine == "postgres"
