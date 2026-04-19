@@ -78,14 +78,27 @@ class TransportContract:
         async with serve_agent("echo.agents.default", handler) as client:
             ref = AgentRef(canonical_name="echo.agents.default")
 
+            # Map correlation_id -> text we sent. After gather, every reply
+            # must be the exact text that was sent *with its own correlation
+            # id* — not merely "some text from the batch".
+            sent_by_cid: dict[str, str] = {}
+
             async def call(text):
                 msg = A2AMessage.from_text(text)
+                sent_by_cid[msg.correlation_id] = text
                 result = await client.send_task(ref, msg, {}, timeout=5)
                 return result.correlation_id, result.text
 
             pairs = await asyncio.gather(*[call(f"m-{i}") for i in range(10)])
-            for _cid, text in pairs:
-                assert text.startswith("m-"), pairs
+
+            # Each reply's body must match the body we sent under the same
+            # correlation id. Catches transports that swap bodies between
+            # concurrent calls even if correlation ids survive.
+            for cid, text in pairs:
+                assert cid in sent_by_cid, f"unknown correlation id: {cid}"
+                assert text == sent_by_cid[cid], (
+                    f"body mismatch for {cid}: sent={sent_by_cid[cid]!r}, got={text!r}"
+                )
             assert len({cid for cid, _ in pairs}) == 10
 
     @pytest.mark.asyncio
@@ -118,9 +131,7 @@ class TransportContract:
         async with serve_agent("s.agents.default", handler) as client:
             ref = AgentRef(canonical_name="s.agents.default")
             events = []
-            async for ev in client.stream_task(
-                ref, A2AMessage.from_text("hi"), {}, timeout=5
-            ):
+            async for ev in client.stream_task(ref, A2AMessage.from_text("hi"), {}, timeout=5):
                 events.append(ev)
             if client.supports_streaming:
                 assert any(ev.type == "token" for ev in events)
