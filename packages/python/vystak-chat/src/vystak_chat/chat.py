@@ -224,6 +224,81 @@ async def _stream_response(
     return stream_result, response_id
 
 
+async def _stream_chat(
+    url: str,
+    model: str,
+    messages: list[dict],
+    agent_name: str,
+) -> tuple[client.StreamResult, str, str]:
+    """Stream a Chat Completions request to a chat channel.
+
+    Returns (StreamResult, assistant_text, response_id). Unlike _stream_response,
+    chat completions don't have function_call events — the chat channel strips
+    A2A thinking/tool_use parts before reaching the client.
+    """
+    stream_result = client.StreamResult()
+    tokens_buf: list[str] = []
+    has_output = False
+    status_line_shown = False
+    response_id = ""
+
+    console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
+    status_line_shown = True
+
+    try:
+        async for event in client.stream_chat_completion(
+            url, model=model, messages=messages, result=stream_result
+        ):
+            if event.type == "token":
+                if status_line_shown:
+                    console.print(" " * 60, end="\r")
+                    status_line_shown = False
+                has_output = True
+                token = event.token if isinstance(event.token, str) else str(event.token)
+                tokens_buf.append(token)
+
+            elif event.type == "done":
+                if event.response_id:
+                    response_id = event.response_id
+                if status_line_shown:
+                    console.print(" " * 60, end="\r")
+                    status_line_shown = False
+                if has_output:
+                    console.print(f"[agent]{agent_name}[/agent]")
+                    console.print(Markdown("".join(tokens_buf)))
+
+        if not has_output:
+            if status_line_shown:
+                console.print(" " * 60, end="\r")
+            invoke_result = await client.send_chat_completion(
+                url, model=model, messages=messages
+            )
+            console.print(f"[agent]{agent_name}[/agent]")
+            console.print(Markdown(invoke_result.response))
+            stream_result.input_tokens = invoke_result.input_tokens
+            stream_result.output_tokens = invoke_result.output_tokens
+            stream_result.total_tokens = invoke_result.total_tokens
+            response_id = invoke_result.response_id
+            tokens_buf.append(invoke_result.response)
+
+    except Exception:
+        if status_line_shown:
+            console.print(" " * 60, end="\r")
+        invoke_result = await client.send_chat_completion(
+            url, model=model, messages=messages
+        )
+        console.print(f"[agent]{agent_name}[/agent]")
+        console.print(Markdown(invoke_result.response))
+        stream_result.input_tokens = invoke_result.input_tokens
+        stream_result.output_tokens = invoke_result.output_tokens
+        stream_result.total_tokens = invoke_result.total_tokens
+        response_id = invoke_result.response_id
+        tokens_buf.append(invoke_result.response)
+
+    assistant_text = "".join(tokens_buf)
+    return stream_result, assistant_text, response_id
+
+
 class ChatREPL:
     """Interactive chat REPL with slash commands."""
 
@@ -238,6 +313,11 @@ class ChatREPL:
         self._total_output_tokens: int = 0
         self._last_input_tokens: int = 0
         self._last_output_tokens: int = 0
+        # Chat-channel mode: when connected to a vystak-channel-chat endpoint
+        # (OpenAI /v1/chat/completions) rather than a direct agent (/v1/responses).
+        self._is_chat_channel: bool = False
+        self._available_models: list[str] = []
+        self._history: list[dict] = []  # OpenAI messages list for chat-channel mode
 
     @property
     def connected(self) -> bool:
@@ -260,9 +340,11 @@ class ChatREPL:
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column(style="cyan")
         table.add_column()
-        table.add_row("/connect <url>", "Connect to an agent by URL")
+        table.add_row("/connect <url>", "Connect to an agent or chat channel by URL")
         table.add_row("/use <name>", "Connect to a saved agent")
         table.add_row("/gateway <url>", "Discover agents from a gateway")
+        table.add_row("/models", "Pick a model on a chat channel")
+        table.add_row("/model <name>", "Switch model on a chat channel")
         table.add_row("/agents", "List saved agents")
         table.add_row("/agents add <name> <url>", "Save an agent")
         table.add_row("/agents remove <name>", "Remove a saved agent")
@@ -301,9 +383,18 @@ class ChatREPL:
         health_info = await client.health(url)
 
         if health_info and "routes" in health_info:
-            # This is a gateway — auto-discover agents and pick one
+            # Legacy gateway — auto-discover agents and pick one
             console.print(f"[dim]Detected gateway at {url}[/dim]")
             await self._cmd_gateway(url)
+            return
+
+        if (
+            health_info
+            and isinstance(health_info.get("agents"), list)
+            and health_info.get("status") == "ok"
+        ):
+            # vystak-channel-chat: OpenAI-compatible endpoint fronting N agents.
+            await self._connect_chat_channel(url, health_info)
             return
 
         if health_info:
@@ -317,9 +408,51 @@ class ChatREPL:
         self._agent_url = url
         self._model = f"vystak/{agent_name}"
         self._previous_response_id = None
+        self._is_chat_channel = False
+        self._history = []
+        self._available_models = []
 
         # Auto-save the agent
         add_agent(agent_name, url)
+
+    async def _connect_chat_channel(self, url: str, health_info: dict):
+        """Connect to a vystak-channel-chat endpoint (OpenAI chat completions)."""
+        models_data = await client.list_models(url)
+        model_ids = [m.get("id", "") for m in models_data if m.get("id")]
+
+        if not model_ids:
+            # Fall back to /health.agents if /v1/models didn't return anything usable
+            model_ids = [
+                f"vystak/{name}" for name in health_info.get("agents", []) if isinstance(name, str)
+            ]
+
+        if not model_ids:
+            console.print(f"[error]Chat channel at {url} has no routed agents[/error]")
+            return
+
+        default_model = model_ids[0]
+        agent_name = default_model.removeprefix("vystak/")
+
+        self._agent_url = url
+        self._agent_name = agent_name
+        self._model = default_model
+        self._is_chat_channel = True
+        self._history = []
+        self._previous_response_id = None
+        self._available_models = model_ids
+
+        console.print(
+            f"[success]Connected to chat channel at {url}[/success]"
+        )
+        agents_list = ", ".join(
+            f"[agent]{m.removeprefix('vystak/')}[/agent]" for m in model_ids
+        )
+        console.print(f"[dim]Routed agents:[/dim] {agents_list}")
+        console.print(
+            f"[dim]Active model:[/dim] [agent]{default_model}[/agent]  "
+            f"[system](/models to switch)[/system]"
+        )
+        add_agent(f"chat@{agent_name}", url)
 
     async def _cmd_use(self, args: str):
         name = args.strip()
@@ -534,6 +667,10 @@ class ChatREPL:
                 await self._cmd_agents(args)
             case "gateway":
                 await self._cmd_gateway(args)
+            case "models":
+                await self._cmd_models(args)
+            case "model":
+                await self._cmd_model(args)
             case "sessions":
                 await self._cmd_sessions(args)
             case "resume":
@@ -545,6 +682,87 @@ class ChatREPL:
             case _:
                 console.print(f"[error]Unknown: /{cmd}[/error]  [system]Type /help[/system]")
 
+    async def _cmd_models(self, args: str):
+        """List models from the connected chat channel; offer picker."""
+        if not self._is_chat_channel or not self._agent_url:
+            console.print(
+                "[warning]/models only applies to vystak-channel-chat connections. "
+                "Use /connect <chat-url> first.[/warning]"
+            )
+            return
+
+        models_data = await client.list_models(self._agent_url)
+        model_ids = [m.get("id", "") for m in models_data if m.get("id")]
+        if not model_ids:
+            model_ids = self._available_models
+
+        if not model_ids:
+            console.print("[warning]No models available on this chat channel[/warning]")
+            return
+
+        self._available_models = model_ids
+
+        from vystak_chat.picker import pick
+
+        items = [
+            {
+                "label": (
+                    f"{m.removeprefix('vystak/')}"
+                    f"{' (active)' if m == self._model else ''}"
+                ),
+                "detail": m,
+                "model": m,
+            }
+            for m in model_ids
+        ]
+        selected = await pick("Models", items)
+        if selected is None:
+            return
+        self._switch_model(selected["model"])
+
+    async def _cmd_model(self, args: str):
+        """Switch the active model within the current chat channel: /model <name>."""
+        name = args.strip()
+        if not name:
+            console.print(
+                f"[system]Active model:[/system] [agent]{self._model or 'none'}[/agent]"
+            )
+            if self._available_models:
+                console.print(
+                    "[system]Available:[/system] "
+                    + ", ".join(m for m in self._available_models)
+                )
+            return
+
+        if not self._is_chat_channel:
+            console.print(
+                "[warning]/model only applies to vystak-channel-chat connections.[/warning]"
+            )
+            return
+
+        # Accept either "vystak/weather-agent" or plain "weather-agent"
+        candidate = name if name.startswith("vystak/") else f"vystak/{name}"
+        if candidate not in self._available_models:
+            # Refresh from server in case new agents were deployed
+            models_data = await client.list_models(self._agent_url or "")
+            self._available_models = [m.get("id", "") for m in models_data if m.get("id")]
+
+        if candidate not in self._available_models:
+            console.print(
+                f"[error]Unknown model '{name}'.[/error] "
+                f"[system]Available: {', '.join(self._available_models) or '(none)'}[/system]"
+            )
+            return
+
+        self._switch_model(candidate)
+
+    def _switch_model(self, model: str) -> None:
+        self._model = model
+        self._agent_name = model.removeprefix("vystak/")
+        self._history = []  # fresh conversation per agent switch
+        self._previous_response_id = None
+        console.print(f"[success]Switched to {model}[/success]")
+
     async def _handle_message(self, message: str):
         if not self.connected:
             console.print("[warning]Not connected. /connect <url> or /use <name>[/warning]")
@@ -553,14 +771,27 @@ class ChatREPL:
         try:
             console.print("\n[user]You[/user]")
             console.print(message)
-            result, response_id = await _stream_response(
-                self._agent_url,
-                message,
-                self._agent_name,
-                model=self._model,
-                previous_response_id=self._previous_response_id,
-                user_id=self._user_id,
-            )
+
+            if self._is_chat_channel:
+                self._history.append({"role": "user", "content": message})
+                result, assistant_text, response_id = await _stream_chat(
+                    self._agent_url,
+                    self._model,
+                    self._history,
+                    self._agent_name,
+                )
+                if assistant_text:
+                    self._history.append({"role": "assistant", "content": assistant_text})
+            else:
+                result, response_id = await _stream_response(
+                    self._agent_url,
+                    message,
+                    self._agent_name,
+                    model=self._model,
+                    previous_response_id=self._previous_response_id,
+                    user_id=self._user_id,
+                )
+
             if response_id:
                 self._previous_response_id = response_id
             self._last_input_tokens = result.input_tokens
@@ -678,18 +909,19 @@ def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None =
     asyncio.run(_run())
 
 
-def run_oneshot(url: str | None = None, message: str = ""):
+def run_oneshot(
+    url: str | None = None, message: str = "", model_override: str | None = None
+):
     """Send a single message and exit. For scripting/piping."""
     from vystak_chat.config import list_agents
 
     async def _run():
-        # Resolve URL
         agent_url = url
         agent_name = "agent"
         model = ""
+        is_chat_channel = False
 
         if not agent_url:
-            # Try first saved agent
             agents = list_agents()
             if agents:
                 agent_url = agents[0]["url"]
@@ -705,7 +937,6 @@ def run_oneshot(url: str | None = None, message: str = ""):
             health_info = await client.health(agent_url)
             if health_info:
                 if "routes" in health_info:
-                    # Gateway detected — use gateway URL with model routing
                     routes = await client.gateway_routes(agent_url)
                     if routes:
                         agent_name = routes[0].get("agent_name", "agent")
@@ -714,17 +945,59 @@ def run_oneshot(url: str | None = None, message: str = ""):
                     else:
                         console.print("[error]Gateway has no agents[/error]")
                         raise SystemExit(1)
+                elif (
+                    isinstance(health_info.get("agents"), list)
+                    and health_info.get("status") == "ok"
+                ):
+                    # vystak-channel-chat endpoint.
+                    is_chat_channel = True
+                    models_data = await client.list_models(agent_url)
+                    model_ids = [m.get("id", "") for m in models_data if m.get("id")]
+                    if not model_ids:
+                        model_ids = [
+                            f"vystak/{n}"
+                            for n in health_info.get("agents", [])
+                            if isinstance(n, str)
+                        ]
+
+                    if model_override:
+                        candidate = (
+                            model_override
+                            if model_override.startswith("vystak/")
+                            else f"vystak/{model_override}"
+                        )
+                        if candidate not in model_ids:
+                            console.print(
+                                f"[error]Model '{model_override}' not found. "
+                                f"Available: {', '.join(model_ids) or '(none)'}[/error]"
+                            )
+                            raise SystemExit(1)
+                        model = candidate
+                    elif model_ids:
+                        model = model_ids[0]
+                    else:
+                        console.print("[error]Chat channel has no routed agents[/error]")
+                        raise SystemExit(1)
+                    agent_name = model.removeprefix("vystak/")
+                    console.print(
+                        f"[dim]Chat channel detected. Using {agent_name}[/dim]"
+                    )
                 else:
                     agent_name = health_info.get("agent", "agent")
                     model = ""
 
-        result, _ = await _stream_response(
-            agent_url, message, agent_name, model=model, user_id=getpass.getuser()
-        )
-
-        if result.total_tokens:
-            console.print(
-                f"\n[dim]tokens: {result.input_tokens} in / {result.output_tokens} out[/dim]"
+        if is_chat_channel:
+            _, _, _ = await _stream_chat(
+                agent_url, model, [{"role": "user", "content": message}], agent_name
             )
+        else:
+            result, _ = await _stream_response(
+                agent_url, message, agent_name, model=model, user_id=getpass.getuser()
+            )
+            if result.total_tokens:
+                console.print(
+                    f"\n[dim]tokens: {result.input_tokens} in"
+                    f" / {result.output_tokens} out[/dim]"
+                )
 
     asyncio.run(_run())

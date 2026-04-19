@@ -65,6 +65,43 @@ async def list_models():
     }
 
 
+def _coerce_text(value) -> str:
+    """LangGraph sometimes packs content as a list of blocks. Flatten to a string."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                if item.get("type") and item["type"] != "text":
+                    continue
+                inner = item.get("text", "")
+                if isinstance(inner, str) and inner:
+                    out.append(inner)
+        return "".join(out)
+    return str(value)
+
+
+def _extract_text(a2a_resp: dict) -> str:
+    """Return the final text response from an A2A tasks/send payload."""
+    result = a2a_resp.get("result", {}) or {}
+    status = result.get("status", {}) or {}
+    status_message = status.get("message", {}) or {}
+    parts = status_message.get("parts", []) or []
+    collected: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") and part.get("type") != "text":
+            continue
+        collected.append(_coerce_text(part.get("text", "")))
+    return "".join(collected)
+
+
 def _pick_last_user(messages: list[ChatMessage]) -> str:
     for msg in reversed(messages):
         if msg.role == "user" and msg.content:
@@ -117,13 +154,7 @@ async def chat_completions(request: ChatCompletionRequest):
         resp = await client.post(f"{agent_url}/a2a", json=a2a_request)
         a2a_resp = resp.json()
 
-    response_text = ""
-    result = a2a_resp.get("result", {})
-    status = result.get("status", {})
-    status_message = status.get("message", {})
-    parts = status_message.get("parts", [])
-    if parts:
-        response_text = parts[0].get("text", "")
+    response_text = _extract_text(a2a_resp)
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -173,6 +204,7 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
         }
         return f"data: {json.dumps(payload)}\\n\\n"
 
+    finished = False
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", f"{agent_url}/a2a", json=a2a_request) as resp:
@@ -187,13 +219,22 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
                     result = event.get("result", {})
                     artifact = result.get("artifact") or {}
                     for part in artifact.get("parts", []):
-                        text_part = part.get("text", "")
+                        if not isinstance(part, dict):
+                            continue
+                        # A2A artifact parts can be text, thinking, tool_use,
+                        # input_json_delta, etc. (LangGraph streams all event
+                        # types). Only text is meaningful content for an
+                        # OpenAI Chat Completions client — drop the rest.
+                        if part.get("type") and part.get("type") != "text":
+                            continue
+                        text_part = _coerce_text(part.get("text", ""))
                         if text_part:
                             yield _chunk({"content": text_part})
 
                     if result.get("final"):
                         yield _chunk({}, finish_reason="stop")
                         yield "data: [DONE]\\n\\n"
+                        finished = True
                         return
     except httpx.HTTPError as e:
         err = {
@@ -205,6 +246,15 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
         }
         yield f"data: {json.dumps(err)}\\n\\n"
         yield "data: [DONE]\\n\\n"
+        finished = True
+        return
+    finally:
+        if not finished:
+            # Agent closed the stream without a terminal `final: true` event
+            # (common when LangGraph ends without emitting the A2A sentinel).
+            # Still emit finish + [DONE] so OpenAI clients don't hang.
+            yield _chunk({}, finish_reason="stop")
+            yield "data: [DONE]\\n\\n"
 
 
 if __name__ == "__main__":
