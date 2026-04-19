@@ -8,7 +8,7 @@ in-process representation used by the transport ABC and the A2AHandler.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -63,7 +63,7 @@ class A2AMessage(BaseModel):
 class A2AEvent(BaseModel):
     """A single streaming event emitted by `tasks/sendSubscribe`."""
 
-    type: str  # "token" | "status" | "tool_call" | "tool_result" | "final"
+    type: Literal["token", "status", "tool_call", "tool_result", "final"]
     text: str | None = None
     data: dict[str, Any] | None = None
     final: bool = False

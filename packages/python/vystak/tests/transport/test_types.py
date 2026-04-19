@@ -26,14 +26,18 @@ class TestA2AMessage:
         assert m.role == "user"
         assert m.parts == [{"text": "hello"}]
 
-    def test_with_metadata(self):
+    def test_with_correlation_id(self):
         m = A2AMessage.from_text("hi", correlation_id="c-1")
         assert m.correlation_id == "c-1"
 
     def test_correlation_defaults_to_uuid(self):
+        import uuid
+
         m = A2AMessage.from_text("hi")
-        assert m.correlation_id is not None
-        assert len(m.correlation_id) > 0
+        # Must parse as a UUID, and two calls must produce different IDs.
+        uuid.UUID(m.correlation_id)
+        m2 = A2AMessage.from_text("hi")
+        assert m.correlation_id != m2.correlation_id
 
 
 class TestA2AEvent:
@@ -46,6 +50,10 @@ class TestA2AEvent:
     def test_final(self):
         e = A2AEvent(type="final", text="done", final=True)
         assert e.final is True
+
+    def test_invalid_event_type_rejected(self):
+        with pytest.raises(ValidationError):
+            A2AEvent(type="bogus")
 
 
 class TestA2AResult:
