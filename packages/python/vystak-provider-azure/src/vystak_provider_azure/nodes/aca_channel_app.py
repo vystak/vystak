@@ -1,5 +1,6 @@
 """AzureChannelAppNode — builds, pushes, and deploys a channel as an Azure Container App."""
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -92,7 +93,17 @@ class AzureChannelAppNode(Provisionable):
             # ----------------------------------------------------------
             # 2. Build and push Docker image to ACR
             # ----------------------------------------------------------
-            image_tag = f"{login_server}/channel-{self._channel.name}:{self._plan.target_hash}"
+            # Include a hash of the plugin's generated code in the image tag so
+            # ACA sees a new revision when the plugin's server template changes
+            # even if the Channel's own hash (config/routes) stays the same.
+            items = sorted(self._generated_code.files.items())
+            code_digest = hashlib.sha256(
+                "\n".join(f"{name}:{content}" for name, content in items).encode()
+            ).hexdigest()[:12]
+            image_tag = (
+                f"{login_server}/channel-{self._channel.name}"
+                f":{self._plan.target_hash[:16]}-{code_digest}"
+            )
 
             self.emit("Building channel image", "linux/amd64")
             subprocess.run(
