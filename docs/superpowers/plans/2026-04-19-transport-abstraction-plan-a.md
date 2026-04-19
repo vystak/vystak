@@ -3381,28 +3381,172 @@ works — they short-circuit when the new shape is detected."
 
 ---
 
-### Task 18: Azure provider wires `TransportPlugin`
+### Task 18: Azure provider wires `TransportPlugin` (realigned, minimal scope)
+
+**Realigned scope (2026-04-19):** Azure ACA's container-app ingress FQDN is NOT deterministic before the managed environment exists — the `defaultDomain` includes a random slug Azure assigns on env creation. Unlike Docker where peer URLs are fully predictable from the workspace definition, Azure peer URLs require a post-env lookup. For v1, Task 18 does the minimum: signature parity with Docker (so the CLI can call apply uniformly) and `VYSTAK_TRANSPORT_TYPE` env injection. **`VYSTAK_ROUTES_JSON` is left empty on Azure in v1** — users continue using the existing manual `export WEATHER_AGENT_URL=...` workaround for Azure multi-agent setups. Proper Azure peer-route support is a follow-up (likely a two-phase deploy that picks up env.defaultDomain after first deploy).
 
 **Files:**
 - Modify: `packages/python/vystak-provider-azure/src/vystak_provider_azure/provider.py`
-- Modify: provider tests
+- Modify: `packages/python/vystak-provider-azure/src/vystak_provider_azure/nodes/container_app.py` (or wherever `ContainerAppNode` lives — verify with grep)
+- Modify: `packages/python/vystak-provider-azure/tests/` — update tests that broke due to signature changes
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — already passes `peer_routes=None` gracefully via the try/except in Task 17c; only minor adjustment if needed
 
-Follow the exact same pattern as Task 17:
+---
 
-- [ ] **Step 1: Same transport-plugin registry.**
-- [ ] **Step 2: Resolve `transport_plugin` in `apply()`.**
-- [ ] **Step 3: Merge `transport_env` into every container app's environment; inject `VYSTAK_ROUTES_JSON`.**
-- [ ] **Step 4: For HTTP, emit the ACA FQDN pattern for each agent's address: `https://{slug(name)}-{slug(ns)}.{region}.azurecontainerapps.io/a2a`.** Add this to `HttpTransportPlugin.resolve_address_for` — or better, accept the FQDN from the `ContainerAppNode`'s output and look it up post-provision. For this plan, add a `platform_region` kwarg to `resolve_address_for` and derive from `platform.region` on Azure.
-- [ ] **Step 5: Run azure-provider tests.**
-- [ ] **Step 6: Commit.**
+- [ ] **Step 1: Locate and read `ContainerAppNode`**
 
 ```bash
-git add packages/python/vystak-provider-azure/
-git commit -m "feat(provider-azure): wire TransportPlugin through apply()
+grep -rn "class ContainerAppNode" packages/python/vystak-provider-azure/
+```
 
-Azure provider adopts the same TransportPlugin resolution as the Docker
-provider. For HTTP transport, container app FQDNs are emitted into the
-VYSTAK_ROUTES_JSON address map using existing ACA naming conventions."
+Read the full class; identify where container-app environment variables are built. Currently it's likely inside the `provision()` method where a `Container` or `ContainerApp` CRD spec is constructed.
+
+- [ ] **Step 2: Add `peer_routes_json` kwarg to `ContainerAppNode`**
+
+Add a keyword-only constructor parameter with a safe default:
+
+```python
+def __init__(
+    self,
+    *,
+    aca_client,
+    docker_client,
+    rg_name,
+    agent,
+    generated_code,
+    plan,
+    platform_config,
+    peer_routes_json: str = "{}",
+):
+    ...
+    self._peer_routes_json = peer_routes_json
+```
+
+(If the existing `__init__` is positional, convert to keyword-only with `*,` or add `peer_routes_json` at the end with a default. Match the existing style.)
+
+- [ ] **Step 3: Inject transport env vars into the container-app env**
+
+Inside `provision()` where container `env` list is built, merge two new entries. If the existing code uses Azure SDK's `EnvironmentVar(name=..., value=...)`:
+
+```python
+env_vars.append(
+    EnvironmentVar(name="VYSTAK_TRANSPORT_TYPE", value=self._agent.platform.transport.type)
+)
+env_vars.append(
+    EnvironmentVar(name="VYSTAK_ROUTES_JSON", value=self._peer_routes_json)
+)
+```
+
+If the existing code uses plain dicts, match that pattern instead.
+
+- [ ] **Step 4: Thread the kwarg through `AzureProvider.apply()`**
+
+In `provider.py`, update the `apply()` signature:
+
+```python
+def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
+```
+
+When constructing `ContainerAppNode(...)` inside, pass:
+
+```python
+ContainerAppNode(
+    aca_client=aca_client,
+    docker_client=docker_client,
+    rg_name=rg_name,
+    agent=self._agent,
+    generated_code=self._generated_code,
+    plan=plan,
+    platform_config=cfg,
+    peer_routes_json=peer_routes or "{}",
+)
+```
+
+- [ ] **Step 5: Flip `apply_channel()`'s route-shape annotation**
+
+```python
+def apply_channel(
+    self,
+    plan: DeployPlan,
+    channel: Channel,
+    resolved_routes: dict[str, dict[str, str]],
+) -> DeployResult:
+```
+
+The existing body calls `plugin.generate_code(channel, resolved_routes)` — the plugin signatures were already flipped in Task 17b. Just update the annotation.
+
+Also verify the Azure channel-app node (`AzureChannelAppNode` or similar) receives the `generated_code` from the plugin correctly. Spot-check `grep -rn "class AzureChannelAppNode\|apply_channel" packages/python/vystak-provider-azure/` to locate and confirm the shape flows correctly.
+
+- [ ] **Step 6: `HttpTransportPlugin.resolve_address_for` returns Docker-style URL — leaves Azure paths empty**
+
+No changes to `HttpTransportPlugin.resolve_address_for`. On Azure, when the CLI attempts to build `peer_routes` for an agent on an Azure platform, it will produce URLs shaped like `http://{slug(name)}-{slug(ns)}:8000/a2a` — which is **wrong for Azure**. But the generated agent server uses `_DEFAULT_CLIENT`'s routes only when `ask_agent(...)` is called; if the user isn't calling peer agents (single-agent deployments) or is manually exporting `TIME_AGENT_URL`-style env vars for multi-agent (the existing workaround), this wrongness is inert.
+
+**Document the limitation**: add a comment in `apply.py`'s agent loop:
+
+```python
+# TODO: v1 limitation — build_routes_json produces Docker-style URLs.
+# For Azure multi-agent setups, peers still require manual env-var export
+# (e.g. TIME_AGENT_URL=https://time-agent-prod.<env-domain>/a2a).
+# Proper Azure peer-route support: looks up env.defaultDomain post-deploy
+# and does a second-pass container update. Follow-up task.
+peer_routes = ...
+```
+
+Alternatively, special-case Azure in the CLI: skip `build_routes_json` and pass `peer_routes=None` when the platform provider is Azure. This is cleaner:
+
+```python
+peer_routes: str | None = None
+if agent.platform is not None and agent.platform.provider.type == "docker":
+    try:
+        plugin = get_transport_plugin(agent.platform.transport.type)
+        peer_routes = build_routes_json(list(defs.agents), plugin, agent.platform)
+    except Exception:
+        pass
+```
+
+(Currently Task 17c's code is provider-agnostic — tighten to `provider.type == "docker"` explicitly so we don't silently ship broken URLs on Azure.)
+
+- [ ] **Step 7: Update azure-provider tests**
+
+```bash
+uv run pytest packages/python/vystak-provider-azure/tests/ -v
+```
+
+Fix any assertions that break due to:
+- `ContainerAppNode` kwarg-only / new param (constructor calls).
+- `AzureProvider.apply` / `apply_channel` new signatures.
+- Tests that assert against environment-variable lists now including `VYSTAK_TRANSPORT_TYPE` and `VYSTAK_ROUTES_JSON`.
+
+- [ ] **Step 8: Update CLI test if needed**
+
+If Task 17c's CLI test mocks `provider.apply(...)`, verify the mock still matches. If Step 6's Docker-only guard is added, test the Azure skip path.
+
+- [ ] **Step 9: Final gate**
+
+```bash
+just lint-python && just test-python
+```
+
+All gates green before commit.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add packages/python/vystak-provider-azure/ \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py
+git commit -m "feat(provider-azure): thread TransportPlugin signature parity with Docker
+
+AzureProvider.apply() accepts peer_routes kwarg (Docker parity).
+apply_channel() signature flipped to dict[str, dict[str, str]].
+ContainerAppNode injects VYSTAK_TRANSPORT_TYPE into every container app
+so the generated server's transport bootstrap activates correctly.
+
+Known limitation (documented in apply.py): Azure peer-route URL
+population is deferred to a follow-up task because ACA's environment
+default_domain is only known post-deploy. For v1, Azure multi-agent
+setups continue using the existing manual env-var export workaround
+(TIME_AGENT_URL=..., WEATHER_AGENT_URL=...). Docker multi-agent gets
+the full peer_routes treatment from Task 17."
 ```
 
 ---
