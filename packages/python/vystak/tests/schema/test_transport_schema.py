@@ -55,6 +55,19 @@ class TestTransport:
         t = Transport(name="bus", type="nats")
         assert t.canonical_name == "bus.transports.default"
 
+    def test_mismatched_config_type_rejected(self):
+        with pytest.raises(ValidationError, match="config.type"):
+            Transport(name="bus", type="nats", config=HttpConfig())
+
+    def test_matching_config_type_ok(self):
+        t = Transport(name="bus", type="nats", config=NatsConfig())
+        assert t.type == "nats"
+        assert t.config.type == "nats"
+
+    def test_no_config_ok(self):
+        t = Transport(name="bus", type="http")
+        assert t.config is None
+
 
 class TestNatsConfig:
     def test_defaults(self):
@@ -64,6 +77,10 @@ class TestNatsConfig:
         assert c.subject_prefix == "vystak"
         assert c.stream_name is None
         assert c.max_message_size_mb == 1
+
+    def test_max_message_size_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            NatsConfig(max_message_size_mb=0)
 
 
 class TestServiceBusConfig:
@@ -89,3 +106,4 @@ class TestTransportConnection:
     def test_byo(self):
         c = TransportConnection(url_env="FOO_URL", credentials_secret="foo-creds")
         assert c.url_env == "FOO_URL"
+        assert c.credentials_secret == "foo-creds"
