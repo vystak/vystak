@@ -10,18 +10,72 @@ SERVER_PY = '''\
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
 
-import httpx
 import uvicorn
 from fastapi import FastAPI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
+logger = logging.getLogger("vystak.channel.slack")
+
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
 RULES_PATH = Path(os.environ.get("RULES_PATH", "/app/rules.json"))
+
+
+def _load_routes_raw() -> dict:
+    """Load the transport route table.
+
+    Canonical shape (Task 14+):
+        VYSTAK_ROUTES_JSON={"<short>": {"canonical": "...", "address": "..."}}
+
+    Fallback (pre-Task-17 providers still emit `routes.json` with the old
+    `{short: URL}` map; we convert it here). Task 17/18 will rewrite the
+    providers to populate the env var directly and drop the fallback.
+    """
+    env_raw = os.environ.get("VYSTAK_ROUTES_JSON")
+    if env_raw:
+        return json.loads(env_raw)
+
+    if ROUTES_PATH.exists():
+        logger.warning(
+            "Using routes.json fallback; VYSTAK_ROUTES_JSON not set"
+        )
+        legacy = json.loads(ROUTES_PATH.read_text())
+        converted: dict = {}
+        for short, value in legacy.items():
+            if isinstance(value, dict) and "canonical" in value and "address" in value:
+                # Already in the new shape — passthrough.
+                converted[short] = value
+            else:
+                # Old shape: short → URL. Derive a canonical name. Wrong for
+                # non-default namespaces, but acceptable during migration.
+                converted[short] = {
+                    "canonical": f"{short}.agents.default",
+                    "address": value,
+                }
+        return converted
+
+    return {}
+
+
+_ROUTES_RAW: dict = _load_routes_raw()
+
+# Short-name → canonical-name map for AgentClient.
+_client_routes: dict[str, str] = {
+    short: entry["canonical"] for short, entry in _ROUTES_RAW.items()
+}
+# Canonical-name → wire-address map for HttpTransport.
+_http_routes: dict[str, str] = {
+    entry["canonical"]: entry["address"] for entry in _ROUTES_RAW.values()
+}
+# Short-name → wire-address map kept for /health listings (backward compatible).
+ROUTES: dict[str, str] = {
+    short: entry["address"] for short, entry in _ROUTES_RAW.items()
+}
 
 
 def _load_json(path: Path, default):
@@ -30,7 +84,6 @@ def _load_json(path: Path, default):
     return json.loads(path.read_text())
 
 
-ROUTES: dict[str, str] = _load_json(ROUTES_PATH, {})
 RULES: list[dict] = _load_json(RULES_PATH, [])
 
 
@@ -56,29 +109,46 @@ def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user
     return f"slack:{channel}:{ts}"
 
 
-async def _forward_to_agent(agent_url: str, text: str, session_id: str) -> str:
-    a2a_request = {
-        "jsonrpc": "2.0",
-        "method": "tasks/send",
-        "id": 1,
-        "params": {
-            "id": session_id,
-            "sessionId": session_id,
-            "message": {"role": "user", "parts": [{"text": text}]},
-        },
-    }
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{agent_url}/a2a", json=a2a_request)
-        payload = resp.json()
-    result = payload.get("result", {})
-    parts = result.get("status", {}).get("message", {}).get("parts", [])
-    return parts[0].get("text", "") if parts else ""
-
-
 BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
 
 slack_app = AsyncApp(token=BOT_TOKEN)
+
+# --- Transport bootstrap ---
+# Install the process-level AgentClient BEFORE any event handlers that call
+# _default_client(). Mirrors the bootstrap emitted by the LangChain adapter.
+from vystak.transport import AgentClient as _AgentClient  # noqa: E402
+from vystak.transport import client as _vystak_client_module  # noqa: E402
+
+
+def _build_transport_from_env():
+    transport_type = os.environ.get("VYSTAK_TRANSPORT_TYPE", "http")
+    if transport_type == "http":
+        from vystak_transport_http import HttpTransport
+
+        return HttpTransport(routes=_http_routes)
+    raise RuntimeError(
+        f"unsupported VYSTAK_TRANSPORT_TYPE={transport_type}"
+    )
+
+
+_transport = _build_transport_from_env()
+_vystak_client_module._DEFAULT_CLIENT = _AgentClient(
+    transport=_transport,
+    routes=_client_routes,
+)
+
+
+def _default_client() -> _AgentClient:
+    return _vystak_client_module._default_client()
+
+
+async def _forward_to_agent(agent_name: str, text: str, session_id: str) -> str:
+    return await _default_client().send_task(
+        agent_name,
+        text,
+        metadata={"sessionId": session_id},
+    )
 
 
 @slack_app.event("app_mention")
@@ -96,7 +166,7 @@ async def on_mention(event, say):
         event.get("user"),
     )
     text = event.get("text", "")
-    reply = await _forward_to_agent(ROUTES[agent_name], text, session_id)
+    reply = await _forward_to_agent(agent_name, text, session_id)
     await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
 
 
@@ -122,7 +192,7 @@ async def on_message(event, say):
         event.get("user"),
     )
     text = event.get("text", "")
-    reply = await _forward_to_agent(ROUTES[agent_name], text, session_id)
+    reply = await _forward_to_agent(agent_name, text, session_id)
     await say(text=reply)
 
 
@@ -175,4 +245,6 @@ httpx>=0.28
 slack-bolt>=1.21
 aiohttp>=3.9
 pydantic>=2.0
+vystak>=0.1
+vystak-transport-http>=0.1
 """
