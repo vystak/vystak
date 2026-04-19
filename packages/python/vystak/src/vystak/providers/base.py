@@ -76,6 +76,31 @@ class PlatformProvider(ABC):
     @abstractmethod
     def get_hash(self, agent_name: str) -> str | None: ...
 
+    def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support channel provisioning yet"
+        )
+
+    def apply_channel(self, plan: DeployPlan) -> DeployResult:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support channel provisioning yet"
+        )
+
+    def destroy_channel(self, channel_name: str) -> None:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support channel provisioning yet"
+        )
+
+    def channel_status(self, channel_name: str) -> AgentStatus:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support channel provisioning yet"
+        )
+
+    def get_channel_hash(self, channel_name: str) -> str | None:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support channel provisioning yet"
+        )
+
 
 class ChannelPlugin(ABC):
     """Contract for a channel type. Registered via entry point `vystak.channels`.

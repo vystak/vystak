@@ -2,7 +2,7 @@
 
 import click
 
-from vystak_cli.loader import find_agent_file, load_agents
+from vystak_cli.loader import find_agent_file, load_definitions
 
 
 @click.command()
@@ -14,16 +14,15 @@ def logs(file_path, agent_name, follow, tail_lines):
     """Tail agent container logs."""
     if agent_name is None:
         path = find_agent_file(file=file_path)
-        agents = load_agents([path])
-        if len(agents) == 1:
-            agent_name = agents[0].name
+        defs = load_definitions([path])
+        if len(defs.agents) == 1:
+            agent_name = defs.agents[0].name
         else:
             click.echo("Multiple agents found. Use --name to specify which one.", err=True)
-            for a in agents:
+            for a in defs.agents:
                 click.echo(f"  {a.name}")
             raise SystemExit(1)
 
-    # Logs is Docker-specific for now
     from vystak_provider_docker import DockerProvider
 
     provider = DockerProvider()

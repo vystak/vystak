@@ -1,11 +1,11 @@
-"""vystak apply — deploy or update agents."""
+"""vystak apply — deploy or update agents and channels."""
 
 from pathlib import Path
 
 import click
 from vystak_adapter_langchain import LangChainAdapter
 
-from vystak_cli.loader import find_agent_file, load_agents
+from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
@@ -16,7 +16,7 @@ from vystak_cli.provider_factory import get_provider
     "--force", is_flag=True, default=False, help="Force redeploy even if no changes detected"
 )
 def apply(files, file_path, force):
-    """Deploy or update agents."""
+    """Deploy or update agents and channels."""
     if files:
         paths = [Path(f) for f in files]
     elif file_path:
@@ -31,13 +31,13 @@ def apply(files, file_path, force):
         if paths[0].is_dir()
         else Path.cwd()
     )
-    agents = load_agents(paths, base_dir=base_dir)
-    click.echo(f"Loaded {len(agents)} agent(s)")
+    defs = load_definitions(paths, base_dir=base_dir)
+    click.echo(f"Loaded {len(defs.agents)} agent(s), {len(defs.channels)} channel(s)")
 
     adapter = LangChainAdapter()
-    deployed: list[dict] = []
+    deployed_agents: list[dict] = []
 
-    for agent in agents:
+    for agent in defs.agents:
         click.echo(f"\nAgent: {agent.name}")
 
         click.echo("  Validating... ", nl=False)
@@ -61,7 +61,7 @@ def apply(files, file_path, force):
 
         if not deploy_plan.actions and not force:
             click.echo("  No changes. Already up to date.")
-            deployed.append({"name": agent.name, "url": "(unchanged)", "agent": agent})
+            deployed_agents.append({"name": agent.name, "url": "(unchanged)", "agent": agent})
             continue
 
         if not deploy_plan.actions and force:
@@ -72,7 +72,6 @@ def apply(files, file_path, force):
         provider.set_generated_code(code)
         provider.set_agent(agent)
 
-        # Attach progress listener if provider supports it
         if hasattr(provider, "set_listener"):
             from vystak.provisioning import PrintListener
 
@@ -87,46 +86,86 @@ def apply(files, file_path, force):
                 if hasattr(result, "info")
                 else result.message
             )
-            deployed.append({"name": agent.name, "url": url, "agent": agent, "result": result})
+            deployed_agents.append(
+                {"name": agent.name, "url": url, "agent": agent, "result": result}
+            )
         else:
             click.echo("FAILED")
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
 
-    # Deploy gateway and register agents if multiple agents
-    gateway_url = None
-    if len(deployed) > 1:
-        click.echo("\nGateway:")
-        click.echo("  Deploying... ", nl=False)
-        from vystak_cli.gateway import deploy_gateway, inject_gateway_env, register_agents
+    deployed_channels: list[dict] = []
 
-        gateway_url = deploy_gateway(deployed)
-        if gateway_url:
-            click.echo("OK")
-            click.echo(f"  {gateway_url}")
-            click.echo("  Registering agents...")
-            register_agents(gateway_url, deployed)
-            click.echo("  Injecting gateway URL into agents...")
-            inject_gateway_env(gateway_url, deployed)
+    for channel in defs.channels:
+        click.echo(f"\nChannel: {channel.name}")
+
+        provider = get_provider(channel)
+        try:
+            current_hash = provider.get_channel_hash(channel.name)
+            deploy_plan = provider.plan_channel(channel, current_hash)
+        except NotImplementedError as e:
+            click.echo(f"  Skipped: {e}")
+            continue
+
+        if not deploy_plan.actions and not force:
+            click.echo("  No changes. Already up to date.")
+            deployed_channels.append({"name": channel.name, "channel": channel})
+            continue
+
+        if not deploy_plan.actions and force:
+            click.echo("  No changes detected, forcing redeploy.")
+            deploy_plan.actions.append("Force redeploy")
+
+        click.echo("  Deploying:")
+        if hasattr(provider, "set_listener"):
+            from vystak.provisioning import PrintListener
+
+            provider.set_listener(PrintListener(indent="    "))
+
+        try:
+            result = provider.apply_channel(deploy_plan)
+        except NotImplementedError as e:
+            click.echo(f"  Skipped: {e}")
+            continue
+
+        if result.success:
+            click.echo("  OK")
+            deployed_channels.append(
+                {"name": channel.name, "channel": channel, "result": result}
+            )
         else:
-            click.echo("skipped")
+            click.echo("FAILED")
+            click.echo(f"  Error: {result.message}", err=True)
+            raise SystemExit(1)
 
-    # Deployment summary
-    if deployed:
-        _print_summary(deployed, gateway_url=gateway_url)
+    if deployed_agents or deployed_channels:
+        _print_summary(deployed_agents, deployed_channels)
 
 
-def _print_summary(deployed: list[dict], gateway_url: str | None = None) -> None:
-    """Print deployment summary with infrastructure and agent details."""
+def _print_summary(
+    deployed_agents: list[dict], deployed_channels: list[dict]
+) -> None:
     click.echo("\n" + "=" * 60)
-    click.echo(f"Deployment complete — {len(deployed)} agent(s) deployed")
+    click.echo(
+        f"Deployment complete — {len(deployed_agents)} agent(s), "
+        f"{len(deployed_channels)} channel(s)"
+    )
     click.echo("=" * 60)
 
-    # Shared infrastructure details (from first agent with a platform)
-    first_agent = next((d["agent"] for d in deployed if d["agent"].platform), None)
-    if first_agent and first_agent.platform:
-        provider_type = first_agent.platform.provider.type
-        config = first_agent.platform.provider.config
+    first_platform = None
+    for d in deployed_agents:
+        if d["agent"].platform:
+            first_platform = d["agent"].platform
+            break
+    if first_platform is None:
+        for d in deployed_channels:
+            if d["channel"].platform:
+                first_platform = d["channel"].platform
+                break
+
+    if first_platform:
+        provider_type = first_platform.provider.type
+        config = first_platform.provider.config
 
         click.echo("\nShared Infrastructure:")
 
@@ -138,37 +177,25 @@ def _print_summary(deployed: list[dict], gateway_url: str | None = None) -> None
             click.echo("  Provider:     Docker (local)")
             click.echo("  Network:      vystak-net")
 
-    # Agent URLs
-    click.echo("\nAgents:")
-    max_name = max(len(d["name"]) for d in deployed)
-    for d in deployed:
-        result = d.get("result")
-        if result and hasattr(result, "message"):
-            # Extract URL from message like "Deployed X at https://..."
-            msg = result.message
-            url = msg.split(" at ", 1)[1] if " at " in msg else msg
-        else:
-            url = d.get("url", "")
-        click.echo(f"  {d['name']:<{max_name}}  {url}")
-
-    # Gateway
-    if gateway_url:
-        click.echo("\nGateway:")
-        click.echo(f"  {gateway_url}")
-        click.echo(f"  Agents:  {gateway_url}/agents")
-        click.echo(f"  Health:  {gateway_url}/health")
-
-    # Connect command
-    click.echo("\nConnect:")
-    if gateway_url:
-        click.echo(f"  vystak-chat --gateway {gateway_url}")
-    else:
-        for d in deployed:
+    if deployed_agents:
+        click.echo("\nAgents:")
+        max_name = max(len(d["name"]) for d in deployed_agents)
+        for d in deployed_agents:
             result = d.get("result")
-            if result and hasattr(result, "message") and " at " in result.message:
-                url = result.message.split(" at ", 1)[1]
-                click.echo(f"  vystak-chat --url {url}")
-                break
+            if result and hasattr(result, "message"):
+                msg = result.message
+                url = msg.split(" at ", 1)[1] if " at " in msg else msg
+            else:
+                url = d.get("url", "")
+            click.echo(f"  {d['name']:<{max_name}}  {url}")
+
+    if deployed_channels:
+        click.echo("\nChannels:")
+        max_name = max(len(d["name"]) for d in deployed_channels)
+        for d in deployed_channels:
+            result = d.get("result")
+            msg = result.message if result and hasattr(result, "message") else ""
+            click.echo(f"  {d['name']:<{max_name}}  {msg}")
 
 
 def _find_agent_base_dir(agent_name: str, paths: list[Path]) -> Path:

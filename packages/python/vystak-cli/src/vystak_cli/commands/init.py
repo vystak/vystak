@@ -27,9 +27,6 @@ skills:
   - name: assistant
     tools: []
     prompt: You are a helpful assistant.
-channels:
-  - name: api
-    type: api
 secrets:
   - name: ANTHROPIC_API_KEY
 """

@@ -1,10 +1,10 @@
-"""vystak destroy — stop and remove agents."""
+"""vystak destroy — stop and remove agents and channels."""
 
 from pathlib import Path
 
 import click
 
-from vystak_cli.loader import find_agent_file, load_agents
+from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
@@ -22,7 +22,7 @@ from vystak_cli.provider_factory import get_provider
     help="Don't wait for Azure resource deletion to complete",
 )
 def destroy(files, file_path, agent_name, include_resources, no_wait):
-    """Stop and remove deployed agents."""
+    """Stop and remove deployed agents and channels."""
     if agent_name and not files and not file_path:
         from vystak_provider_docker import DockerProvider
 
@@ -40,16 +40,31 @@ def destroy(files, file_path, agent_name, include_resources, no_wait):
         paths = [find_agent_file()]
 
     base_dir = paths[0].parent if paths[0].is_file() else paths[0].parent
-    agents = load_agents(paths, base_dir=base_dir)
+    defs = load_definitions(paths, base_dir=base_dir)
+
+    agents = defs.agents
+    channels = defs.channels
 
     if agent_name:
         agents = [a for a in agents if a.name == agent_name]
-        if not agents:
-            click.echo(f"Agent '{agent_name}' not found in definition.", err=True)
+        channels = [c for c in channels if c.name == agent_name]
+        if not agents and not channels:
+            click.echo(f"'{agent_name}' not found in definition.", err=True)
             raise SystemExit(1)
 
+    for channel in channels:
+        click.echo(f"Destroying channel: {channel.name}")
+        provider = get_provider(channel)
+        try:
+            provider.destroy_channel(channel.name)
+            click.echo("  OK")
+        except NotImplementedError as e:
+            click.echo(f"  Skipped: {e}")
+        except Exception as e:
+            click.echo(f"  FAILED: {e}", err=True)
+
     for agent in agents:
-        click.echo(f"Destroying: {agent.name}")
+        click.echo(f"Destroying agent: {agent.name}")
         provider = get_provider(agent)
         provider.set_agent(agent)
 
@@ -63,8 +78,7 @@ def destroy(files, file_path, agent_name, include_resources, no_wait):
         try:
             provider.destroy(agent.name, include_resources=include_resources, no_wait=no_wait)
             click.echo("  OK" if not no_wait else "  OK (delete in progress)")
-
         except Exception as e:
             click.echo(f"  FAILED: {e}", err=True)
 
-    click.echo(f"Destroyed {len(agents)} agent(s)")
+    click.echo(f"Destroyed {len(agents)} agent(s), {len(channels)} channel(s)")

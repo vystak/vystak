@@ -1,23 +1,22 @@
 """Multi-agent YAML loader with named references."""
 
 from vystak.schema.agent import Agent
+from vystak.schema.channel import Channel
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 
 
-def load_multi_agent_yaml(data: dict) -> list[Agent]:
-    """Load multi-agent YAML with named providers, platforms, and models.
+def load_multi_yaml(data: dict) -> tuple[list[Agent], list[Channel]]:
+    """Load multi-agent/multi-channel YAML with named providers, platforms, and models.
 
-    String references in agents are resolved to shared Python objects,
-    so agents referencing the same platform name get the same object (id).
+    String references in agents/channels are resolved to shared Python objects,
+    so items referencing the same platform name get the same object (id).
     """
-    # 1. Providers
     providers: dict[str, Provider] = {}
     for name, cfg in data.get("providers", {}).items():
         providers[name] = Provider(name=name, **cfg)
 
-    # 2. Platforms
     platforms: dict[str, Platform] = {}
     for name, cfg in data.get("platforms", {}).items():
         cfg = dict(cfg)
@@ -29,7 +28,6 @@ def load_multi_agent_yaml(data: dict) -> list[Agent]:
             )
         platforms[name] = Platform(name=name, provider=providers[provider_ref], **cfg)
 
-    # 3. Models
     models: dict[str, Model] = {}
     for name, cfg in data.get("models", {}).items():
         cfg = dict(cfg)
@@ -41,7 +39,6 @@ def load_multi_agent_yaml(data: dict) -> list[Agent]:
             )
         models[name] = Model(name=name, provider=providers[provider_ref], **cfg)
 
-    # 4. Agents
     agents: list[Agent] = []
     for agent_data in data.get("agents", []):
         agent_data = dict(agent_data)
@@ -66,4 +63,19 @@ def load_multi_agent_yaml(data: dict) -> list[Agent]:
 
         agents.append(Agent.model_validate(agent_data))
 
-    return agents
+    channels: list[Channel] = []
+    for channel_data in data.get("channels", []):
+        channel_data = dict(channel_data)
+
+        platform_ref = channel_data.get("platform")
+        if isinstance(platform_ref, str):
+            if platform_ref not in platforms:
+                raise KeyError(
+                    f"Unknown platform '{platform_ref}' in channel '{channel_data.get('name')}'. "
+                    f"Defined platforms: {', '.join(platforms.keys())}"
+                )
+            channel_data["platform"] = platforms[platform_ref]
+
+        channels.append(Channel.model_validate(channel_data))
+
+    return agents, channels

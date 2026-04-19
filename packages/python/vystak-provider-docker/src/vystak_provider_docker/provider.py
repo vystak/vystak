@@ -1,6 +1,5 @@
 """Docker platform provider — builds and runs agents as Docker containers."""
 
-import os
 from pathlib import Path
 
 import docker
@@ -14,15 +13,6 @@ from vystak.providers.base import (
     PlatformProvider,
 )
 from vystak.schema.agent import Agent
-from vystak.schema.channel import SlackChannel
-
-from vystak_provider_docker.gateway import (
-    build_gateway_image,
-    destroy_gateway,
-    provision_gateway,
-    write_gateway_source,
-    write_routes_file,
-)
 
 DOCKERFILE_TEMPLATE = """\
 FROM python:3.11-slim
@@ -88,86 +78,19 @@ class DockerProvider(PlatformProvider):
         return result
 
     def _collect_gateway_info(self) -> dict:
-        """Extract gateway/provider/route info from agent channels."""
-        if not self._agent:
-            return {}
+        """Legacy gateway aggregation — retired; channels are top-level deployables.
 
-        gateways = {}
-
-        for channel in self._agent.channels:
-            if not isinstance(channel, SlackChannel):
-                continue
-
-            cp = channel.provider
-            gw = cp.gateway
-            gw_name = gw.name
-
-            if gw_name not in gateways:
-                gateways[gw_name] = {"gateway": gw, "providers": {}, "routes": []}
-
-            gw_info = gateways[gw_name]
-
-            if cp.name not in gw_info["providers"]:
-                config = dict(cp.config)
-                resolved_config = {}
-                for key, value in config.items():
-                    if hasattr(value, "name"):
-                        resolved_config[key] = os.environ.get(value.name, "")
-                    else:
-                        resolved_config[key] = value
-                gw_info["providers"][cp.name] = {
-                    "name": cp.name,
-                    "type": cp.type,
-                    "config": resolved_config,
-                }
-
-            agent_url = f"http://{self._container_name(self._agent.name)}:8000"
-            gw_info["routes"].append(
-                {
-                    "provider_name": cp.name,
-                    "agent_name": self._agent.name,
-                    "agent_url": agent_url,
-                    "channels": channel.channels,
-                    "listen": channel.listen,
-                    "threads": channel.threads,
-                    "dm": channel.dm,
-                }
-            )
-
-        return gateways
+        Phase 3 will replace this with ChannelPlugin-based provisioning.
+        """
+        return {}
 
     def provision_gateways(self, network) -> None:
-        """Provision gateway containers for the agent's channels."""
-        gateways = self._collect_gateway_info()
-
-        for gw_name, gw_info in gateways.items():
-            gateway = gw_info["gateway"]
-            gateway_dir = Path(".vystak") / f"gateway-{gw_name}"
-
-            write_gateway_source(gateway_dir)
-
-            routes_path = gateway_dir / "routes.json"
-            write_routes_file(routes_path, list(gw_info["providers"].values()), gw_info["routes"])
-
-            build_gateway_image(self._client, gw_name, str(gateway_dir))
-
-            env = {}
-            for prov in gw_info["providers"].values():
-                for key, value in prov["config"].items():
-                    if isinstance(value, str) and value:
-                        env_key = f"{prov['name'].upper().replace('-', '_')}_{key.upper()}"
-                        env[env_key] = value
-
-            port = gateway.config.get("port", 8080)
-            provision_gateway(
-                self._client, gw_name, network, routes_path=str(routes_path), env=env, port=port
-            )
+        """No-op; channel provisioning will be reintroduced in Phase 3 via ChannelPlugin."""
+        return
 
     def destroy_gateways(self) -> None:
-        """Destroy gateway containers for the agent's channels."""
-        gateways = self._collect_gateway_info()
-        for gw_name in gateways:
-            destroy_gateway(self._client, gw_name)
+        """No-op; channel provisioning will be reintroduced in Phase 3 via ChannelPlugin."""
+        return
 
     def get_hash(self, agent_name: str) -> str | None:
         container = self._get_container(agent_name)
@@ -221,7 +144,6 @@ class DockerProvider(PlatformProvider):
 
             from vystak_provider_docker.nodes import (
                 DockerAgentNode,
-                DockerGatewayNode,
                 DockerNetworkNode,
                 DockerServiceNode,
             )
@@ -245,16 +167,6 @@ class DockerProvider(PlatformProvider):
                 plan,
             )
             graph.add(agent_node)
-
-            # Gateways
-            for gw_name, gw_info in self._collect_gateway_info().items():
-                gw_node = DockerGatewayNode(
-                    self._client,
-                    gw_name,
-                    gw_info,
-                    self._agent.name,
-                )
-                graph.add(gw_node)
 
             # Execute the graph
             results = graph.execute()
