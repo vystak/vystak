@@ -1,6 +1,7 @@
 """Transport abstraction for east-west A2A traffic."""
 
 from vystak.transport.base import Transport
+from vystak.transport.contract import TransportContract
 from vystak.transport.handler import A2AHandler
 from vystak.transport.naming import (
     canonical_agent_name,
@@ -21,6 +22,7 @@ __all__ = [
     "A2AResult",
     "AgentRef",
     "Transport",
+    "TransportContract",
     "canonical_agent_name",
     "parse_canonical_name",
     "slug",
