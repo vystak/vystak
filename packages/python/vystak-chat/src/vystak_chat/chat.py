@@ -135,17 +135,24 @@ async def _stream_response(
 ) -> tuple[client.StreamResult, str]:
     """Stream response without disrupting the prompt_toolkit layout.
 
-    Returns (StreamResult, response_id).
+    Returns (StreamResult, response_id). Uses Rich's Status spinner for the
+    "thinking..." indicator — it animates on a background thread and clears
+    itself cleanly when stopped, avoiding the \\r-based flicker on slow links.
     """
     stream_result = client.StreamResult()
     tokens_buf: list[str] = []
     has_output = False
-    status_line_shown = False
     response_id = ""
 
-    # Print status line (will be overwritten by first token)
-    console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
-    status_line_shown = True
+    status = console.status(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]")
+    status.start()
+    header_printed = False
+
+    def _stop_status():
+        nonlocal status
+        if status is not None:
+            status.stop()
+            status = None
 
     try:
         async for event in client.stream_response(
@@ -157,16 +164,12 @@ async def _stream_response(
             user_id=user_id,
         ):
             if event.type == "token":
-                if status_line_shown:
-                    console.print(" " * 60, end="\r")
-                    status_line_shown = False
+                _stop_status()
                 has_output = True
                 tokens_buf.append(event.token)
 
             elif event.type == "function_call_start":
-                if status_line_shown:
-                    console.print(" " * 60, end="\r")
-                    status_line_shown = False
+                _stop_status()
                 console.print(f"[dim]  > calling {event.tool}...[/dim]")
 
             elif event.type == "function_call_output":
@@ -175,22 +178,23 @@ async def _stream_response(
                 )
                 console.print("[dim]  > result:[/dim]")
                 console.print(Padding(Markdown(result_preview), (0, 0, 0, 4)))
-                console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
-                status_line_shown = True
+                status = console.status(
+                    f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]"
+                )
+                status.start()
 
             elif event.type == "done":
                 if event.response_id:
                     response_id = event.response_id
-                if status_line_shown:
-                    console.print(" " * 60, end="\r")
-                    status_line_shown = False
+                _stop_status()
                 if has_output:
-                    console.print(f"[agent]{agent_name}[/agent]")
+                    if not header_printed:
+                        console.print(f"[agent]{agent_name}[/agent]")
+                        header_printed = True
                     console.print(Markdown("".join(tokens_buf)))
 
         if not has_output:
-            if status_line_shown:
-                console.print(" " * 60, end="\r")
+            _stop_status()
             invoke_result = await client.send_response(
                 url,
                 message,
@@ -206,8 +210,7 @@ async def _stream_response(
             response_id = invoke_result.response_id
 
     except Exception:
-        if status_line_shown:
-            console.print(" " * 60, end="\r")
+        _stop_status()
         invoke_result = await client.send_response(
             url,
             message,
@@ -220,6 +223,8 @@ async def _stream_response(
         stream_result.output_tokens = invoke_result.output_tokens
         stream_result.total_tokens = invoke_result.total_tokens
         response_id = invoke_result.response_id
+    finally:
+        _stop_status()
 
     return stream_result, response_id
 
@@ -232,27 +237,30 @@ async def _stream_chat(
 ) -> tuple[client.StreamResult, str, str]:
     """Stream a Chat Completions request to a chat channel.
 
-    Returns (StreamResult, assistant_text, response_id). Unlike _stream_response,
-    chat completions don't have function_call events — the chat channel strips
-    A2A thinking/tool_use parts before reaching the client.
+    Returns (StreamResult, assistant_text, response_id). Uses Rich's Status
+    spinner (auto-clearing, background-animated) for the "thinking..." phase
+    so slow networks don't flicker the status line.
     """
     stream_result = client.StreamResult()
     tokens_buf: list[str] = []
     has_output = False
-    status_line_shown = False
     response_id = ""
 
-    console.print(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]", end="\r")
-    status_line_shown = True
+    status = console.status(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]")
+    status.start()
+
+    def _stop_status():
+        nonlocal status
+        if status is not None:
+            status.stop()
+            status = None
 
     try:
         async for event in client.stream_chat_completion(
             url, model=model, messages=messages, result=stream_result
         ):
             if event.type == "token":
-                if status_line_shown:
-                    console.print(" " * 60, end="\r")
-                    status_line_shown = False
+                _stop_status()
                 has_output = True
                 token = event.token if isinstance(event.token, str) else str(event.token)
                 tokens_buf.append(token)
@@ -260,16 +268,13 @@ async def _stream_chat(
             elif event.type == "done":
                 if event.response_id:
                     response_id = event.response_id
-                if status_line_shown:
-                    console.print(" " * 60, end="\r")
-                    status_line_shown = False
+                _stop_status()
                 if has_output:
                     console.print(f"[agent]{agent_name}[/agent]")
                     console.print(Markdown("".join(tokens_buf)))
 
         if not has_output:
-            if status_line_shown:
-                console.print(" " * 60, end="\r")
+            _stop_status()
             invoke_result = await client.send_chat_completion(
                 url, model=model, messages=messages
             )
@@ -282,8 +287,7 @@ async def _stream_chat(
             tokens_buf.append(invoke_result.response)
 
     except Exception:
-        if status_line_shown:
-            console.print(" " * 60, end="\r")
+        _stop_status()
         invoke_result = await client.send_chat_completion(
             url, model=model, messages=messages
         )
@@ -294,6 +298,8 @@ async def _stream_chat(
         stream_result.total_tokens = invoke_result.total_tokens
         response_id = invoke_result.response_id
         tokens_buf.append(invoke_result.response)
+    finally:
+        _stop_status()
 
     assistant_text = "".join(tokens_buf)
     return stream_result, assistant_text, response_id
