@@ -70,3 +70,22 @@ class TestParseCanonicalName:
     def test_wrong_kind_position_raises(self):
         with pytest.raises(ValueError):
             parse_canonical_name("a.b.c.d")
+
+
+class TestSlugTruncationEdge:
+    def test_truncation_boundary_trailing_hyphen_stripped(self):
+        # 62 'a' + '-' + 'b' -> truncated to 62 'a' + '-', then rstrip
+        value = "a" * 62 + "-b"
+        result = slug(value)
+        assert not result.endswith("-")
+        assert result == "a" * 62
+
+
+class TestCanonicalAgentNameValidation:
+    def test_name_with_dot_raises(self):
+        with pytest.raises(ValueError, match="must not contain"):
+            canonical_agent_name("my.agent")
+
+    def test_namespace_with_dot_raises(self):
+        with pytest.raises(ValueError, match="must not contain"):
+            canonical_agent_name("agent", "my.ns")

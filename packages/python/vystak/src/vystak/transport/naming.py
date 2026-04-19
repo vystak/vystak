@@ -27,7 +27,10 @@ def slug(value: str) -> str:
     collapsed = _RUNS.sub("-", cleaned).strip("-")
     if not collapsed:
         raise ValueError(f"slug({value!r}) produced empty result after cleaning")
-    return collapsed[:SLUG_MAX]
+    truncated = collapsed[:SLUG_MAX].rstrip("-")
+    if not truncated:
+        raise ValueError(f"slug({value!r}) produced empty result after truncation")
+    return truncated
 
 
 def canonical_agent_name(name: str, namespace: str | None = None) -> str:
@@ -36,6 +39,16 @@ def canonical_agent_name(name: str, namespace: str | None = None) -> str:
     Matches `Agent.canonical_name` (`vystak/schema/agent.py:46`). Kept as a
     free function so transport code can build names without an Agent instance.
     """
+    if "." in name:
+        raise ValueError(
+            f"agent name {name!r} must not contain '.'; dots are reserved "
+            f"as the canonical-name separator"
+        )
+    if namespace is not None and "." in namespace:
+        raise ValueError(
+            f"namespace {namespace!r} must not contain '.'; dots are reserved "
+            f"as the canonical-name separator"
+        )
     ns = namespace or "default"
     return f"{name}.agents.{ns}"
 
@@ -49,12 +62,9 @@ def parse_canonical_name(canonical: str) -> tuple[str, str, str]:
     parts = canonical.split(".")
     if len(parts) != 3:
         raise ValueError(
-            f"canonical name must be '{{name}}.{{kind}}.{{namespace}}', "
-            f"got {canonical!r}"
+            f"canonical name must be '{{name}}.{{kind}}.{{namespace}}', got {canonical!r}"
         )
     name, kind, namespace = parts
     if kind not in {"agents", "channels", "transports"}:
-        raise ValueError(
-            f"unknown kind {kind!r} in canonical name {canonical!r}"
-        )
+        raise ValueError(f"unknown kind {kind!r} in canonical name {canonical!r}")
     return name, kind, namespace
