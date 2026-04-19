@@ -9,6 +9,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.table import Table
@@ -133,11 +134,11 @@ async def _stream_response(
     previous_response_id: str | None = None,
     user_id: str | None = None,
 ) -> tuple[client.StreamResult, str]:
-    """Stream response without disrupting the prompt_toolkit layout.
+    """Stream response with live Markdown rendering.
 
-    Returns (StreamResult, response_id). Uses Rich's Status spinner for the
-    "thinking..." indicator — it animates on a background thread and clears
-    itself cleanly when stopped, avoiding the \\r-based flicker on slow links.
+    Tokens appear as they arrive via Rich.Live — no buffered-at-done. Function
+    calls print as separate lines between Live regions so the running Markdown
+    view doesn't collide with tool-call traces.
     """
     stream_result = client.StreamResult()
     tokens_buf: list[str] = []
@@ -146,6 +147,7 @@ async def _stream_response(
 
     status = console.status(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]")
     status.start()
+    live: Live | None = None
     header_printed = False
 
     def _stop_status():
@@ -153,6 +155,27 @@ async def _stream_response(
         if status is not None:
             status.stop()
             status = None
+
+    def _start_live():
+        nonlocal live, header_printed
+        if live is not None:
+            return
+        if not header_printed:
+            console.print(f"[agent]{agent_name}[/agent]")
+            header_printed = True
+        live = Live(
+            Markdown(""),
+            console=console,
+            refresh_per_second=12,
+            vertical_overflow="visible",
+        )
+        live.start()
+
+    def _stop_live():
+        nonlocal live
+        if live is not None:
+            live.stop()
+            live = None
 
     try:
         async for event in client.stream_response(
@@ -167,10 +190,17 @@ async def _stream_response(
                 _stop_status()
                 has_output = True
                 tokens_buf.append(event.token)
+                _start_live()
+                live.update(Markdown("".join(tokens_buf)))
 
             elif event.type == "function_call_start":
                 _stop_status()
+                _stop_live()
                 console.print(f"[dim]  > calling {event.tool}...[/dim]")
+                # If tokens were already streaming for this turn, they were
+                # committed by Live.stop(). Start a fresh segment next token.
+                tokens_buf = []
+                header_printed = False
 
             elif event.type == "function_call_output":
                 result_preview = (
@@ -187,14 +217,11 @@ async def _stream_response(
                 if event.response_id:
                     response_id = event.response_id
                 _stop_status()
-                if has_output:
-                    if not header_printed:
-                        console.print(f"[agent]{agent_name}[/agent]")
-                        header_printed = True
-                    console.print(Markdown("".join(tokens_buf)))
+                _stop_live()
 
         if not has_output:
             _stop_status()
+            _stop_live()
             invoke_result = await client.send_response(
                 url,
                 message,
@@ -211,6 +238,7 @@ async def _stream_response(
 
     except Exception:
         _stop_status()
+        _stop_live()
         invoke_result = await client.send_response(
             url,
             message,
@@ -225,84 +253,9 @@ async def _stream_response(
         response_id = invoke_result.response_id
     finally:
         _stop_status()
+        _stop_live()
 
     return stream_result, response_id
-
-
-async def _stream_chat(
-    url: str,
-    model: str,
-    messages: list[dict],
-    agent_name: str,
-) -> tuple[client.StreamResult, str, str]:
-    """Stream a Chat Completions request to a chat channel.
-
-    Returns (StreamResult, assistant_text, response_id). Uses Rich's Status
-    spinner (auto-clearing, background-animated) for the "thinking..." phase
-    so slow networks don't flicker the status line.
-    """
-    stream_result = client.StreamResult()
-    tokens_buf: list[str] = []
-    has_output = False
-    response_id = ""
-
-    status = console.status(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]")
-    status.start()
-
-    def _stop_status():
-        nonlocal status
-        if status is not None:
-            status.stop()
-            status = None
-
-    try:
-        async for event in client.stream_chat_completion(
-            url, model=model, messages=messages, result=stream_result
-        ):
-            if event.type == "token":
-                _stop_status()
-                has_output = True
-                token = event.token if isinstance(event.token, str) else str(event.token)
-                tokens_buf.append(token)
-
-            elif event.type == "done":
-                if event.response_id:
-                    response_id = event.response_id
-                _stop_status()
-                if has_output:
-                    console.print(f"[agent]{agent_name}[/agent]")
-                    console.print(Markdown("".join(tokens_buf)))
-
-        if not has_output:
-            _stop_status()
-            invoke_result = await client.send_chat_completion(
-                url, model=model, messages=messages
-            )
-            console.print(f"[agent]{agent_name}[/agent]")
-            console.print(Markdown(invoke_result.response))
-            stream_result.input_tokens = invoke_result.input_tokens
-            stream_result.output_tokens = invoke_result.output_tokens
-            stream_result.total_tokens = invoke_result.total_tokens
-            response_id = invoke_result.response_id
-            tokens_buf.append(invoke_result.response)
-
-    except Exception:
-        _stop_status()
-        invoke_result = await client.send_chat_completion(
-            url, model=model, messages=messages
-        )
-        console.print(f"[agent]{agent_name}[/agent]")
-        console.print(Markdown(invoke_result.response))
-        stream_result.input_tokens = invoke_result.input_tokens
-        stream_result.output_tokens = invoke_result.output_tokens
-        stream_result.total_tokens = invoke_result.total_tokens
-        response_id = invoke_result.response_id
-        tokens_buf.append(invoke_result.response)
-    finally:
-        _stop_status()
-
-    assistant_text = "".join(tokens_buf)
-    return stream_result, assistant_text, response_id
 
 
 class ChatREPL:
@@ -319,11 +272,11 @@ class ChatREPL:
         self._total_output_tokens: int = 0
         self._last_input_tokens: int = 0
         self._last_output_tokens: int = 0
-        # Chat-channel mode: when connected to a vystak-channel-chat endpoint
-        # (OpenAI /v1/chat/completions) rather than a direct agent (/v1/responses).
-        self._is_chat_channel: bool = False
+        # When connected to a vystak-channel-chat endpoint, /v1/models lists
+        # the routed agents — used by /models to switch which agent the next
+        # /v1/responses call targets. Empty for direct-to-agent connections.
         self._available_models: list[str] = []
-        self._history: list[dict] = []  # OpenAI messages list for chat-channel mode
+        self._is_chat_channel: bool = False
 
     @property
     def connected(self) -> bool:
@@ -415,19 +368,23 @@ class ChatREPL:
         self._model = f"vystak/{agent_name}"
         self._previous_response_id = None
         self._is_chat_channel = False
-        self._history = []
         self._available_models = []
 
         # Auto-save the agent
         add_agent(agent_name, url)
 
     async def _connect_chat_channel(self, url: str, health_info: dict):
-        """Connect to a vystak-channel-chat endpoint (OpenAI chat completions)."""
+        """Connect to a vystak-channel-chat endpoint.
+
+        The chat channel exposes /v1/responses (proxied to the owning agent),
+        so from the REPL's perspective it's just another /v1/responses
+        endpoint. The only difference: the `model` field routes to a specific
+        agent, and /v1/models lists the available choices.
+        """
         models_data = await client.list_models(url)
         model_ids = [m.get("id", "") for m in models_data if m.get("id")]
 
         if not model_ids:
-            # Fall back to /health.agents if /v1/models didn't return anything usable
             model_ids = [
                 f"vystak/{name}" for name in health_info.get("agents", []) if isinstance(name, str)
             ]
@@ -443,13 +400,10 @@ class ChatREPL:
         self._agent_name = agent_name
         self._model = default_model
         self._is_chat_channel = True
-        self._history = []
-        self._previous_response_id = None
         self._available_models = model_ids
+        self._previous_response_id = None
 
-        console.print(
-            f"[success]Connected to chat channel at {url}[/success]"
-        )
+        console.print(f"[success]Connected to chat channel at {url}[/success]")
         agents_list = ", ".join(
             f"[agent]{m.removeprefix('vystak/')}[/agent]" for m in model_ids
         )
@@ -765,7 +719,8 @@ class ChatREPL:
     def _switch_model(self, model: str) -> None:
         self._model = model
         self._agent_name = model.removeprefix("vystak/")
-        self._history = []  # fresh conversation per agent switch
+        # Switching agents invalidates previous_response_id — the chat channel
+        # guards cross-agent chaining, so drop it explicitly.
         self._previous_response_id = None
         console.print(f"[success]Switched to {model}[/success]")
 
@@ -777,27 +732,14 @@ class ChatREPL:
         try:
             console.print("\n[user]You[/user]")
             console.print(message)
-
-            if self._is_chat_channel:
-                self._history.append({"role": "user", "content": message})
-                result, assistant_text, response_id = await _stream_chat(
-                    self._agent_url,
-                    self._model,
-                    self._history,
-                    self._agent_name,
-                )
-                if assistant_text:
-                    self._history.append({"role": "assistant", "content": assistant_text})
-            else:
-                result, response_id = await _stream_response(
-                    self._agent_url,
-                    message,
-                    self._agent_name,
-                    model=self._model,
-                    previous_response_id=self._previous_response_id,
-                    user_id=self._user_id,
-                )
-
+            result, response_id = await _stream_response(
+                self._agent_url,
+                message,
+                self._agent_name,
+                model=self._model,
+                previous_response_id=self._previous_response_id,
+                user_id=self._user_id,
+            )
             if response_id:
                 self._previous_response_id = response_id
             self._last_input_tokens = result.input_tokens
@@ -918,14 +860,18 @@ def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None =
 def run_oneshot(
     url: str | None = None, message: str = "", model_override: str | None = None
 ):
-    """Send a single message and exit. For scripting/piping."""
+    """Send a single message and exit. For scripting/piping.
+
+    Works against direct agents, legacy gateways, and vystak-channel-chat
+    endpoints. All three speak /v1/responses — only the `model` field
+    matters for chat-channel routing.
+    """
     from vystak_chat.config import list_agents
 
     async def _run():
         agent_url = url
         agent_name = "agent"
         model = ""
-        is_chat_channel = False
 
         if not agent_url:
             agents = list_agents()
@@ -943,6 +889,7 @@ def run_oneshot(
             health_info = await client.health(agent_url)
             if health_info:
                 if "routes" in health_info:
+                    # Legacy gateway
                     routes = await client.gateway_routes(agent_url)
                     if routes:
                         agent_name = routes[0].get("agent_name", "agent")
@@ -955,8 +902,7 @@ def run_oneshot(
                     isinstance(health_info.get("agents"), list)
                     and health_info.get("status") == "ok"
                 ):
-                    # vystak-channel-chat endpoint.
-                    is_chat_channel = True
+                    # vystak-channel-chat — pick a model from /v1/models
                     models_data = await client.list_models(agent_url)
                     model_ids = [m.get("id", "") for m in models_data if m.get("id")]
                     if not model_ids:
@@ -965,7 +911,6 @@ def run_oneshot(
                             for n in health_info.get("agents", [])
                             if isinstance(n, str)
                         ]
-
                     if model_override:
                         candidate = (
                             model_override
@@ -985,25 +930,18 @@ def run_oneshot(
                         console.print("[error]Chat channel has no routed agents[/error]")
                         raise SystemExit(1)
                     agent_name = model.removeprefix("vystak/")
-                    console.print(
-                        f"[dim]Chat channel detected. Using {agent_name}[/dim]"
-                    )
+                    console.print(f"[dim]Chat channel detected. Using {agent_name}[/dim]")
                 else:
                     agent_name = health_info.get("agent", "agent")
                     model = ""
 
-        if is_chat_channel:
-            _, _, _ = await _stream_chat(
-                agent_url, model, [{"role": "user", "content": message}], agent_name
+        result, _ = await _stream_response(
+            agent_url, message, agent_name, model=model, user_id=getpass.getuser()
+        )
+        if result.total_tokens:
+            console.print(
+                f"\n[dim]tokens: {result.input_tokens} in"
+                f" / {result.output_tokens} out[/dim]"
             )
-        else:
-            result, _ = await _stream_response(
-                agent_url, message, agent_name, model=model, user_id=getpass.getuser()
-            )
-            if result.total_tokens:
-                console.print(
-                    f"\n[dim]tokens: {result.input_tokens} in"
-                    f" / {result.output_tokens} out[/dim]"
-                )
 
     asyncio.run(_run())
