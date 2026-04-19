@@ -38,26 +38,29 @@ def _load_routes_raw() -> dict:
     """
     env_raw = os.environ.get("VYSTAK_ROUTES_JSON")
     if env_raw:
-        return json.loads(env_raw)
+        raw = json.loads(env_raw)
+        if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+            return raw
+        # Env var was set but holds legacy {short: URL} shape — convert.
+        return {
+            short: {"canonical": f"{short}.agents.default", "address": value}
+            for short, value in raw.items()
+        }
 
     if ROUTES_PATH.exists():
         logger.warning(
             "Using routes.json fallback; VYSTAK_ROUTES_JSON not set"
         )
-        legacy = json.loads(ROUTES_PATH.read_text())
-        converted: dict = {}
-        for short, value in legacy.items():
-            if isinstance(value, dict) and "canonical" in value and "address" in value:
-                # Already in the new shape — passthrough.
-                converted[short] = value
-            else:
-                # Old shape: short → URL. Derive a canonical name. Wrong for
-                # non-default namespaces, but acceptable during migration.
-                converted[short] = {
-                    "canonical": f"{short}.agents.default",
-                    "address": value,
-                }
-        return converted
+        raw = json.loads(ROUTES_PATH.read_text())
+        if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+            # Already in the new shape — short-circuit.
+            return raw
+        # Old shape: short → URL. Derive a canonical name. Wrong for
+        # non-default namespaces, but acceptable during migration.
+        return {
+            short: {"canonical": f"{short}.agents.default", "address": value}
+            for short, value in raw.items()
+        }
 
     return {}
 

@@ -42,7 +42,9 @@ class TestSlackChannelPlugin:
 
     def test_generate_code_emits_expected_files(self):
         plugin = SlackChannelPlugin()
-        resolved = {"weather-agent": "http://vystak-weather-agent:8000"}
+        resolved = {
+            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
+        }
         code = plugin.generate_code(_channel(), resolved)
 
         assert code.entrypoint == "server.py"
@@ -56,7 +58,9 @@ class TestSlackChannelPlugin:
 
     def test_routes_baked(self):
         plugin = SlackChannelPlugin()
-        resolved = {"weather-agent": "http://vystak-weather-agent:8000"}
+        resolved = {
+            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
+        }
         code = plugin.generate_code(_channel(), resolved)
         routes = json.loads(code.files["routes.json"])
         assert routes == resolved

@@ -38,8 +38,8 @@ class TestChatChannelPlugin:
     def test_generate_code_emits_expected_files(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": "http://vystak-weather-agent:8000",
-            "time-agent": "http://vystak-time-agent:8000",
+            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
+            "time-agent": {"canonical": "time-agent.agents.default", "address": "http://vystak-time-agent:8000"},
         }
         code = plugin.generate_code(_channel(), resolved)
 
@@ -54,7 +54,7 @@ class TestChatChannelPlugin:
     def test_routes_baked_into_routes_json(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": "http://vystak-weather-agent:8000",
+            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
         }
         code = plugin.generate_code(_channel(), resolved)
         routes = json.loads(code.files["routes.json"])
@@ -130,7 +130,10 @@ class TestGeneratedServer:
     def test_health_endpoint(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"weather-agent": "http://example.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {"weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://example.test"}},
+        )
         client = TestClient(app)
         resp = client.get("/health")
         assert resp.status_code == 200
@@ -143,7 +146,10 @@ class TestGeneratedServer:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"a": "http://a.test", "b": "http://b.test"},
+            {
+                "a": {"canonical": "a.agents.default", "address": "http://a.test"},
+                "b": {"canonical": "b.agents.default", "address": "http://b.test"},
+            },
         )
         client = TestClient(app)
         resp = client.get("/v1/models")
@@ -154,7 +160,10 @@ class TestGeneratedServer:
     def test_chat_completion_unknown_model_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/chat/completions",
@@ -170,7 +179,10 @@ class TestGeneratedServer:
         """Streaming shouldn't bypass the unknown-model guard."""
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/chat/completions",
@@ -321,7 +333,10 @@ class TestGeneratedResponsesApi:
     def test_responses_unknown_model_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/responses",
@@ -333,7 +348,10 @@ class TestGeneratedResponsesApi:
     def test_responses_get_unknown_id_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+        )
         client = TestClient(app)
         resp = client.get("/v1/responses/resp-never-created")
         assert resp.status_code == 404

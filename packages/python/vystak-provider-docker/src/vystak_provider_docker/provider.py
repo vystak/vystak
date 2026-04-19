@@ -117,7 +117,7 @@ class DockerProvider(PlatformProvider):
             changes={"root": (deployed_hash, target_hash)},
         )
 
-    def apply(self, plan: DeployPlan) -> DeployResult:
+    def apply(self, plan: DeployPlan, *, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
             return DeployResult(
                 agent_name=plan.agent_name,
@@ -152,6 +152,7 @@ class DockerProvider(PlatformProvider):
                 self._agent,
                 self._generated_code,
                 plan,
+                peer_routes_json=peer_routes if peer_routes is not None else "{}",
             )
             graph.add(agent_node)
 
@@ -265,7 +266,7 @@ class DockerProvider(PlatformProvider):
         self,
         plan: DeployPlan,
         channel: Channel,
-        resolved_routes: dict[str, str],
+        resolved_routes: dict[str, dict[str, str]],
     ) -> DeployResult:
         try:
             plugin = get_plugin(channel.type)

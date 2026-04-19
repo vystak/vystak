@@ -33,7 +33,9 @@ class ChatChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = ChatChannelConfig
 
-    def generate_code(self, channel: Channel, resolved_routes: dict[str, str]) -> GeneratedCode:
+    def generate_code(
+        self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
+    ) -> GeneratedCode:
         routes_json = json.dumps(resolved_routes, indent=2)
         return GeneratedCode(
             files={

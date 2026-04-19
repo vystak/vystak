@@ -31,7 +31,9 @@ class SlackChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = SlackChannelConfig
 
-    def generate_code(self, channel: Channel, resolved_routes: dict[str, str]) -> GeneratedCode:
+    def generate_code(
+        self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
+    ) -> GeneratedCode:
         rules = [{"match": rule.match, "agent": rule.agent} for rule in channel.routes]
         return GeneratedCode(
             files={
