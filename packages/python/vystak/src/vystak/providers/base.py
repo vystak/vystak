@@ -81,7 +81,12 @@ class PlatformProvider(ABC):
             f"{type(self).__name__} does not support channel provisioning yet"
         )
 
-    def apply_channel(self, plan: DeployPlan) -> DeployResult:
+    def apply_channel(
+        self,
+        plan: DeployPlan,
+        channel: Channel,
+        resolved_routes: dict[str, str],
+    ) -> DeployResult:
         raise NotImplementedError(
             f"{type(self).__name__} does not support channel provisioning yet"
         )
@@ -115,7 +120,15 @@ class ChannelPlugin(ABC):
     config_schema: type[BaseModel]
 
     @abstractmethod
-    def generate_code(self, channel: Channel) -> GeneratedCode: ...
+    def generate_code(
+        self, channel: Channel, resolved_routes: dict[str, str]
+    ) -> GeneratedCode:
+        """Emit channel-pod source code.
+
+        `resolved_routes` maps agent name → URL reachable from the channel
+        container. The CLI computes this from the deployed agents at apply time.
+        """
+        ...
 
     @abstractmethod
     def provision_nodes(

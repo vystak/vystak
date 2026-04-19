@@ -4,7 +4,8 @@ from pathlib import Path
 
 import docker
 import docker.errors
-from vystak.hash import hash_agent
+from vystak.channels import get_plugin
+from vystak.hash import hash_agent, hash_channel
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -13,6 +14,7 @@ from vystak.providers.base import (
     PlatformProvider,
 )
 from vystak.schema.agent import Agent
+from vystak.schema.channel import Channel
 
 DOCKERFILE_TEMPLATE = """\
 FROM python:3.11-slim
@@ -221,6 +223,138 @@ class DockerProvider(PlatformProvider):
             hash=container.labels.get("vystak.hash"),
             info={
                 "container": self._container_name(agent_name),
+                "status": container.status,
+                "ports": container.ports,
+            },
+        )
+
+    # === Channel provisioning ===
+
+    def _channel_container_name(self, channel_name: str) -> str:
+        return f"vystak-channel-{channel_name}"
+
+    def _get_channel_container(self, channel_name: str):
+        try:
+            return self._client.containers.get(self._channel_container_name(channel_name))
+        except docker.errors.NotFound:
+            return None
+
+    def get_channel_hash(self, channel_name: str) -> str | None:
+        container = self._get_channel_container(channel_name)
+        if container is None:
+            return None
+        return container.labels.get("vystak.channel.hash")
+
+    def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
+        tree = hash_channel(channel)
+        target_hash = tree.root
+        container = self._get_channel_container(channel.name)
+
+        if container is None:
+            return DeployPlan(
+                agent_name=channel.name,
+                actions=["Create new channel deployment"],
+                current_hash=None,
+                target_hash=target_hash,
+                changes={"all": (None, target_hash)},
+            )
+
+        deployed_hash = container.labels.get("vystak.channel.hash")
+        if deployed_hash == target_hash:
+            return DeployPlan(
+                agent_name=channel.name,
+                actions=[],
+                current_hash=deployed_hash,
+                target_hash=target_hash,
+                changes={},
+            )
+
+        return DeployPlan(
+            agent_name=channel.name,
+            actions=["Update channel deployment"],
+            current_hash=deployed_hash,
+            target_hash=target_hash,
+            changes={"root": (deployed_hash, target_hash)},
+        )
+
+    def apply_channel(
+        self,
+        plan: DeployPlan,
+        channel: Channel,
+        resolved_routes: dict[str, str],
+    ) -> DeployResult:
+        try:
+            plugin = get_plugin(channel.type)
+        except KeyError as e:
+            return DeployResult(
+                agent_name=plan.agent_name,
+                success=False,
+                hash=plan.target_hash,
+                message=str(e),
+            )
+
+        try:
+            code = plugin.generate_code(channel, resolved_routes)
+
+            from vystak.provisioning import ProvisionGraph
+
+            from vystak_provider_docker.nodes import DockerChannelNode, DockerNetworkNode
+
+            host_port = channel.config.get("port", 8080)
+
+            graph = ProvisionGraph()
+            graph.add(DockerNetworkNode(self._client))
+            channel_node = DockerChannelNode(
+                self._client,
+                channel,
+                code,
+                plan.target_hash,
+                host_port=host_port,
+            )
+            graph.add(channel_node)
+
+            results = graph.execute()
+            channel_result = results.get(f"channel:{channel.name}")
+            if channel_result and channel_result.success:
+                url = channel_result.info.get("url", "?")
+                return DeployResult(
+                    agent_name=channel.name,
+                    success=True,
+                    hash=plan.target_hash,
+                    message=f"Deployed channel {channel.name} at {url}",
+                )
+
+            error = channel_result.error if channel_result else "Channel node not found"
+            return DeployResult(
+                agent_name=channel.name,
+                success=False,
+                hash=plan.target_hash,
+                message=f"Channel deployment failed: {error}",
+            )
+        except Exception as e:
+            return DeployResult(
+                agent_name=channel.name,
+                success=False,
+                hash=plan.target_hash,
+                message=f"Channel deployment failed: {e}",
+            )
+
+    def destroy_channel(self, channel_name: str) -> None:
+        container = self._get_channel_container(channel_name)
+        if container is not None:
+            container.stop()
+            container.remove()
+
+    def channel_status(self, channel_name: str) -> AgentStatus:
+        container = self._get_channel_container(channel_name)
+        if container is None:
+            return AgentStatus(agent_name=channel_name, running=False, hash=None)
+        return AgentStatus(
+            agent_name=channel_name,
+            running=container.status == "running",
+            hash=container.labels.get("vystak.channel.hash"),
+            info={
+                "container": self._channel_container_name(channel_name),
                 "status": container.status,
                 "ports": container.ports,
             },

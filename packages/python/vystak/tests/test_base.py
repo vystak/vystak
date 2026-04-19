@@ -107,7 +107,7 @@ class TestChannelPluginABC:
             agent_protocol = AgentProtocol.A2A_TURN
             config_schema = NoopConfig
 
-            def generate_code(self, channel):
+            def generate_code(self, channel, resolved_routes):
                 return GeneratedCode(files={}, entrypoint="main.py")
 
             def provision_nodes(self, channel, platform):

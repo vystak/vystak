@@ -2,6 +2,11 @@
 
 import click
 
+# Trigger auto-registration of bundled channel plugins.
+# Side-effecting imports are the intended mechanism here; keep them at top level
+# so ruff's SIM/I rules don't re-order or flag them.
+import vystak_channel_chat  # noqa: F401 — registers ChannelType.CHAT plugin
+
 from vystak_cli import __version__
 from vystak_cli.commands import apply, destroy, init, logs, plan, status
 

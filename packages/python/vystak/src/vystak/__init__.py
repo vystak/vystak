@@ -2,6 +2,14 @@
 
 __version__ = "0.1.0"
 
+# Channel plugin registry
+from vystak.channels import (
+    ChannelPluginRegistry,
+    get_plugin,
+    list_plugins,
+    register_plugin,
+)
+
 # Hash engine
 from vystak.hash import (
     AgentHashTree,
@@ -111,6 +119,10 @@ __all__ = [
     "hash_channel",
     "hash_dict",
     "hash_model",
+    "ChannelPluginRegistry",
+    "get_plugin",
+    "list_plugins",
+    "register_plugin",
     "dump_agent",
     "load_agent",
     "AgentStatus",

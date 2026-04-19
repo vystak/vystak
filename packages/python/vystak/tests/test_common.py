@@ -39,7 +39,7 @@ class TestWorkspaceType:
 
 class TestChannelType:
     def test_all_types(self):
-        expected = {"api", "slack", "webhook", "voice", "cron", "widget"}
+        expected = {"api", "slack", "webhook", "voice", "cron", "widget", "chat"}
         actual = {ct.value for ct in ChannelType}
         assert actual == expected
 

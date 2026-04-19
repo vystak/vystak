@@ -95,6 +95,7 @@ def apply(files, file_path, force):
             raise SystemExit(1)
 
     deployed_channels: list[dict] = []
+    agent_urls = _resolve_agent_urls(deployed_agents)
 
     for channel in defs.channels:
         click.echo(f"\nChannel: {channel.name}")
@@ -116,6 +117,18 @@ def apply(files, file_path, force):
             click.echo("  No changes detected, forcing redeploy.")
             deploy_plan.actions.append("Force redeploy")
 
+        resolved_routes = {
+            rule.agent: agent_urls[rule.agent]
+            for rule in channel.routes
+            if rule.agent in agent_urls
+        }
+        missing = [rule.agent for rule in channel.routes if rule.agent not in agent_urls]
+        if missing:
+            click.echo(
+                f"  Warning: route targets not deployed: {', '.join(missing)}",
+                err=True,
+            )
+
         click.echo("  Deploying:")
         if hasattr(provider, "set_listener"):
             from vystak.provisioning import PrintListener
@@ -123,7 +136,7 @@ def apply(files, file_path, force):
             provider.set_listener(PrintListener(indent="    "))
 
         try:
-            result = provider.apply_channel(deploy_plan)
+            result = provider.apply_channel(deploy_plan, channel, resolved_routes)
         except NotImplementedError as e:
             click.echo(f"  Skipped: {e}")
             continue
@@ -140,6 +153,36 @@ def apply(files, file_path, force):
 
     if deployed_agents or deployed_channels:
         _print_summary(deployed_agents, deployed_channels)
+
+
+def _resolve_agent_urls(deployed_agents: list[dict]) -> dict[str, str]:
+    """Map agent name → URL reachable from channel containers on vystak-net.
+
+    For Docker, agents are addressable by their container name on the shared
+    network: `http://vystak-<agent>:8000`. For Azure etc., the external URL
+    from the deploy result is used.
+    """
+    urls: dict[str, str] = {}
+    for d in deployed_agents:
+        agent = d["agent"]
+        provider_type = "docker"
+        if agent.platform and agent.platform.provider:
+            provider_type = agent.platform.provider.type
+
+        if provider_type == "docker":
+            urls[agent.name] = f"http://vystak-{agent.name}:8000"
+            continue
+
+        result = d.get("result")
+        if result and hasattr(result, "message") and " at " in result.message:
+            urls[agent.name] = result.message.split(" at ", 1)[1]
+            continue
+
+        url = d.get("url")
+        if url and url != "(unchanged)":
+            urls[agent.name] = url
+
+    return urls
 
 
 def _print_summary(

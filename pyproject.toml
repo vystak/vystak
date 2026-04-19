@@ -13,12 +13,14 @@ dev-dependencies = [
     "pytest-asyncio>=0.25",
     "ruff>=0.8",
     "pyright>=1.1",
+    "httpx>=0.28",
     "vystak",
     "vystak-cli",
     "vystak-adapter-mastra",
     "vystak-adapter-langchain",
     "vystak-provider-docker",
     "vystak-channel-api",
+    "vystak-channel-chat",
     "vystak-gateway",
     "vystak-chat",
     "vystak-provider-azure",
@@ -31,6 +33,7 @@ vystak-adapter-mastra = { workspace = true }
 vystak-adapter-langchain = { workspace = true }
 vystak-provider-docker = { workspace = true }
 vystak-channel-api = { workspace = true }
+vystak-channel-chat = { workspace = true }
 vystak-gateway = { workspace = true }
 vystak-chat = { workspace = true }
 vystak-provider-azure = { workspace = true }
