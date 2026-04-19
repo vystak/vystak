@@ -24,3 +24,7 @@ cli.add_command(apply)
 cli.add_command(destroy)
 cli.add_command(status)
 cli.add_command(logs)
+
+
+if __name__ == "__main__":
+    cli()
