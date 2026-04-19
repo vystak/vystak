@@ -1244,6 +1244,7 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
         mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
 
     return dedent(f"""\
+        vystak>=0.1
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}

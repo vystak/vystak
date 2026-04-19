@@ -201,10 +201,10 @@ class TestGenerateRequirementsTxt:
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
 
-    def test_no_vystak_in_requirements(self, anthropic_agent):
-        """vystak schema is bundled as openai_types.py, not installed from PyPI."""
+    def test_vystak_in_requirements(self, anthropic_agent):
+        """Generated agents pull in `vystak` so they can import `vystak.transport`."""
         reqs = generate_requirements_txt(anthropic_agent)
-        assert "vystak" not in reqs
+        assert "vystak>=0.1" in reqs
 
 
 @pytest.fixture()
