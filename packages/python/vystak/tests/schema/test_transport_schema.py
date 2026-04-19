@@ -5,6 +5,8 @@ from pydantic import ValidationError
 from vystak.schema import (
     HttpConfig,
     NatsConfig,
+    Platform,
+    Provider,
     ServiceBusConfig,
     Transport,
     TransportConnection,
@@ -107,3 +109,59 @@ class TestTransportConnection:
         c = TransportConnection(url_env="FOO_URL", credentials_secret="foo-creds")
         assert c.url_env == "FOO_URL"
         assert c.credentials_secret == "foo-creds"
+
+
+class TestPlatformTransport:
+    def _provider(self) -> Provider:
+        return Provider(name="docker", type="docker")
+
+    def test_default_transport_synthesized(self):
+        """Platform without an explicit transport gets a default-http."""
+        p = Platform(name="main", type="docker", provider=self._provider())
+        assert p.transport is not None
+        assert p.transport.name == "default-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_http_transport_preserved(self):
+        p = Platform(
+            name="main",
+            type="docker",
+            provider=self._provider(),
+            transport=Transport(name="my-http", type="http"),
+        )
+        assert p.transport.name == "my-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_nats_transport_preserved(self):
+        p = Platform(
+            name="aca",
+            type="container-apps",
+            provider=Provider(name="azure", type="azure"),
+            transport=Transport(
+                name="bus",
+                type="nats",
+                config=NatsConfig(jetstream=True),
+            ),
+        )
+        assert p.transport.type == "nats"
+        assert p.transport.config.jetstream is True
+
+    def test_transport_config_mismatch_still_rejected(self):
+        """The Transport-level validator (from Task 1) still fires when
+        Transport is embedded in a Platform."""
+        with pytest.raises(ValidationError, match="config.type"):
+            Platform(
+                name="main",
+                type="docker",
+                provider=self._provider(),
+                transport=Transport(
+                    name="bus", type="nats", config=HttpConfig()
+                ),
+            )
+
+    def test_default_transport_is_a_new_instance_per_platform(self):
+        """Two platforms should not share the same default-http instance —
+        mutating one must not affect the other."""
+        p1 = Platform(name="a", type="docker", provider=self._provider())
+        p2 = Platform(name="b", type="docker", provider=self._provider())
+        assert p1.transport is not p2.transport
