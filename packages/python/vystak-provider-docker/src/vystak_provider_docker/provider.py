@@ -79,21 +79,6 @@ class DockerProvider(PlatformProvider):
                         result.append(resource)
         return result
 
-    def _collect_gateway_info(self) -> dict:
-        """Legacy gateway aggregation — retired; channels are top-level deployables.
-
-        Phase 3 will replace this with ChannelPlugin-based provisioning.
-        """
-        return {}
-
-    def provision_gateways(self, network) -> None:
-        """No-op; channel provisioning will be reintroduced in Phase 3 via ChannelPlugin."""
-        return
-
-    def destroy_gateways(self) -> None:
-        """No-op; channel provisioning will be reintroduced in Phase 3 via ChannelPlugin."""
-        return
-
     def get_hash(self, agent_name: str) -> str | None:
         container = self._get_container(agent_name)
         if container is None:
@@ -211,7 +196,6 @@ class DockerProvider(PlatformProvider):
             for svc in self._all_services():
                 node = DockerServiceNode(self._client, svc, SECRETS_PATH)
                 node.destroy()
-            self.destroy_gateways()
 
     def status(self, agent_name: str) -> AgentStatus:
         container = self._get_container(agent_name)

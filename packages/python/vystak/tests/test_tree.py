@@ -183,3 +183,23 @@ class TestChannelHashTree:
         tree2 = hash_channel(ch2)
         assert tree1.config != tree2.config
         assert tree1.root != tree2.root
+
+    def test_secrets_change_detected(self):
+        from vystak.schema.secret import Secret
+
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            secrets=[Secret(name="SLACK_BOT_TOKEN")],
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            secrets=[Secret(name="SLACK_APP_TOKEN")],
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.secrets != tree2.secrets
+        assert tree1.root != tree2.root

@@ -2,8 +2,7 @@ import ast as python_ast
 
 import pytest
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType, McpTransport
+from vystak.schema.common import McpTransport
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
@@ -49,7 +48,6 @@ def anthropic_agent(anthropic_provider):
                 prompt="Show your work step by step.",
             ),
         ],
-        channels=[Channel(name="api", type=ChannelType.API)],
     )
 
 

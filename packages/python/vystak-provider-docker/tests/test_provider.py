@@ -208,8 +208,7 @@ class TestDestroy:
         # Empty containers list for service destroy
         client.containers.list.return_value = []
         provider.set_agent(sample_agent)
-        with patch("vystak_provider_docker.provider.DockerProvider.destroy_gateways"):
-            provider.destroy("test-bot", include_resources=True)
+        provider.destroy("test-bot", include_resources=True)
         container.stop.assert_called_once()
         container.remove.assert_called_once()
 

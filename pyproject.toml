@@ -14,6 +14,7 @@ dev-dependencies = [
     "ruff>=0.8",
     "pyright>=1.1",
     "httpx>=0.28",
+    "fastapi>=0.115",
     "vystak",
     "vystak-cli",
     "vystak-adapter-mastra",
@@ -21,7 +22,7 @@ dev-dependencies = [
     "vystak-provider-docker",
     "vystak-channel-api",
     "vystak-channel-chat",
-    "vystak-gateway",
+    "vystak-channel-slack",
     "vystak-chat",
     "vystak-provider-azure",
 ]
@@ -34,7 +35,7 @@ vystak-adapter-langchain = { workspace = true }
 vystak-provider-docker = { workspace = true }
 vystak-channel-api = { workspace = true }
 vystak-channel-chat = { workspace = true }
-vystak-gateway = { workspace = true }
+vystak-channel-slack = { workspace = true }
 vystak-chat = { workspace = true }
 vystak-provider-azure = { workspace = true }
 
@@ -49,6 +50,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # Code-generation modules emit literal Python source as strings; long lines are inherent.
 "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/a2a.py" = ["E501"]
 "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/templates.py" = ["E501"]
+"packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py" = ["E501"]
+"packages/python/vystak-channel-slack/src/vystak_channel_slack/server_template.py" = ["E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"

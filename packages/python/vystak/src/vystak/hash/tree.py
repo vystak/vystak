@@ -31,6 +31,7 @@ class ChannelHashTree:
     config: str
     routes: str
     runtime: str
+    secrets: str
     root: str
 
 
@@ -101,13 +102,15 @@ def hash_channel(channel: Channel) -> ChannelHashTree:
     routes = _hash_list(channel.routes)
     mode = channel.runtime_mode.value if channel.runtime_mode else "default"
     runtime = _hash_str(f"{channel.type.value}|{mode}")
+    secrets = _hash_list(channel.secrets)
 
-    sections = "|".join([config, routes, runtime])
+    sections = "|".join([config, routes, runtime, secrets])
     root = hashlib.sha256(sections.encode()).hexdigest()
 
     return ChannelHashTree(
         config=config,
         routes=routes,
         runtime=runtime,
+        secrets=secrets,
         root=root,
     )

@@ -1,5 +1,6 @@
 """DockerChannelNode — builds and runs a channel as a Docker container."""
 
+import os
 from pathlib import Path
 
 import docker.errors
@@ -62,6 +63,10 @@ class DockerChannelNode(Provisionable):
             env = {
                 "PORT": str(self._container_port),
             }
+            for secret in self._channel.secrets:
+                value = os.environ.get(secret.name)
+                if value:
+                    env[secret.name] = value
 
             self._client.containers.run(
                 image_tag,

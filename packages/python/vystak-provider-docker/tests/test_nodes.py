@@ -216,18 +216,3 @@ class TestDockerAgentNode:
         assert isinstance(node.health_check(), NoopHealthCheck)
 
 
-class TestDockerGatewayNode:
-    def test_name_and_depends_on(self):
-        from vystak_provider_docker.nodes.gateway import DockerGatewayNode
-
-        client = MagicMock()
-        node = DockerGatewayNode(client, "slack-gw", {}, "my-agent")
-        assert node.name == "gateway:slack-gw"
-        assert node.depends_on == ["agent:my-agent"]
-
-    def test_health_check_is_noop(self):
-        from vystak_provider_docker.nodes.gateway import DockerGatewayNode
-
-        client = MagicMock()
-        node = DockerGatewayNode(client, "slack-gw", {}, "my-agent")
-        assert isinstance(node.health_check(), NoopHealthCheck)

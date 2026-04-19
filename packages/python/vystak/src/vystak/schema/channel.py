@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from vystak.schema.common import ChannelType, NamedModel, RuntimeMode
 from vystak.schema.platform import Platform
+from vystak.schema.secret import Secret
 
 
 class RouteRule(BaseModel):
@@ -30,6 +31,7 @@ class Channel(NamedModel):
     config: dict = {}
     runtime_mode: RuntimeMode | None = None
     routes: list[RouteRule] = []
+    secrets: list[Secret] = []
 
     @property
     def canonical_name(self) -> str:
