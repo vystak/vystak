@@ -10,6 +10,25 @@
 
 ---
 
+## Plan Errata (2026-04-19, post-Task-1)
+
+When writing the plan I mis-modelled the existing schema: the spec referenced a top-level `Workspace` bundle with `.agents`, `.platforms`, `.transports`, `.services` lists. **That class does not exist in this codebase.** The existing `Workspace` is a per-agent execution sandbox (filesystem / terminal / browser flags). Users declare `Agent`, `Channel`, `Platform`, etc. as module-level variables in `vystak.py`; the CLI loader scans the module for `Agent` and `Channel` instances into a `Definitions` dataclass.
+
+**The repo-wide pattern is embedded objects, not name-refs**: `Agent.platform: Platform`, `Platform.provider: Provider`. This plan is realigned to use the same pattern for transport.
+
+**Realignment (decided 2026-04-19, user-approved):**
+
+- `Platform` gains `transport: Transport | None = None` — a direct instance, not a name ref. Populated by a `Platform` model-validator that synthesises `Transport(name="default-http", type="http")` when unset.
+- No top-level `Workspace.transports` list; no synthesis logic on a bundle.
+- `EnvironmentOverride` (renamed from `WorkspaceOverride`) operates on the `Definitions` dataclass produced by the loader, not on a `Workspace`. Shape: `{platforms: dict[str, PlatformOverride]}` where `PlatformOverride.transport: Transport | None` replaces `platform.transport` wholesale.
+- No new transport-scanning in the CLI loader — transports are embedded in platforms, so overlays find them by walking `definitions.agents` and inspecting `.platform`.
+
+**Tasks affected:** 2 (rewritten below), 17, 18, 19, 20, 21, 22, 23. Tasks 1, 3–16, and 24–26 are unaffected (they touch `vystak.transport` internals, which are orthogonal to the schema wiring). **Tasks 17–23 must be rewritten in-place when the plan reaches them** — they currently still reference the old Workspace model; do not execute them as-written.
+
+The spec document (`docs/superpowers/specs/2026-04-19-transport-abstraction-design.md`) will get a matching erratum when the plan reaches Task 25 (docs).
+
+---
+
 ## Important Notes for the Engineer
 
 - **Package name is `vystak`, not `agentstack`.** Older plans in this directory reference the legacy name; ignore that.
@@ -304,176 +323,155 @@ integration lands in a follow-up commit."
 
 ---
 
-### Task 2: Platform.transport + Workspace.transports fields
+### Task 2: Embed `transport` on `Platform`
 
 **Files:**
 - Modify: `packages/python/vystak/src/vystak/schema/platform.py`
-- Modify: `packages/python/vystak/src/vystak/schema/workspace.py`
 - Modify: `packages/python/vystak/tests/schema/test_transport_schema.py`
 
-- [ ] **Step 1: Add failing tests**
+**What this task does:** Add `transport: Transport | None = None` to `Platform`. A `model_validator(mode="after")` on `Platform` fills in a default `Transport(name="default-http", type="http")` when unset. This is the embedded-object pattern (matching `Platform.provider: Provider`).
 
-Append to `packages/python/vystak/tests/schema/test_transport_schema.py`:
+**Before you begin, read:**
+- `packages/python/vystak/src/vystak/schema/platform.py` — current `Platform` shape. Its fields today are `type: str`, `provider: Provider`, `namespace: str = "default"`, `config: dict = {}`. It already inherits from `NamedModel`.
+- `packages/python/vystak/src/vystak/schema/transport.py` (committed in Task 1) — the `Transport` model.
+
+- [ ] **Step 1: Write failing tests**
+
+Append to `packages/python/vystak/tests/schema/test_transport_schema.py` (keep existing imports; the file already imports `pytest`, `ValidationError`, and the transport models):
 
 ```python
-from vystak.schema import Agent, Model, Platform, Provider, Workspace
+from vystak.schema import Platform, Provider
 
 
 class TestPlatformTransport:
-    def _agent(self):
-        return Agent(
-            name="a",
-            model=Model(
-                name="m",
-                provider=Provider(type="anthropic", api_key_env="K"),
+    def _provider(self) -> Provider:
+        return Provider(name="docker", type="docker")
+
+    def test_default_transport_synthesized(self):
+        """Platform without an explicit transport gets a default-http."""
+        p = Platform(name="main", type="docker", provider=self._provider())
+        assert p.transport is not None
+        assert p.transport.name == "default-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_http_transport_preserved(self):
+        p = Platform(
+            name="main",
+            type="docker",
+            provider=self._provider(),
+            transport=Transport(name="my-http", type="http"),
+        )
+        assert p.transport.name == "my-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_nats_transport_preserved(self):
+        p = Platform(
+            name="aca",
+            type="container-apps",
+            provider=Provider(name="azure", type="azure"),
+            transport=Transport(
+                name="bus",
+                type="nats",
+                config=NatsConfig(jetstream=True),
             ),
         )
+        assert p.transport.type == "nats"
+        assert p.transport.config.jetstream is True
 
-    def test_platform_transport_optional(self):
-        p = Platform(name="p", provider="docker")
-        assert p.transport is None
+    def test_transport_config_mismatch_still_rejected(self):
+        """The Transport-level validator (from Task 1) still fires when
+        Transport is embedded in a Platform."""
+        with pytest.raises(ValidationError, match="config.type"):
+            Platform(
+                name="main",
+                type="docker",
+                provider=self._provider(),
+                transport=Transport(
+                    name="bus", type="nats", config=HttpConfig()
+                ),
+            )
 
-    def test_platform_transport_by_name(self):
-        p = Platform(name="p", provider="docker", transport="bus")
-        assert p.transport == "bus"
-
-
-class TestWorkspaceTransports:
-    def _agent(self):
-        return Agent(
-            name="a",
-            model=Model(
-                name="m",
-                provider=Provider(type="anthropic", api_key_env="K"),
-            ),
-        )
-
-    def test_workspace_default_synthesizes_http(self):
-        p = Platform(name="main", provider="docker")
-        ws = Workspace(agents=[self._agent()], platforms=[p])
-        names = [t.name for t in ws.transports]
-        assert "default-http" in names
-        default = next(t for t in ws.transports if t.name == "default-http")
-        assert default.type == "http"
-
-    def test_workspace_custom_transport_used_as_is(self):
-        t = Transport(name="bus", type="nats")
-        p = Platform(name="main", provider="docker", transport="bus")
-        ws = Workspace(agents=[self._agent()], platforms=[p], transports=[t])
-        assert [t.name for t in ws.transports] == ["bus"]
-        # Platform still references the user-provided name
-        assert ws.platforms[0].transport == "bus"
-
-    def test_workspace_platform_without_transport_gets_default(self):
-        p = Platform(name="main", provider="docker")
-        ws = Workspace(agents=[self._agent()], platforms=[p])
-        # Platform's transport field was filled in with the synthesised default
-        assert ws.platforms[0].transport == "default-http"
-
-    def test_workspace_rejects_unknown_transport_ref(self):
-        p = Platform(name="main", provider="docker", transport="nonexistent")
-        with pytest.raises(ValidationError, match="transport 'nonexistent'"):
-            Workspace(agents=[self._agent()], platforms=[p])
+    def test_default_transport_is_a_new_instance_per_platform(self):
+        """Two platforms should not share the same default-http instance —
+        mutating one must not affect the other."""
+        p1 = Platform(name="a", type="docker", provider=self._provider())
+        p2 = Platform(name="b", type="docker", provider=self._provider())
+        assert p1.transport is not p2.transport
 ```
 
 - [ ] **Step 2: Run tests to see them fail**
 
 ```bash
-uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v
+uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v -k TestPlatformTransport
 ```
 
-Expected: new tests FAIL with AttributeError or ValidationError (field doesn't exist yet).
+Expected: tests fail with `Platform` rejecting the `transport=` kwarg (field doesn't exist yet).
 
-- [ ] **Step 3: Add `transport` field to `Platform`**
+- [ ] **Step 3: Add the `transport` field and default-synthesis validator to `Platform`**
 
-In `packages/python/vystak/src/vystak/schema/platform.py`, add a new field alongside the existing fields. Locate the `class Platform(BaseModel):` declaration and add:
-
-```python
-    transport: str | None = None
-```
-
-Position it after `provider` and before any `services` or `channels` fields to preserve logical grouping. Place above any existing `model_config`.
-
-- [ ] **Step 4: Add `transports` list + synthesize/validate in `Workspace`**
-
-Open `packages/python/vystak/src/vystak/schema/workspace.py`. Add import:
+Open `packages/python/vystak/src/vystak/schema/platform.py` and replace its body with:
 
 ```python
+"""Platform model — deployment target for agents."""
+
+from typing import Self
+
+from pydantic import model_validator
+
+from vystak.schema.common import NamedModel
+from vystak.schema.provider import Provider
 from vystak.schema.transport import Transport
-```
 
-In the `class Workspace(BaseModel):` body, add the new field next to `agents`, `channels`, `services`:
 
-```python
-    transports: list[Transport] = Field(default_factory=list)
-```
+class Platform(NamedModel):
+    """A deployment target where agents run."""
 
-Then add a model validator that runs *after* base validation. Import `model_validator` if not already imported. Add:
+    type: str
+    provider: Provider
+    namespace: str = "default"
+    config: dict = {}
+    transport: Transport | None = None
 
-```python
     @model_validator(mode="after")
-    def _synthesize_and_validate_transports(self) -> "Workspace":
-        # Synthesize a default HTTP transport if none declared.
-        if not self.transports:
-            self.transports = [Transport(name="default-http", type="http")]
-
-        transport_names = {t.name for t in self.transports}
-
-        # Default any platform without an explicit transport to the first one.
-        # If multiple transports exist and a platform has no transport set,
-        # require the user to be explicit.
-        default_name = (
-            "default-http"
-            if "default-http" in transport_names and len(transport_names) == 1
-            else None
-        )
-
-        for platform in self.platforms:
-            if platform.transport is None:
-                if default_name is None:
-                    raise ValueError(
-                        f"platform '{platform.name}' has no transport set and "
-                        f"multiple transports are declared ({sorted(transport_names)}); "
-                        f"set Platform.transport explicitly"
-                    )
-                platform.transport = default_name
-            elif platform.transport not in transport_names:
-                raise ValueError(
-                    f"platform '{platform.name}' references transport "
-                    f"'{platform.transport}' which is not declared in "
-                    f"Workspace.transports (have: {sorted(transport_names)})"
-                )
+    def _default_transport(self) -> Self:
+        if self.transport is None:
+            self.transport = Transport(name="default-http", type="http")
         return self
 ```
 
-- [ ] **Step 5: Run tests and verify they pass**
+Notes:
+- The validator synthesises a **new** `Transport` instance each time (critical for the `test_default_transport_is_a_new_instance_per_platform` test — Pydantic would otherwise share a class-level default).
+- `Self` comes from `typing` (Python 3.11+); matches the existing style of `agent.py`.
+
+- [ ] **Step 4: Run tests and verify they pass**
 
 ```bash
-uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v
+uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v -k TestPlatformTransport
 ```
 
-Expected: all tests PASS (old + new).
+Expected: 5/5 new tests pass.
 
-- [ ] **Step 6: Run full test suite to check for regressions**
+- [ ] **Step 5: Run full lint + test**
 
 ```bash
-just test-python && just lint-python
+just lint-python && just test-python
 ```
 
-Expected: PASS. If pre-existing `Workspace` tests break because they now get a default-http transport, inspect the failing test — it probably asserts `len(ws.transports) == 0`, which should be updated to acknowledge the synthesized default. Fix only the assertion; do not change test intent.
+Expected: PASS. If any pre-existing `Platform`-using tests break because they now assert `platform.transport is None`, update only the failing assertion to `platform.transport.type == "http"` or `platform.transport.name == "default-http"` — do not change test intent.
 
-- [ ] **Step 7: Commit**
+If `just fmt-python` auto-fixes anything (import ordering, line length), stage the formatted files and include them in the commit.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/python/vystak/src/vystak/schema/platform.py \
-        packages/python/vystak/src/vystak/schema/workspace.py \
         packages/python/vystak/tests/schema/test_transport_schema.py
-git commit -m "feat(schema): wire Transport into Platform and Workspace
+git commit -m "feat(schema): embed Transport on Platform
 
-Adds Platform.transport (name ref) and Workspace.transports (list). If no
-transport is declared, Workspace synthesises a 'default-http' transport
-and assigns it to every platform. Referencing an unknown transport fails
-validation."
+Platform gains a transport: Transport | None field. A model_validator
+synthesises Transport(name='default-http', type='http') when unset so
+every platform always resolves to a concrete transport. Matches the
+existing embedded-object pattern (Platform.provider: Provider)."
 ```
 
 ---
