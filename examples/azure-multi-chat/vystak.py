@@ -74,6 +74,36 @@ time_agent = ast.Agent(
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 
+# The assistant agent coordinates the other two via A2A. Its tool files
+# (tools/ask_weather_agent.py, tools/ask_time_agent.py) read peer URLs
+# from `WEATHER_AGENT_URL` / `TIME_AGENT_URL` env vars. On Azure these
+# must be exported to the shell running `vystak apply` after weather and
+# time have been deployed once — e.g.
+#
+#   export WEATHER_AGENT_URL=https://weather-agent.<env>.azurecontainerapps.io
+#   export TIME_AGENT_URL=https://time-agent.<env>.azurecontainerapps.io
+#
+# On Docker the defaults (`http://vystak-<name>:8000` on vystak-net) work.
+assistant_agent = ast.Agent(
+    name="assistant-agent",
+    instructions=(
+        "You are a coordinator. For weather questions use ask_weather_agent; "
+        "for time questions use ask_time_agent. Call both tools when the user "
+        "asks a combined question (e.g. 'what is the weather and time'). "
+        "Synthesize the answers into a concise single reply."
+    ),
+    model=llm,
+    platform=platform,
+    skills=[
+        ast.Skill(name="coordinator", tools=["ask_weather_agent", "ask_time_agent"]),
+    ],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="WEATHER_AGENT_URL"),
+        ast.Secret(name="TIME_AGENT_URL"),
+    ],
+)
+
 chat = ast.Channel(
     name="chat",
     type=ast.ChannelType.CHAT,
@@ -82,5 +112,6 @@ chat = ast.Channel(
     routes=[
         ast.RouteRule(match={}, agent="weather-agent"),
         ast.RouteRule(match={}, agent="time-agent"),
+        ast.RouteRule(match={}, agent="assistant-agent"),
     ],
 )

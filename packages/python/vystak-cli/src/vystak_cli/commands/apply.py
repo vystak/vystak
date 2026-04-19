@@ -61,7 +61,18 @@ def apply(files, file_path, force):
 
         if not deploy_plan.actions and not force:
             click.echo("  No changes. Already up to date.")
-            deployed_agents.append({"name": agent.name, "url": "(unchanged)", "agent": agent})
+            # Still fetch the live URL so downstream channel route-resolution
+            # has this agent on the map. Without this, rebuilt channels lose
+            # routes for agents that didn't change this apply.
+            resolved_url = "(unchanged)"
+            try:
+                live_status = provider.status(agent.name)
+                info = getattr(live_status, "info", {}) or {}
+                if info.get("url"):
+                    resolved_url = info["url"]
+            except Exception:
+                pass
+            deployed_agents.append({"name": agent.name, "url": resolved_url, "agent": agent})
             continue
 
         if not deploy_plan.actions and force:
