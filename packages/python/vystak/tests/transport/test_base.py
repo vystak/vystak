@@ -39,9 +39,7 @@ class FakeTransport(Transport):
         self.sent.append((agent, message))
         return A2AResult(text="ack", correlation_id=message.correlation_id)
 
-    async def serve(
-        self, canonical_name: str, handler: A2AHandlerProtocol
-    ) -> None:
+    async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
         self.served.append(canonical_name)
 
 

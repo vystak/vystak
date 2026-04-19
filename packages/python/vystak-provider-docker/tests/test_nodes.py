@@ -214,5 +214,3 @@ class TestDockerAgentNode:
         agent.services = []
         node = DockerAgentNode(client, agent, MagicMock(), MagicMock())
         assert isinstance(node.health_check(), NoopHealthCheck)
-
-

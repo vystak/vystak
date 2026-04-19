@@ -154,9 +154,7 @@ class TestPlatformTransport:
                 name="main",
                 type="docker",
                 provider=self._provider(),
-                transport=Transport(
-                    name="bus", type="nats", config=HttpConfig()
-                ),
+                transport=Transport(name="bus", type="nats", config=HttpConfig()),
             )
 
     def test_default_transport_is_a_new_instance_per_platform(self):

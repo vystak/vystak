@@ -208,9 +208,7 @@ async def _stream_response(
                 )
                 console.print("[dim]  > result:[/dim]")
                 console.print(Padding(Markdown(result_preview), (0, 0, 0, 4)))
-                status = console.status(
-                    f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]"
-                )
+                status = console.status(f"[agent]{agent_name}[/agent] [dim]thinking...[/dim]")
                 status.start()
 
             elif event.type == "done":
@@ -404,9 +402,7 @@ class ChatREPL:
         self._previous_response_id = None
 
         console.print(f"[success]Connected to chat channel at {url}[/success]")
-        agents_list = ", ".join(
-            f"[agent]{m.removeprefix('vystak/')}[/agent]" for m in model_ids
-        )
+        agents_list = ", ".join(f"[agent]{m.removeprefix('vystak/')}[/agent]" for m in model_ids)
         console.print(f"[dim]Routed agents:[/dim] {agents_list}")
         console.print(
             f"[dim]Active model:[/dim] [agent]{default_model}[/agent]  "
@@ -666,10 +662,7 @@ class ChatREPL:
 
         items = [
             {
-                "label": (
-                    f"{m.removeprefix('vystak/')}"
-                    f"{' (active)' if m == self._model else ''}"
-                ),
+                "label": (f"{m.removeprefix('vystak/')}{' (active)' if m == self._model else ''}"),
                 "detail": m,
                 "model": m,
             }
@@ -684,13 +677,10 @@ class ChatREPL:
         """Switch the active model within the current chat channel: /model <name>."""
         name = args.strip()
         if not name:
-            console.print(
-                f"[system]Active model:[/system] [agent]{self._model or 'none'}[/agent]"
-            )
+            console.print(f"[system]Active model:[/system] [agent]{self._model or 'none'}[/agent]")
             if self._available_models:
                 console.print(
-                    "[system]Available:[/system] "
-                    + ", ".join(m for m in self._available_models)
+                    "[system]Available:[/system] " + ", ".join(m for m in self._available_models)
                 )
             return
 
@@ -857,9 +847,7 @@ def run_repl(auto_connect_url: str | None = None, auto_gateway_url: str | None =
     asyncio.run(_run())
 
 
-def run_oneshot(
-    url: str | None = None, message: str = "", model_override: str | None = None
-):
+def run_oneshot(url: str | None = None, message: str = "", model_override: str | None = None):
     """Send a single message and exit. For scripting/piping.
 
     Works against direct agents, legacy gateways, and vystak-channel-chat
@@ -940,8 +928,7 @@ def run_oneshot(
         )
         if result.total_tokens:
             console.print(
-                f"\n[dim]tokens: {result.input_tokens} in"
-                f" / {result.output_tokens} out[/dim]"
+                f"\n[dim]tokens: {result.input_tokens} in / {result.output_tokens} out[/dim]"
             )
 
     asyncio.run(_run())

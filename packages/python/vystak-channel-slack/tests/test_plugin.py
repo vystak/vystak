@@ -85,9 +85,7 @@ class TestSlackChannelPlugin:
 
     def test_thread_name_in_channel(self):
         plugin = SlackChannelPlugin()
-        name = plugin.thread_name(
-            {"channel": "C0123", "thread_ts": "1705.111", "ts": "1705.222"}
-        )
+        name = plugin.thread_name({"channel": "C0123", "thread_ts": "1705.111", "ts": "1705.222"})
         assert name == "thread:slack:C0123:1705.111"
 
     def test_thread_name_dm(self):

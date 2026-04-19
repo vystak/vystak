@@ -19,6 +19,4 @@ def get_provider(deployable: Agent | Channel) -> PlatformProvider:
 
         return AzureProvider()
 
-    raise ValueError(
-        f"Unknown provider type: '{platform.provider.type}'. Supported: docker, azure"
-    )
+    raise ValueError(f"Unknown provider type: '{platform.provider.type}'. Supported: docker, azure")

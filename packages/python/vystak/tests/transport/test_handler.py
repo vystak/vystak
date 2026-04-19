@@ -18,9 +18,7 @@ async def _echo_handler(msg: A2AMessage, metadata: dict) -> str:
     return f"echo:{text}"
 
 
-async def _streaming_echo(
-    msg: A2AMessage, metadata: dict
-) -> AsyncIterator[A2AEvent]:
+async def _streaming_echo(msg: A2AMessage, metadata: dict) -> AsyncIterator[A2AEvent]:
     text = msg.parts[0]["text"] if msg.parts else ""
     for ch in text:
         yield A2AEvent(type="token", text=ch)

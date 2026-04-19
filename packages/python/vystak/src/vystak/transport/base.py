@@ -83,9 +83,7 @@ class Transport(ABC):
         yield A2AEvent(type="final", text=result.text, final=True)
 
     @abstractmethod
-    async def serve(
-        self, canonical_name: str, handler: A2AHandlerProtocol
-    ) -> None:
+    async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
         """Join the load-balanced group for this agent and feed incoming
         messages into `handler`.
 

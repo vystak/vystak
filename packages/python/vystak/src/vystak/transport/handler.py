@@ -21,9 +21,7 @@ from vystak.transport.types import (
 )
 
 OneShotCallable = Callable[[A2AMessage, dict[str, Any]], Awaitable[str]]
-StreamingCallable = Callable[
-    [A2AMessage, dict[str, Any]], AsyncIterator[A2AEvent]
-]
+StreamingCallable = Callable[[A2AMessage, dict[str, Any]], AsyncIterator[A2AEvent]]
 
 
 class A2AHandler:
@@ -38,9 +36,7 @@ class A2AHandler:
         self._one_shot = one_shot
         self._streaming = streaming
 
-    async def dispatch(
-        self, message: A2AMessage, metadata: dict[str, Any]
-    ) -> A2AResult:
+    async def dispatch(self, message: A2AMessage, metadata: dict[str, Any]) -> A2AResult:
         """Run the one-shot path and wrap the returned text as `A2AResult`.
 
         The agent callable's exceptions propagate. The transport caller is

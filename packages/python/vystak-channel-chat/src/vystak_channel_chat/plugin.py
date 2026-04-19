@@ -33,9 +33,7 @@ class ChatChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = ChatChannelConfig
 
-    def generate_code(
-        self, channel: Channel, resolved_routes: dict[str, str]
-    ) -> GeneratedCode:
+    def generate_code(self, channel: Channel, resolved_routes: dict[str, str]) -> GeneratedCode:
         routes_json = json.dumps(resolved_routes, indent=2)
         return GeneratedCode(
             files={
@@ -47,9 +45,7 @@ class ChatChannelPlugin(ChannelPlugin):
             entrypoint="server.py",
         )
 
-    def provision_nodes(
-        self, channel: Channel, platform: Platform
-    ) -> list["Provisionable"]:
+    def provision_nodes(self, channel: Channel, platform: Platform) -> list["Provisionable"]:
         # Platform provider builds the actual DockerChannelNode from GeneratedCode.
         # Returning empty here keeps the plugin platform-agnostic; the Docker
         # provider's apply_channel wires things up.

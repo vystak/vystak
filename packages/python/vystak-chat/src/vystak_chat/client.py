@@ -165,8 +165,6 @@ async def list_models(url: str) -> list[dict]:
         return []
 
 
-
-
 async def health(url: str) -> dict | None:
     """Check agent health."""
     try:

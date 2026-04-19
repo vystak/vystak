@@ -154,9 +154,7 @@ def apply(files, file_path, force):
 
         if result.success:
             click.echo("  OK")
-            deployed_channels.append(
-                {"name": channel.name, "channel": channel, "result": result}
-            )
+            deployed_channels.append({"name": channel.name, "channel": channel, "result": result})
         else:
             click.echo("FAILED")
             click.echo(f"  Error: {result.message}", err=True)
@@ -196,9 +194,7 @@ def _resolve_agent_urls(deployed_agents: list[dict]) -> dict[str, str]:
     return urls
 
 
-def _print_summary(
-    deployed_agents: list[dict], deployed_channels: list[dict]
-) -> None:
+def _print_summary(deployed_agents: list[dict], deployed_channels: list[dict]) -> None:
     click.echo("\n" + "=" * 60)
     click.echo(
         f"Deployment complete — {len(deployed_agents)} agent(s), "
