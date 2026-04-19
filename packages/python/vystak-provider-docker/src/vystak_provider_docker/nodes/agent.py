@@ -13,11 +13,20 @@ from vystak.schema.agent import Agent
 class DockerAgentNode(Provisionable):
     """Builds a Docker image and runs an agent container."""
 
-    def __init__(self, client, agent: Agent, generated_code: GeneratedCode, plan: DeployPlan):
+    def __init__(
+        self,
+        client,
+        agent: Agent,
+        generated_code: GeneratedCode,
+        plan: DeployPlan,
+        *,
+        peer_routes_json: str = "{}",
+    ):
         self._client = client
         self._agent = agent
         self._generated_code = generated_code
         self._plan = plan
+        self._peer_routes_json = peer_routes_json
 
     @property
     def name(self) -> str:
@@ -103,7 +112,10 @@ class DockerAgentNode(Provisionable):
             self._client.images.build(path=str(build_dir), tag=image_tag)
 
             # Build env vars
-            env = {}
+            env: dict[str, str] = {
+                "VYSTAK_TRANSPORT_TYPE": "http",
+                "VYSTAK_ROUTES_JSON": self._peer_routes_json,
+            }
             for secret in self._agent.secrets:
                 value = os.environ.get(secret.name)
                 if value:
