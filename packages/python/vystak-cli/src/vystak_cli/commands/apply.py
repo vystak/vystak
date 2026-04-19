@@ -4,6 +4,10 @@ from pathlib import Path
 
 import click
 from vystak_adapter_langchain import LangChainAdapter
+from vystak_provider_docker.transport_wiring import (
+    build_routes_json,
+    get_transport_plugin,
+)
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
@@ -88,7 +92,15 @@ def apply(files, file_path, force):
 
             provider.set_listener(PrintListener(indent="    "))
 
-        result = provider.apply(deploy_plan)
+        peer_routes: str | None = None
+        if agent.platform is not None:
+            try:
+                plugin = get_transport_plugin(agent.platform.transport.type)
+                peer_routes = build_routes_json(list(defs.agents), plugin, agent.platform)
+            except (KeyError, Exception):
+                pass
+
+        result = provider.apply(deploy_plan, peer_routes=peer_routes)
 
         if result.success:
             click.echo("  OK")
@@ -106,7 +118,6 @@ def apply(files, file_path, force):
             raise SystemExit(1)
 
     deployed_channels: list[dict] = []
-    agent_urls = _resolve_agent_urls(deployed_agents)
 
     for channel in defs.channels:
         click.echo(f"\nChannel: {channel.name}")
@@ -128,12 +139,24 @@ def apply(files, file_path, force):
             click.echo("  No changes detected, forcing redeploy.")
             deploy_plan.actions.append("Force redeploy")
 
-        resolved_routes = {
-            rule.agent: agent_urls[rule.agent]
-            for rule in channel.routes
-            if rule.agent in agent_urls
-        }
-        missing = [rule.agent for rule in channel.routes if rule.agent not in agent_urls]
+        agents_by_name = {a["name"]: a["agent"] for a in deployed_agents}
+
+        resolved_routes: dict[str, dict[str, str]] = {}
+        for rule in channel.routes:
+            if rule.agent in agents_by_name:
+                peer_agent = agents_by_name[rule.agent]
+                if peer_agent.platform is None:
+                    continue
+                try:
+                    plugin = get_transport_plugin(peer_agent.platform.transport.type)
+                    resolved_routes[rule.agent] = {
+                        "canonical": peer_agent.canonical_name,
+                        "address": plugin.resolve_address_for(peer_agent, peer_agent.platform),
+                    }
+                except (KeyError, Exception):
+                    pass
+
+        missing = [rule.agent for rule in channel.routes if rule.agent not in resolved_routes]
         if missing:
             click.echo(
                 f"  Warning: route targets not deployed: {', '.join(missing)}",
