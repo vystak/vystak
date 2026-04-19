@@ -45,6 +45,15 @@ from vystak.schema.resource import (
 from vystak.schema.secret import Secret
 from vystak.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from vystak.schema.skill import Skill, SkillRequirements
+from vystak.schema.transport import (
+    HttpConfig,
+    NatsConfig,
+    ServiceBusConfig,
+    Transport,
+    TransportConfig,
+    TransportConnection,
+    TransportType,
+)
 from vystak.schema.workspace import Workspace
 
 __all__ = [
@@ -75,6 +84,13 @@ __all__ = [
     "Skill",
     "SkillRequirements",
     "Sqlite",
+    "Transport",
+    "TransportConfig",
+    "TransportConnection",
+    "TransportType",
+    "HttpConfig",
+    "NatsConfig",
+    "ServiceBusConfig",
     "VectorStore",
     "Workspace",
     "WorkspaceType",
