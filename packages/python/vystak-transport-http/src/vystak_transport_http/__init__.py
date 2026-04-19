@@ -1,3 +1,5 @@
 """HTTP transport implementation for Vystak."""
 
-__all__: list[str] = []  # populated in later tasks
+from vystak_transport_http.transport import HttpTransport
+
+__all__ = ["HttpTransport"]
