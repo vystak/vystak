@@ -12,9 +12,10 @@ import os
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -28,6 +29,11 @@ def _load_routes() -> dict:
 
 
 ROUTES: dict[str, str] = _load_routes()
+
+# response_id -> agent_name. Populated by /v1/responses proxy so GETs for a
+# stored response land on the agent that created it. In-memory and non-HA:
+# restart drops the map and old IDs 404 until the client retries.
+_RESPONSE_OWNERS: dict[str, str] = {}
 
 
 class ChatMessage(BaseModel):
@@ -255,6 +261,191 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
             # Still emit finish + [DONE] so OpenAI clients don't hang.
             yield _chunk({}, finish_reason="stop")
             yield "data: [DONE]\\n\\n"
+
+
+@app.post("/v1/responses")
+async def create_response(request: Request):
+    """Proxy OpenAI Responses API to the target agent.
+
+    Unlike /v1/chat/completions we don't translate A2A — agents already emit
+    the Responses API shape (the LangChain adapter's /v1/responses endpoint).
+    Just route by `model` and forward the bytes.
+    """
+    try:
+        body: dict[str, Any] = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": "Invalid JSON body",
+                    "type": "invalid_request_error",
+                    "code": "invalid_request",
+                }
+            },
+        )
+
+    model = body.get("model", "") or ""
+    agent_name = model.removeprefix("vystak/")
+    if agent_name not in ROUTES:
+        return _not_found(model)
+
+    agent_url = ROUTES[agent_name]
+    streaming = bool(body.get("stream", False))
+
+    # Guard cross-agent response chaining — previous_response_id is only valid
+    # on the agent that created it.
+    prev_id = body.get("previous_response_id")
+    if prev_id:
+        owner = _RESPONSE_OWNERS.get(prev_id)
+        if owner is not None and owner != agent_name:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "message": (
+                            f"previous_response_id belongs to agent '{owner}' — "
+                            f"cannot chain to agent '{agent_name}'"
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "invalid_previous_response",
+                    }
+                },
+            )
+
+    if streaming:
+        return StreamingResponse(
+            _proxy_responses_stream(agent_url, agent_name, body),
+            media_type="text/event-stream",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{agent_url}/v1/responses", json=body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": f"Upstream agent error: {e}",
+                    "type": "upstream_error",
+                    "code": "agent_unreachable",
+                }
+            },
+        )
+
+    try:
+        payload = resp.json()
+    except Exception:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": "Upstream returned non-JSON response",
+                    "type": "upstream_error",
+                    "code": "agent_unreachable",
+                }
+            },
+        )
+
+    resp_id = payload.get("id") if isinstance(payload, dict) else None
+    if resp_id:
+        _RESPONSE_OWNERS[resp_id] = agent_name
+
+    return JSONResponse(status_code=resp.status_code, content=payload)
+
+
+async def _proxy_responses_stream(agent_url: str, agent_name: str, body: dict):
+    """Stream /v1/responses SSE from agent through to client byte-for-byte."""
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            async with client.stream(
+                "POST", f"{agent_url}/v1/responses", json=body
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    # Preserve line structure; SSE is line-delimited
+                    if not line:
+                        yield "\\n"
+                        continue
+
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str and data_str != "[DONE]":
+                            try:
+                                event = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                event = None
+                            if isinstance(event, dict):
+                                resp_obj = event.get("response")
+                                if isinstance(resp_obj, dict):
+                                    rid = resp_obj.get("id")
+                                    if isinstance(rid, str):
+                                        _RESPONSE_OWNERS[rid] = agent_name
+
+                    yield line + "\\n"
+    except httpx.HTTPError as e:
+        err = {
+            "error": {
+                "message": f"Upstream agent error: {e}",
+                "type": "upstream_error",
+                "code": "agent_unreachable",
+            }
+        }
+        yield f"data: {json.dumps(err)}\\n\\n"
+        yield "data: [DONE]\\n\\n"
+
+
+@app.get("/v1/responses/{response_id}")
+async def get_response(response_id: str):
+    """Look up the owning agent from the in-memory map and proxy the GET."""
+    owner = _RESPONSE_OWNERS.get(response_id)
+    if owner is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "message": (
+                        f"Response '{response_id}' not found on this chat channel. "
+                        f"Responses created before restart are not retained."
+                    ),
+                    "type": "invalid_request_error",
+                    "code": "response_not_found",
+                }
+            },
+        )
+
+    if owner not in ROUTES:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": f"Owning agent '{owner}' is no longer routed",
+                    "type": "upstream_error",
+                    "code": "agent_unreachable",
+                }
+            },
+        )
+
+    agent_url = ROUTES[owner]
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(f"{agent_url}/v1/responses/{response_id}")
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": f"Upstream agent error: {e}",
+                    "type": "upstream_error",
+                    "code": "agent_unreachable",
+                }
+            },
+        )
+
+    try:
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception:
+        return JSONResponse(status_code=resp.status_code, content={"id": response_id})
 
 
 if __name__ == "__main__":

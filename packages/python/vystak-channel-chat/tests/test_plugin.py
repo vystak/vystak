@@ -200,3 +200,82 @@ class TestServerTemplateStreaming:
         from vystak_channel_chat.server_template import SERVER_PY
 
         assert "if request.stream:" in SERVER_PY
+
+
+class TestServerTemplateResponsesApi:
+    """The chat channel should also expose OpenAI Responses API routes."""
+
+    def test_template_has_v1_responses_post(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert '@app.post("/v1/responses")' in SERVER_PY
+        assert "async def create_response(" in SERVER_PY
+
+    def test_template_has_v1_responses_get(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert '@app.get("/v1/responses/{response_id}")' in SERVER_PY
+        assert "async def get_response(" in SERVER_PY
+
+    def test_template_tracks_response_owners(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_RESPONSE_OWNERS" in SERVER_PY
+
+    def test_template_guards_cross_agent_chaining(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        # previous_response_id must belong to the same agent
+        assert "previous_response_id" in SERVER_PY
+        assert "invalid_previous_response" in SERVER_PY
+
+    def test_template_proxies_responses_stream(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_proxy_responses_stream" in SERVER_PY
+
+
+class TestGeneratedResponsesApi:
+    """Execute the generated server's Responses API via TestClient."""
+
+    def _boot_generated_app(self, tmp_path, routes):
+        import runpy
+        import sys
+
+        plugin = ChatChannelPlugin()
+        code = plugin.generate_code(_channel(), routes)
+        for name, content in code.files.items():
+            (tmp_path / name).write_text(content)
+        import os
+
+        os.environ["ROUTES_PATH"] = str(tmp_path / "routes.json")
+        sys.path.insert(0, str(tmp_path))
+        try:
+            module_globals = runpy.run_path(
+                str(tmp_path / "server.py"),
+                run_name="__channel_chat_test__",
+            )
+        finally:
+            sys.path.remove(str(tmp_path))
+        return module_globals["app"]
+
+    def test_responses_unknown_model_returns_404(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/responses",
+            json={"model": "vystak/unknown-agent", "input": "hi"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "model_not_found"
+
+    def test_responses_get_unknown_id_returns_404(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        client = TestClient(app)
+        resp = client.get("/v1/responses/resp-never-created")
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "response_not_found"
