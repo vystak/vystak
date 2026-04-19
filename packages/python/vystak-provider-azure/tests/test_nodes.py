@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from vystak.provisioning.health import HttpHealthCheck, NoopHealthCheck
 from vystak.provisioning.node import ProvisionResult
 from vystak_provider_azure.nodes.aca_app import ContainerAppNode
+from vystak_provider_azure.nodes.aca_channel_app import AzureChannelAppNode
 from vystak_provider_azure.nodes.aca_environment import ACAEnvironmentNode
 from vystak_provider_azure.nodes.acr import ACRNode
 from vystak_provider_azure.nodes.log_analytics import LogAnalyticsNode
@@ -392,3 +393,152 @@ class TestContainerAppNode:
         env_names = [e["name"] if isinstance(e, dict) else e.name for e in env_list]
         assert "SESSION_STORE_URL" in env_names
         assert "MEMORY_STORE_URL" in env_names
+
+
+# ---------------------------------------------------------------------------
+# AzureChannelAppNode
+# ---------------------------------------------------------------------------
+
+
+class TestAzureChannelAppNode:
+    def _make_node(self, generated_code=None, platform_config=None):
+        from vystak.providers.base import DeployPlan, GeneratedCode
+        from vystak.schema.channel import Channel, RouteRule
+        from vystak.schema.common import ChannelType
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+
+        prov = Provider(name="azure", type="azure", config={})
+        platform = Platform(name="aca", type="container-apps", provider=prov)
+        channel = Channel(
+            name="chat",
+            type=ChannelType.CHAT,
+            platform=platform,
+            routes=[RouteRule(agent="x")],
+            secrets=[Secret(name="SLACK_BOT_TOKEN")],
+            config={"port": 8080},
+        )
+        plan = DeployPlan(
+            agent_name="chat",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="hash-abc",
+            changes={},
+        )
+        code = generated_code or GeneratedCode(
+            files={
+                "server.py": "# stub\n",
+                "Dockerfile": "FROM python:3.11-slim\nWORKDIR /app\n",
+                "requirements.txt": "fastapi\n",
+                "routes.json": "{}\n",
+            },
+            entrypoint="server.py",
+        )
+        return AzureChannelAppNode(
+            aca_client=MagicMock(),
+            docker_client=MagicMock(),
+            rg_name="test-rg",
+            channel=channel,
+            generated_code=code,
+            plan=plan,
+            platform_config=platform_config or {"location": "eastus2"},
+        )
+
+    def test_name_and_deps(self):
+        node = self._make_node()
+        assert node.name == "channel-app:chat"
+        assert "aca-environment" in node.depends_on
+        assert "acr" in node.depends_on
+
+    def test_health_check_noop_before_provision(self):
+        node = self._make_node()
+        assert isinstance(node.health_check(), NoopHealthCheck)
+
+    def test_health_check_http_after_provision(self):
+        node = self._make_node()
+        node._fqdn = "channel-chat.example.azurecontainerapps.io"
+        hc = node.health_check()
+        assert isinstance(hc, HttpHealthCheck)
+
+    @patch("subprocess.run")
+    def test_provision_rewrites_dockerfile_platform(self, mock_subproc, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_subproc.return_value = MagicMock(returncode=0)
+        node = self._make_node()
+
+        context = {
+            "acr": ProvisionResult(
+                name="acr",
+                success=True,
+                info={
+                    "login_server": "test.azurecr.io",
+                    "username": "user",
+                    "password": "pw",
+                },
+            ),
+            "aca-environment": ProvisionResult(
+                name="aca-environment",
+                success=True,
+                info={"environment_id": "/subs/env-id"},
+            ),
+        }
+
+        fake_app = MagicMock()
+        fake_app.configuration.ingress.fqdn = "channel-chat.example.io"
+        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = (
+            fake_app
+        )
+
+        result = node.provision(context)
+        assert result.success is True
+        dockerfile = (tmp_path / ".vystak" / "channels" / "chat" / "Dockerfile").read_text()
+        assert "FROM --platform=linux/amd64 python:3.11-slim" in dockerfile
+
+    @patch("subprocess.run")
+    def test_provision_injects_secrets_and_port_env(self, mock_subproc, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-mock-test")
+        mock_subproc.return_value = MagicMock(returncode=0)
+        node = self._make_node()
+
+        context = {
+            "acr": ProvisionResult(
+                name="acr",
+                success=True,
+                info={
+                    "login_server": "test.azurecr.io",
+                    "username": "user",
+                    "password": "pw",
+                },
+            ),
+            "aca-environment": ProvisionResult(
+                name="aca-environment",
+                success=True,
+                info={"environment_id": "/subs/env-id"},
+            ),
+        }
+
+        fake_app = MagicMock()
+        fake_app.configuration.ingress.fqdn = "channel-chat.example.io"
+        node._aca_client.container_apps.begin_create_or_update.return_value.result.return_value = (
+            fake_app
+        )
+
+        node.provision(context)
+        create_call = node._aca_client.container_apps.begin_create_or_update
+        container_app = create_call.call_args[0][2]
+
+        secret_names = [s.name for s in container_app.configuration.secrets]
+        assert "acr-password" in secret_names
+        assert "slack-bot-token" in secret_names
+
+        env_list = container_app.template.containers[0].env
+        env_map = {e["name"]: e for e in env_list}
+        assert "SLACK_BOT_TOKEN" in env_map
+        assert env_map["SLACK_BOT_TOKEN"]["secretRef"] == "slack-bot-token"
+        assert env_map["PORT"]["value"] == "8080"
+
+        assert container_app.tags["vystak:channel"] == "chat"
+        assert container_app.tags["vystak:channel-hash"] == "hash-abc"
+        assert container_app.tags["vystak:channel-type"] == "chat"
