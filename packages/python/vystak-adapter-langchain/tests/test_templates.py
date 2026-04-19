@@ -517,3 +517,27 @@ class TestMCPIntegration:
         code = generate_server_py(mcp_agent_with_resources)
         python_ast.parse(code)
         assert "MultiServerMCPClient" in code
+
+
+def _basic_agent():
+    return Agent(
+        name="basic",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-3-haiku-20240307",
+        ),
+    )
+
+
+class TestTransportBootstrap:
+    def test_generated_server_parses_as_python(self):
+        source = generate_server_py(_basic_agent())
+        python_ast.parse(source)
+
+    def test_generated_server_has_transport_bootstrap(self):
+        source = generate_server_py(_basic_agent())
+        assert "VYSTAK_TRANSPORT_TYPE" in source
+        assert "VYSTAK_ROUTES_JSON" in source
+        assert "AGENT_CANONICAL_NAME" in source
+        assert "_transport.serve(" in source
