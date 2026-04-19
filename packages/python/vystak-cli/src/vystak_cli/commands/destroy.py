@@ -56,7 +56,7 @@ def destroy(files, file_path, agent_name, include_resources, no_wait):
         click.echo(f"Destroying channel: {channel.name}")
         provider = get_provider(channel)
         try:
-            provider.destroy_channel(channel.name)
+            provider.destroy_channel(channel)
             click.echo("  OK")
         except NotImplementedError as e:
             click.echo(f"  Skipped: {e}")

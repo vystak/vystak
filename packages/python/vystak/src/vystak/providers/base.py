@@ -91,17 +91,20 @@ class PlatformProvider(ABC):
             f"{type(self).__name__} does not support channel provisioning yet"
         )
 
-    def destroy_channel(self, channel_name: str) -> None:
+    def destroy_channel(self, channel: Channel) -> None:
+        """Destroy a deployed channel. Implementations MUST read deployment
+        context (subscription, resource group, etc.) from channel.platform —
+        NOT from any provider-level state that was set for agent lifecycles."""
         raise NotImplementedError(
             f"{type(self).__name__} does not support channel provisioning yet"
         )
 
-    def channel_status(self, channel_name: str) -> AgentStatus:
+    def channel_status(self, channel: Channel) -> AgentStatus:
         raise NotImplementedError(
             f"{type(self).__name__} does not support channel provisioning yet"
         )
 
-    def get_channel_hash(self, channel_name: str) -> str | None:
+    def get_channel_hash(self, channel: Channel) -> str | None:
         raise NotImplementedError(
             f"{type(self).__name__} does not support channel provisioning yet"
         )

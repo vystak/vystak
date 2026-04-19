@@ -70,7 +70,7 @@ def plan(files, file_path):
 
         try:
             provider = get_provider(channel)
-            current_hash = provider.get_channel_hash(channel.name)
+            current_hash = provider.get_channel_hash(channel)
             deploy_plan = provider.plan_channel(channel, current_hash)
 
             if not deploy_plan.actions:

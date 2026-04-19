@@ -517,23 +517,18 @@ class AzureProvider(PlatformProvider):
     def _channel_app_name(self, channel_name: str) -> str:
         return f"channel-{channel_name}"
 
-    def get_channel_hash(self, channel_name: str) -> str | None:
-        """Read the deployed channel hash from Container App tags.
-
-        Because AzureProvider is constructed without a Channel reference, fall
-        back to deriving RG from env/config if possible; otherwise return None
-        so plan_channel treats it as a new deployment.
-        """
+    def get_channel_hash(self, channel: Channel) -> str | None:
+        """Read the deployed channel hash from Container App tags."""
         try:
-            cfg = self._platform_config()
+            cfg = self._channel_platform_config(channel)
             credential = get_credential()
             subscription_id = get_subscription_id(cfg)
 
             from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
             aca_client = ContainerAppsAPIClient(credential, subscription_id)
-            rg_name = cfg.get("resource_group") or f"vystak-{channel_name}-rg"
-            app_name = self._channel_app_name(channel_name)
+            rg_name = self._channel_rg_name(channel)
+            app_name = self._channel_app_name(channel.name)
 
             app = aca_client.container_apps.get(rg_name, app_name)
             if app.tags:
@@ -698,33 +693,36 @@ class AzureProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def destroy_channel(self, channel_name: str) -> None:
-        cfg = self._platform_config()
+    def destroy_channel(self, channel: Channel) -> None:
+        """Delete the channel's Container App using its own platform context.
+
+        Critical: reads subscription/RG from channel.platform rather than from
+        self._agent — the CLI doesn't set_agent during the channel lifecycle,
+        and mixing the two previously led to silent fallback to the wrong RG.
+        """
+        cfg = self._channel_platform_config(channel)
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
-        rg_name = cfg.get("resource_group") or f"vystak-{channel_name}-rg"
-        app_name = self._channel_app_name(channel_name)
+        rg_name = self._channel_rg_name(channel)
+        app_name = self._channel_app_name(channel.name)
 
         from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
         aca_client = ContainerAppsAPIClient(credential, subscription_id)
-        try:
-            poller = aca_client.container_apps.begin_delete(rg_name, app_name)
-            poller.result()
-        except Exception:
-            pass
+        poller = aca_client.container_apps.begin_delete(rg_name, app_name)
+        poller.result()
 
-    def channel_status(self, channel_name: str) -> AgentStatus:
+    def channel_status(self, channel: Channel) -> AgentStatus:
         try:
-            cfg = self._platform_config()
+            cfg = self._channel_platform_config(channel)
             credential = get_credential()
             subscription_id = get_subscription_id(cfg)
 
             from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
             aca_client = ContainerAppsAPIClient(credential, subscription_id)
-            rg_name = cfg.get("resource_group") or f"vystak-{channel_name}-rg"
-            app_name = self._channel_app_name(channel_name)
+            rg_name = self._channel_rg_name(channel)
+            app_name = self._channel_app_name(channel.name)
 
             app = aca_client.container_apps.get(rg_name, app_name)
             fqdn = (
@@ -735,7 +733,7 @@ class AzureProvider(PlatformProvider):
             hash_ = app.tags.get("vystak:channel-hash") if app.tags else None
 
             return AgentStatus(
-                agent_name=channel_name,
+                agent_name=channel.name,
                 running=app.provisioning_state == "Succeeded",
                 hash=hash_,
                 info={
@@ -745,4 +743,4 @@ class AzureProvider(PlatformProvider):
                 },
             )
         except Exception:
-            return AgentStatus(agent_name=channel_name, running=False, hash=None)
+            return AgentStatus(agent_name=channel.name, running=False, hash=None)

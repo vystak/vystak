@@ -113,7 +113,7 @@ def apply(files, file_path, force):
 
         provider = get_provider(channel)
         try:
-            current_hash = provider.get_channel_hash(channel.name)
+            current_hash = provider.get_channel_hash(channel)
             deploy_plan = provider.plan_channel(channel, current_hash)
         except NotImplementedError as e:
             click.echo(f"  Skipped: {e}")

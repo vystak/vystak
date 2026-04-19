@@ -223,8 +223,8 @@ class DockerProvider(PlatformProvider):
         except docker.errors.NotFound:
             return None
 
-    def get_channel_hash(self, channel_name: str) -> str | None:
-        container = self._get_channel_container(channel_name)
+    def get_channel_hash(self, channel: Channel) -> str | None:
+        container = self._get_channel_container(channel.name)
         if container is None:
             return None
         return container.labels.get("vystak.channel.hash")
@@ -323,22 +323,22 @@ class DockerProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def destroy_channel(self, channel_name: str) -> None:
-        container = self._get_channel_container(channel_name)
+    def destroy_channel(self, channel: Channel) -> None:
+        container = self._get_channel_container(channel.name)
         if container is not None:
             container.stop()
             container.remove()
 
-    def channel_status(self, channel_name: str) -> AgentStatus:
-        container = self._get_channel_container(channel_name)
+    def channel_status(self, channel: Channel) -> AgentStatus:
+        container = self._get_channel_container(channel.name)
         if container is None:
-            return AgentStatus(agent_name=channel_name, running=False, hash=None)
+            return AgentStatus(agent_name=channel.name, running=False, hash=None)
         return AgentStatus(
-            agent_name=channel_name,
+            agent_name=channel.name,
             running=container.status == "running",
             hash=container.labels.get("vystak.channel.hash"),
             info={
-                "container": self._channel_container_name(channel_name),
+                "container": self._channel_container_name(channel.name),
                 "status": container.status,
                 "ports": container.ports,
             },

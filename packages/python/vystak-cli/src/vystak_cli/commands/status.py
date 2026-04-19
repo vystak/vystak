@@ -45,7 +45,7 @@ def status(files, file_path, agent_name):
 
     for channel in channels:
         provider = get_provider(channel)
-        _show_channel_status(provider, channel.name)
+        _show_channel_status(provider, channel)
 
 
 def _show_agent_status(provider, agent_name: str):
@@ -65,10 +65,10 @@ def _show_agent_status(provider, agent_name: str):
         click.echo("  Status: not deployed")
 
 
-def _show_channel_status(provider, channel_name: str):
-    click.echo(f"Channel: {channel_name}")
+def _show_channel_status(provider, channel):
+    click.echo(f"Channel: {channel.name}")
     try:
-        st = provider.channel_status(channel_name)
+        st = provider.channel_status(channel)
     except NotImplementedError as e:
         click.echo(f"  Status: unknown ({e})")
         return
@@ -77,5 +77,8 @@ def _show_channel_status(provider, channel_name: str):
         click.echo("  Status: running")
         if st.hash:
             click.echo(f"  Hash: {st.hash[:16]}...")
+        info = getattr(st, "info", {}) or {}
+        if info.get("url"):
+            click.echo(f"  URL: {info['url']}")
     else:
         click.echo("  Status: not deployed")
