@@ -301,6 +301,23 @@ class TestContainerAppNode:
         # Verify subprocess was called for docker login and buildx
         assert mock_subprocess.call_count == 2
 
+        # Verify transport env vars are injected
+        create_call = node._aca_client.container_apps.begin_create_or_update
+        container_app = create_call.call_args[0][2]
+        env_list = container_app.template.containers[0].env
+        env_names = [e["name"] if isinstance(e, dict) else e.name for e in env_list]
+        assert "VYSTAK_TRANSPORT_TYPE" in env_names
+        assert "VYSTAK_ROUTES_JSON" in env_names
+        # Verify VYSTAK_ROUTES_JSON defaults to "{}" when peer_routes_json not specified
+        routes_entry = next(
+            e for e in env_list
+            if (e["name"] if isinstance(e, dict) else e.name) == "VYSTAK_ROUTES_JSON"
+        )
+        routes_value = (
+            routes_entry["value"] if isinstance(routes_entry, dict) else routes_entry.value
+        )
+        assert routes_value == "{}"
+
     def test_health_check(self):
         node = self._make_node()
         # health_check needs context info; set the fqdn
