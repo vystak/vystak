@@ -161,6 +161,20 @@ def test_chat_channel_end_to_end(tmp_path):
         )
         assert unknown.status_code == 404
 
+        # Streaming path should also honor the unknown-model guard (returns 404
+        # synchronously, not a streaming error body).
+        unknown_stream = httpx.post(
+            f"http://localhost:{CHANNEL_HOST_PORT}/v1/chat/completions",
+            json={
+                "model": "vystak/does-not-exist",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+            timeout=10,
+        )
+        assert unknown_stream.status_code == 404
+        assert unknown_stream.json()["error"]["code"] == "model_not_found"
+
     finally:
         destroy_result = _run_vystak(project, "destroy", timeout=120)
         if destroy_result.returncode != 0:

@@ -158,3 +158,45 @@ class TestGeneratedServer:
         )
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "model_not_found"
+
+    def test_chat_completion_unknown_model_with_stream_returns_404(self, tmp_path):
+        """Streaming shouldn't bypass the unknown-model guard."""
+        from fastapi.testclient import TestClient
+
+        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "vystak/unknown-agent",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "model_not_found"
+
+
+class TestServerTemplateStreaming:
+    """String-level checks that the generated server contains streaming logic."""
+
+    def test_template_mentions_send_subscribe(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "tasks/sendSubscribe" in SERVER_PY
+
+    def test_template_emits_done_sentinel(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "[DONE]" in SERVER_PY
+
+    def test_template_uses_streaming_response(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "StreamingResponse" in SERVER_PY
+        assert "text/event-stream" in SERVER_PY
+
+    def test_template_branches_on_stream_flag(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "if request.stream:" in SERVER_PY

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
@@ -65,29 +65,43 @@ async def list_models():
     }
 
 
+def _pick_last_user(messages: list[ChatMessage]) -> str:
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content:
+            return msg.content
+    return ""
+
+
+def _not_found(model: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": f"Model '{model}' not found",
+                "type": "invalid_request_error",
+                "code": "model_not_found",
+            }
+        },
+    )
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     agent_name = request.model.removeprefix("vystak/")
 
     if agent_name not in ROUTES:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": {
-                    "message": f"Model '{request.model}' not found",
-                    "type": "invalid_request_error",
-                    "code": "model_not_found",
-                }
-            },
+        return _not_found(request.model)
+
+    last_user = _pick_last_user(request.messages)
+    session_id = str(uuid.uuid4())
+    agent_url = ROUTES[agent_name]
+
+    if request.stream:
+        return StreamingResponse(
+            _stream_chunks(agent_url, request.model, session_id, last_user),
+            media_type="text/event-stream",
         )
 
-    last_user = ""
-    for msg in reversed(request.messages):
-        if msg.role == "user" and msg.content:
-            last_user = msg.content
-            break
-
-    session_id = str(uuid.uuid4())
     a2a_request = {
         "jsonrpc": "2.0",
         "method": "tasks/send",
@@ -99,7 +113,6 @@ async def chat_completions(request: ChatCompletionRequest):
         },
     }
 
-    agent_url = ROUTES[agent_name]
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(f"{agent_url}/a2a", json=a2a_request)
         a2a_resp = resp.json()
@@ -130,6 +143,68 @@ async def chat_completions(request: ChatCompletionRequest):
             "total_tokens": 0,
         },
     }
+
+
+async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str):
+    """Translate A2A SSE (tasks/sendSubscribe) → OpenAI chat.completion.chunk SSE."""
+    a2a_request = {
+        "jsonrpc": "2.0",
+        "method": "tasks/sendSubscribe",
+        "id": 1,
+        "params": {
+            "id": session_id,
+            "sessionId": session_id,
+            "message": {"role": "user", "parts": [{"text": text}]},
+        },
+    }
+
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    def _chunk(delta: dict, finish_reason=None) -> str:
+        payload = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {"index": 0, "delta": delta, "finish_reason": finish_reason},
+            ],
+        }
+        return f"data: {json.dumps(payload)}\\n\\n"
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", f"{agent_url}/a2a", json=a2a_request) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        event = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+
+                    result = event.get("result", {})
+                    artifact = result.get("artifact") or {}
+                    for part in artifact.get("parts", []):
+                        text_part = part.get("text", "")
+                        if text_part:
+                            yield _chunk({"content": text_part})
+
+                    if result.get("final"):
+                        yield _chunk({}, finish_reason="stop")
+                        yield "data: [DONE]\\n\\n"
+                        return
+    except httpx.HTTPError as e:
+        err = {
+            "error": {
+                "message": f"Upstream agent error: {e}",
+                "type": "upstream_error",
+                "code": "agent_unreachable",
+            }
+        }
+        yield f"data: {json.dumps(err)}\\n\\n"
+        yield "data: [DONE]\\n\\n"
 
 
 if __name__ == "__main__":
