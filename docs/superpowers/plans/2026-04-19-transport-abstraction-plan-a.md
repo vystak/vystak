@@ -3010,106 +3010,373 @@ AgentClient, resolved_routes carries {canonical, address} per short name."
 
 ---
 
-### Task 17: Docker provider wires `TransportPlugin`
+### Task 17: Docker provider wires `TransportPlugin` (realigned)
+
+**Realigned scope (2026-04-19):** The current DockerProvider operates per-agent (`set_agent(agent)` + `apply(plan)`) and per-channel (`apply_channel(plan, channel, resolved_routes)`). There is no top-level Workspace iteration inside the provider. The CLI command (`apply.py`) is the orchestrator. So Task 17 splits between provider, plugins, and CLI.
 
 **Files:**
-- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py`
-- Modify: provider tests
+- Modify: `packages/python/vystak-transport-http/src/vystak_transport_http/plugin.py` — add `resolve_address_for(agent, platform)` helper
+- Create: `packages/python/vystak-provider-docker/src/vystak_provider_docker/transport_wiring.py` — small utility that builds the peer-route map + picks a TransportPlugin from an agent's transport type
+- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py` — accept `peer_routes` kwarg through `apply()` + `apply_channel()`; thread into container env; flip channel `resolved_routes` shape
+- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/nodes/agent.py` — merge `VYSTAK_TRANSPORT_TYPE` + `VYSTAK_ROUTES_JSON` into the agent container env
+- Modify: `packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py` and `vystak-channel-slack/src/vystak_channel_slack/plugin.py` — flip `generate_code` signature to `resolved_routes: dict[str, dict[str, str]]`; update `routes.json` emission accordingly
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — compute peer routes once upfront using the richer shape; pass to `provider.apply(plan, peer_routes=...)` and to `provider.apply_channel(plan, channel, resolved_routes=...)`
+- Tests in each affected package.
 
-- [ ] **Step 1: Add a transport-plugin registry to the provider**
+**Guiding invariants:**
+- Canonical names are known from the workspace alone. Wire addresses on Docker are deterministic (`http://{slug(name)}-{slug(ns)}:{port}/a2a`). So peer routes can be computed once, upfront, before any container deploys — no two-phase deploy needed.
+- The **per-agent `VYSTAK_ROUTES_JSON`** a container sees is `{peer_short_name: {canonical, address}}` for **all other agents in the workspace** (we're not restricting by channel routes — the agent can call any declared peer). Keeping this simple for v1.
+- Channels use a **restricted** route map — only the agents referenced by `channel.routes[*].agent`. The channel plugin's `resolved_routes` parameter takes the richer shape.
 
-In `provider.py`, at module scope, add:
+---
+
+- [ ] **Step 1: Add `resolve_address_for` to `HttpTransportPlugin`**
+
+Edit `packages/python/vystak-transport-http/src/vystak_transport_http/plugin.py`:
 
 ```python
+"""HttpTransportPlugin — registers the HTTP transport with providers."""
+
+from __future__ import annotations
+
+from vystak.providers.base import GeneratedCode, TransportPlugin
+from vystak.schema import Platform, Transport
+from vystak.schema.agent import Agent
+from vystak.transport.naming import slug
+
+
+class HttpTransportPlugin(TransportPlugin):
+    type = "http"
+
+    def build_provision_nodes(self, transport: Transport, platform: Platform):
+        return []
+
+    def generate_env_contract(
+        self, transport: Transport, context: dict
+    ) -> dict[str, str]:
+        return {"VYSTAK_TRANSPORT_TYPE": "http"}
+
+    def generate_listener_code(self, transport: Transport) -> GeneratedCode | None:
+        return None
+
+    def resolve_address_for(
+        self, agent: Agent, platform: Platform
+    ) -> str:
+        """Docker-style DNS URL for an agent. Azure provider will override via its own plugin or kwarg."""
+        ns = slug(platform.namespace or "default")
+        port = agent.port or 8000
+        return f"http://{slug(agent.name)}-{ns}:{port}/a2a"
+```
+
+Update the package's test file (`packages/python/vystak-transport-http/tests/test_http_plugin.py`) to add a test for `resolve_address_for`:
+
+```python
+def test_resolve_address_for():
+    from vystak.schema import Platform, Provider
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    p = HttpTransportPlugin()
+    provider = Provider(name="docker", type="docker")
+    platform = Platform(name="main", type="docker", provider=provider, namespace="prod")
+    agent = Agent(
+        name="time-agent",
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+    url = p.resolve_address_for(agent, platform)
+    assert url == "http://time-agent-prod:8000/a2a"
+```
+
+- [ ] **Step 2: Create `transport_wiring.py` in the Docker provider**
+
+Create `packages/python/vystak-provider-docker/src/vystak_provider_docker/transport_wiring.py`:
+
+```python
+"""Transport wiring for Docker deployments.
+
+Maps an agent's transport type -> TransportPlugin instance, and provides a
+helper to compute the VYSTAK_ROUTES_JSON payload for a given agent.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
 from vystak_transport_http import HttpTransportPlugin
 
-_TRANSPORT_PLUGINS: dict[str, type] = {
+if TYPE_CHECKING:
+    from vystak.providers.base import TransportPlugin
+    from vystak.schema.agent import Agent
+
+_TRANSPORT_PLUGINS: dict[str, type["TransportPlugin"]] = {
     "http": HttpTransportPlugin,
 }
+
+
+def get_transport_plugin(transport_type: str) -> "TransportPlugin":
+    try:
+        return _TRANSPORT_PLUGINS[transport_type]()
+    except KeyError:
+        raise KeyError(
+            f"No TransportPlugin registered for type {transport_type!r}; "
+            f"known: {sorted(_TRANSPORT_PLUGINS)}"
+        ) from None
+
+
+def build_peer_routes(subject: "Agent", peers: list["Agent"]) -> dict[str, dict[str, str]]:
+    """Return {peer_short_name: {canonical, address}} for every peer agent.
+
+    `subject` is the agent whose container is being configured; its own entry
+    is excluded from the map. `peers` is the full agents list from the CLI.
+    """
+    transport = subject.platform.transport
+    plugin = get_transport_plugin(transport.type)
+    routes: dict[str, dict[str, str]] = {}
+    for peer in peers:
+        if peer.name == subject.name:
+            continue
+        if peer.platform is None:
+            continue
+        routes[peer.name] = {
+            "canonical": peer.canonical_name,
+            "address": plugin.resolve_address_for(peer, peer.platform),
+        }
+    return routes
+
+
+def build_routes_json(subject: "Agent", peers: list["Agent"]) -> str:
+    return json.dumps(build_peer_routes(subject, peers))
 ```
 
-Plan B adds `"nats"` to this dict.
-
-- [ ] **Step 2: Resolve `transport_plugin` in `apply()`**
-
-Find the method in `DockerProvider` that iterates the workspace's agents, channels, and services to build the `ProvisionGraph`. Before building agent and channel nodes, resolve the transport:
+Create `packages/python/vystak-provider-docker/tests/test_transport_wiring.py`:
 
 ```python
-transport = next(
-    t for t in workspace.transports
-    if t.name == platform.transport
+"""Tests for peer-route wiring."""
+
+import json
+
+from vystak.schema import Platform, Provider, Transport
+from vystak.schema.agent import Agent
+from vystak.schema.model import Model
+from vystak_provider_docker.transport_wiring import (
+    build_peer_routes,
+    build_routes_json,
+    get_transport_plugin,
 )
-plugin_cls = _TRANSPORT_PLUGINS[transport.type]
-transport_plugin = plugin_cls()
 
-# Broker provisioning nodes (empty list for http):
-for node in transport_plugin.build_provision_nodes(transport, platform):
-    graph.add(node)
 
-# Env contract for agents/channels:
-transport_env = transport_plugin.generate_env_contract(transport, context={})
+def _agent(name: str, namespace: str = "default") -> Agent:
+    provider = Provider(name="docker", type="docker")
+    platform = Platform(
+        name="main", type="docker", provider=provider, namespace=namespace,
+        transport=Transport(name="default-http", type="http"),
+    )
+    return Agent(
+        name=name,
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+
+
+def test_get_transport_plugin_http():
+    p = get_transport_plugin("http")
+    assert p.type == "http"
+
+
+def test_build_peer_routes_excludes_self():
+    a = _agent("assistant")
+    b = _agent("weather")
+    c = _agent("time")
+    routes = build_peer_routes(a, [a, b, c])
+    assert set(routes.keys()) == {"weather", "time"}
+    assert routes["weather"]["canonical"] == "weather.agents.default"
+    assert routes["weather"]["address"] == "http://weather-default:8000/a2a"
+
+
+def test_build_routes_json_is_valid_json():
+    a = _agent("assistant")
+    b = _agent("weather")
+    payload = build_routes_json(a, [a, b])
+    parsed = json.loads(payload)
+    assert parsed["weather"]["canonical"] == "weather.agents.default"
 ```
 
-- [ ] **Step 3: Thread `transport_env` into agent and channel container envs**
+- [ ] **Step 3: Thread peer routes into `DockerAgentNode`**
 
-Every agent and channel container node must receive `transport_env` merged into its `environment` map. Also inject `VYSTAK_ROUTES_JSON` (computed from the workspace's agents + transport's resolve_address for the channel's allowed peers).
+Inspect `packages/python/vystak-provider-docker/src/vystak_provider_docker/nodes/agent.py` (or wherever `DockerAgentNode` lives — find with `grep -rn "class DockerAgentNode" packages/python/vystak-provider-docker/`).
 
-Concretely, after constructing each agent / channel container node's environment dict, merge:
+Locate where the container's `environment` dict is built. Add two new env vars: `VYSTAK_TRANSPORT_TYPE` (from `agent.platform.transport.type`) and `VYSTAK_ROUTES_JSON` (from a `peer_routes_json: str` attribute on the node).
+
+Add `peer_routes_json: str = "{}"` as a keyword-only constructor parameter on `DockerAgentNode` with a default empty-dict JSON string. Then in the environment-building block:
 
 ```python
 environment = {
-    **transport_env,
-    "VYSTAK_ROUTES_JSON": _build_routes_json(workspace, transport),
-    # ... existing keys ...
+    **existing_env,
+    "VYSTAK_TRANSPORT_TYPE": self._agent.platform.transport.type,
+    "VYSTAK_ROUTES_JSON": self._peer_routes_json,
 }
 ```
 
-Add a `_build_routes_json` helper on the provider (or in a new `docker_provider/routes.py`) that loops through agents and produces:
+Store the kwarg on `self._peer_routes_json` in `__init__`.
+
+- [ ] **Step 4: Update `DockerProvider.apply()` to accept `peer_routes`**
+
+In `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py`:
 
 ```python
-{
-    agent.name: {
-        "canonical": agent.canonical_name,
-        "address": transport_plugin_impl.resolve_address_for(agent, platform),
-    }
-    for agent in workspace.agents
+def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
+    ...
+    agent_node = DockerAgentNode(
+        self._client,
+        self._agent,
+        self._generated_code,
+        plan,
+        peer_routes_json=peer_routes or "{}",
+    )
+    ...
+```
+
+`peer_routes` is a JSON-encoded string. Callers (the CLI) use `build_routes_json(agent, peers)` to build it.
+
+- [ ] **Step 5: Update `DockerProvider.apply_channel()` for richer route shape**
+
+Update the signature:
+
+```python
+def apply_channel(
+    self,
+    plan: DeployPlan,
+    channel: Channel,
+    resolved_routes: dict[str, dict[str, str]],
+) -> DeployResult:
+```
+
+The existing body calls `plugin.generate_code(channel, resolved_routes)` — that still works; the plugin signatures in Tasks 15/16 currently declare `dict[str, str]`. Update them in Step 6 below.
+
+- [ ] **Step 6: Flip channel plugin signatures**
+
+In `packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py` and `vystak-channel-slack/src/vystak_channel_slack/plugin.py`, change:
+
+```python
+def generate_code(self, channel: Channel, resolved_routes: dict[str, dict[str, str]]) -> GeneratedCode:
+    routes_json = json.dumps(resolved_routes, indent=2)
+    return GeneratedCode(
+        files={
+            "server.py": SERVER_PY,
+            "routes.json": routes_json,
+            ...
+        },
+    )
+```
+
+The emitted `routes.json` now contains the richer shape. The server's backward-compat path (from Task 15/16) detects the new shape and uses it directly (short-circuit the legacy shape conversion). Add a check in the server's `_load_routes_raw`:
+
+```python
+# If the first value is already a dict with "canonical"+"address", use as-is;
+# else convert legacy {short: URL} shape.
+if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+    return raw
+# legacy path
+return {
+    short: {"canonical": f"{short}.agents.default", "address": url}
+    for short, url in raw.items()
 }
 ```
 
-Where `resolve_address_for` lives on the transport plugin and returns the Docker DNS URL for HTTP (`http://{slug(name)}-{slug(ns)}:8000/a2a`). For clean separation, add an **optional** method to `HttpTransportPlugin`:
+- [ ] **Step 7: Update CLI `apply.py` to compute peer routes upfront**
+
+In `packages/python/vystak-cli/src/vystak_cli/commands/apply.py`:
+
+Import at top:
+```python
+from vystak_provider_docker.transport_wiring import build_routes_json
+```
+(This couples the CLI to `vystak-provider-docker`. Acceptable for v1 — when Task 18 lands, extract into a provider-agnostic helper. For now the CLI already imports from provider packages via `provider_factory`.)
+
+Before the agent deploy loop, compute `all_agents = list(defs.agents)`. Inside the loop where `provider.apply(deploy_plan)` is called:
 
 ```python
-def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
-    from vystak.transport.naming import slug
-    ns = slug(agent.namespace or "default")
-    return f"http://{slug(agent.name)}-{ns}:{agent.port or 8000}/a2a"
+peer_routes = build_routes_json(agent, all_agents)
+result = provider.apply(deploy_plan, peer_routes=peer_routes)
 ```
 
-- [ ] **Step 4: Update docker-provider tests**
+For the channel loop, replace the existing `resolved_routes` computation with the richer shape. Use `build_peer_routes(channel_subject, filtered_peers)` — channel doesn't have a "subject" agent, so construct a filtered peer list from `agent_urls` + each agent's `canonical_name`:
+
+```python
+from vystak_provider_docker.transport_wiring import get_transport_plugin
+
+# Build a map of {agent_name: Agent} for lookup
+agents_by_name = {a["name"]: a["agent"] for a in deployed_agents}
+
+resolved_routes = {}
+for rule in channel.routes:
+    if rule.agent in agents_by_name:
+        peer_agent = agents_by_name[rule.agent]
+        plugin = get_transport_plugin(peer_agent.platform.transport.type)
+        resolved_routes[rule.agent] = {
+            "canonical": peer_agent.canonical_name,
+            "address": plugin.resolve_address_for(peer_agent, peer_agent.platform),
+        }
+```
+
+Then pass `resolved_routes` to `provider.apply_channel(...)` — signature already updated in Step 5.
+
+- [ ] **Step 8: Update docker-provider tests**
 
 ```bash
-grep -rn "environment" packages/python/vystak-provider-docker/tests/ | head -30
 uv run pytest packages/python/vystak-provider-docker/tests/ -v
 ```
 
-Expect failures around environment shapes; update assertions to expect `VYSTAK_TRANSPORT_TYPE=http` and a well-formed `VYSTAK_ROUTES_JSON` in each agent container's env.
+Fix assertions that expected old-shape channel routes or old env shapes. If tests instantiate `DockerAgentNode` directly, add `peer_routes_json="{}"` kwarg to satisfy the new signature.
 
-- [ ] **Step 5: Run full suite**
+- [ ] **Step 9: Update channel-plugin tests**
+
+```bash
+uv run pytest packages/python/vystak-channel-chat/tests/ packages/python/vystak-channel-slack/tests/ -v
+```
+
+The plugin tests pass `resolved_routes` to `generate_code`. Change test fixtures to the new shape `{"foo": {"canonical": "foo.agents.default", "address": "http://foo-default:8000/a2a"}}`.
+
+- [ ] **Step 10: Run full lint + test**
 
 ```bash
 just lint-python && just test-python
 ```
 
-- [ ] **Step 6: Commit**
+All gates green before commit.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-git add packages/python/vystak-provider-docker/
-git commit -m "feat(provider-docker): wire TransportPlugin through apply()
+git add packages/python/vystak-transport-http/ \
+        packages/python/vystak-provider-docker/ \
+        packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py \
+        packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py \
+        packages/python/vystak-channel-chat/tests/ \
+        packages/python/vystak-channel-slack/src/vystak_channel_slack/plugin.py \
+        packages/python/vystak-channel-slack/src/vystak_channel_slack/server_template.py \
+        packages/python/vystak-channel-slack/tests/ \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py
+git commit -m "feat(provider-docker): thread TransportPlugin through agent + channel apply
 
-DockerProvider now resolves the platform's transport to a TransportPlugin,
-adds any provision nodes the plugin requires, and injects VYSTAK_TRANSPORT_*
-env vars + VYSTAK_ROUTES_JSON (canonical-name-keyed) into every agent and
-channel container. HTTP path preserves current Docker DNS behaviour."
+DockerProvider.apply() now accepts peer_routes (JSON string) and injects
+VYSTAK_TRANSPORT_TYPE + VYSTAK_ROUTES_JSON into the agent container env.
+apply_channel() signature updated: resolved_routes is now
+dict[str, dict[str, str]] carrying {canonical, address} per short name.
+
+HttpTransportPlugin gains resolve_address_for(agent, platform), producing
+Docker DNS URLs deterministically from canonical names. Channel plugins
+(chat + slack) flip generate_code signatures to match.
+
+CLI (apply command) computes peer routes once upfront from the full agent
+list via a new vystak-provider-docker.transport_wiring helper, then
+passes the JSON to each provider.apply() call. Peer routes are
+computable before any container deploys because wire addresses are
+deterministic from the workspace definition.
+
+Existing server templates' backward-compat routes.json fallback still
+works — they short-circuit when the new shape is detected."
 ```
 
 ---
