@@ -15,6 +15,7 @@ dev-dependencies = [
     "pyright>=1.1",
     "httpx>=0.28",
     "fastapi>=0.115",
+    "uvicorn>=0.34",
     "vystak",
     "vystak-cli",
     "vystak-adapter-mastra",
