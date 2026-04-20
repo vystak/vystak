@@ -145,8 +145,10 @@ class TestServerTemplateTransportBootstrap:
         # Single-line migration-state warning log.
         assert "routes.json fallback" in SERVER_PY
 
-    def test_requirements_include_vystak_transport(self):
+    def test_vystak_packages_not_in_requirements(self):
+        """vystak + vystak_transport_http are bundled as source by
+        DockerChannelNode; they must NOT appear in requirements.txt."""
         from vystak_channel_slack.server_template import REQUIREMENTS
 
-        assert "vystak" in REQUIREMENTS
-        assert "vystak-transport-http" in REQUIREMENTS
+        assert "vystak>=" not in REQUIREMENTS
+        assert "vystak-transport-http" not in REQUIREMENTS

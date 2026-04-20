@@ -61,19 +61,22 @@ class TestChatChannelPlugin:
         assert routes == resolved
 
     def test_server_template_imports_vystak_transport(self):
-        """The container ships with `vystak` installed (see REQUIREMENTS) so
-        the server can install a process-level AgentClient. Before Task 15
-        the container was vystak-free; now it depends on `vystak` and
-        `vystak-transport-http` for the A2A dispatch path.
+        """The container imports `vystak.transport` at startup. `vystak` and
+        `vystak_transport_http` are bundled as source by DockerChannelNode,
+        so they don't appear in requirements.txt; they're on PYTHONPATH via
+        COPY . . in the Dockerfile.
         """
         plugin = ChatChannelPlugin()
         code = plugin.generate_code(_channel(), {})
         server = code.files["server.py"]
         assert "from vystak.transport import AgentClient" in server
-        # And the container image must ship those packages.
+        # They must NOT appear in requirements.txt — the container would
+        # try to pip-install them from PyPI, which fails for
+        # vystak-transport-http (not published) and gets a stale version
+        # for vystak.
         reqs = code.files["requirements.txt"]
-        assert "vystak" in reqs
-        assert "vystak-transport-http" in reqs
+        assert "vystak>=" not in reqs
+        assert "vystak-transport-http" not in reqs
 
     def test_empty_routes_still_valid(self):
         plugin = ChatChannelPlugin()

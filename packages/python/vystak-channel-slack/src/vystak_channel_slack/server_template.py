@@ -241,6 +241,8 @@ CMD ["python", "server.py"]
 """
 
 
+# vystak + vystak_transport_http are bundled as source by DockerChannelNode
+# (they're on PYTHONPATH via COPY . . in the Dockerfile).
 REQUIREMENTS = """\
 fastapi>=0.115
 uvicorn>=0.34
@@ -248,6 +250,4 @@ httpx>=0.28
 slack-bolt>=1.21
 aiohttp>=3.9
 pydantic>=2.0
-vystak>=0.1
-vystak-transport-http>=0.1
 """

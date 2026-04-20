@@ -1,6 +1,7 @@
 """DockerAgentNode — builds and runs an agent as a Docker container."""
 
 import os
+import shutil
 from pathlib import Path
 
 import docker.errors
@@ -73,6 +74,18 @@ class DockerAgentNode(Provisionable):
             _openai_src = Path(_openai_schema.__file__)
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
+
+            # Bundle unpublished vystak + vystak_transport_http source trees
+            # onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            import vystak
+            import vystak_transport_http
+
+            for _mod in (vystak, vystak_transport_http):
+                _src = Path(_mod.__file__).parent
+                _dst = build_dir / _src.name
+                if _dst.exists():
+                    shutil.rmtree(_dst)
+                shutil.copytree(_src, _dst)
 
             # Build Dockerfile
             mcp_installs = ""

@@ -1280,8 +1280,9 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     if agent.mcp_servers:
         mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
 
+    # vystak + vystak_transport_http are bundled as source by DockerAgentNode
+    # (they're on PYTHONPATH via COPY . . in the Dockerfile).
     return dedent(f"""\
-        vystak>=0.1
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}

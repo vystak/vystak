@@ -1,6 +1,7 @@
 """DockerChannelNode — builds and runs a channel as a Docker container."""
 
 import os
+import shutil
 from pathlib import Path
 
 import docker.errors
@@ -56,6 +57,18 @@ class DockerChannelNode(Provisionable):
             build_dir.mkdir(parents=True, exist_ok=True)
             for filename, content in self._generated_code.files.items():
                 (build_dir / filename).write_text(content)
+
+            # Bundle unpublished vystak + vystak_transport_http source trees
+            # onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            import vystak
+            import vystak_transport_http
+
+            for _mod in (vystak, vystak_transport_http):
+                _src = Path(_mod.__file__).parent
+                _dst = build_dir / _src.name
+                if _dst.exists():
+                    shutil.rmtree(_dst)
+                shutil.copytree(_src, _dst)
 
             image_tag = f"{container_name}:latest"
             self._client.images.build(path=str(build_dir), tag=image_tag)

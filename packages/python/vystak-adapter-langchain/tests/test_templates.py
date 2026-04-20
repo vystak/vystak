@@ -201,10 +201,12 @@ class TestGenerateRequirementsTxt:
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
 
-    def test_vystak_in_requirements(self, anthropic_agent):
-        """Generated agents pull in `vystak` so they can import `vystak.transport`."""
+    def test_vystak_not_in_requirements(self, anthropic_agent):
+        """vystak is bundled as source by the Docker provider, not installed
+        from PyPI. It must NOT appear in generated requirements.txt."""
         reqs = generate_requirements_txt(anthropic_agent)
-        assert "vystak>=0.1" in reqs
+        assert "vystak>=" not in reqs
+        assert "vystak-transport-http>=" not in reqs
 
 
 @pytest.fixture()
