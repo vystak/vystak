@@ -31,6 +31,7 @@ from vystak.schema.openai import (
     ResponseOutput,
     ResponseUsage,
 )
+from vystak.schema.overrides import EnvironmentOverride
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 from vystak.schema.resource import (
@@ -64,6 +65,7 @@ __all__ = [
     "ChannelType",
     "Database",
     "Embedding",
+    "EnvironmentOverride",
     "McpServer",
     "McpTransport",
     "Model",

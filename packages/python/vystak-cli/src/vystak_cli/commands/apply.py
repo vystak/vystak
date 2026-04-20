@@ -19,7 +19,13 @@ from vystak_cli.provider_factory import get_provider
 @click.option(
     "--force", is_flag=True, default=False, help="Force redeploy even if no changes detected"
 )
-def apply(files, file_path, force):
+@click.option(
+    "--env", "-e",
+    default=None,
+    envvar="VYSTAK_ENV",
+    help="Environment name. Applies vystak.<env>.py overlay if present.",
+)
+def apply(files, file_path, force, env):
     """Deploy or update agents and channels."""
     if files:
         paths = [Path(f) for f in files]
@@ -37,6 +43,16 @@ def apply(files, file_path, force):
     )
     defs = load_definitions(paths, base_dir=base_dir)
     click.echo(f"Loaded {len(defs.agents)} agent(s), {len(defs.channels)} channel(s)")
+
+    if env:
+        from vystak_cli.loader import load_environment_override
+
+        base_path = paths[0]
+        override = load_environment_override(base_path, env)
+        defs.agents = override.apply(defs.agents)
+        click.echo(f"Environment: {env}")
+    else:
+        click.echo("Environment: (base)")
 
     adapter = LangChainAdapter()
     deployed_agents: list[dict] = []

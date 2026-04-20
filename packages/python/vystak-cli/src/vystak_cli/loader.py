@@ -4,6 +4,10 @@ import importlib.util
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vystak.schema.overrides import EnvironmentOverride
 
 import yaml
 
@@ -151,6 +155,28 @@ def _load_definitions_from_python(path: Path) -> Definitions:
         raise ValueError(f"No Agent or Channel instances found in {path}")
 
     return defs
+
+
+def load_environment_override(base_path: Path, env: str) -> "EnvironmentOverride":
+    """Look for vystak.<env>.py next to base_path; return its `override`.
+
+    Raises FileNotFoundError if no overlay file exists and `env` is set.
+    """
+    from vystak.schema.overrides import EnvironmentOverride
+
+    overlay_path = base_path.parent / f"vystak.{env}.py"
+    if not overlay_path.exists():
+        raise FileNotFoundError(
+            f"env={env!r} requested but no {overlay_path.name} next to {base_path}"
+        )
+    module = _exec_python_file(overlay_path)
+    override = getattr(module, "override", None)
+    if not isinstance(override, EnvironmentOverride):
+        raise ValueError(
+            f"{overlay_path} must define `override: EnvironmentOverride`; "
+            f"got {type(override).__name__ if override else 'None'}"
+        )
+    return override
 
 
 def _exec_python_file(path: Path):
