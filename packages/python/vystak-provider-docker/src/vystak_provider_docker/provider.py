@@ -117,7 +117,7 @@ class DockerProvider(PlatformProvider):
             changes={"root": (deployed_hash, target_hash)},
         )
 
-    def apply(self, plan: DeployPlan) -> DeployResult:
+    def apply(self, plan: DeployPlan, *, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
             return DeployResult(
                 agent_name=plan.agent_name,
@@ -133,12 +133,26 @@ class DockerProvider(PlatformProvider):
                 DockerAgentNode,
                 DockerNetworkNode,
                 DockerServiceNode,
+                NatsServerNode,
             )
 
             graph = ProvisionGraph()
 
             # Network
             graph.add(DockerNetworkNode(self._client))
+
+            # Transport-plugin wiring: if NATS is configured, provision the
+            # broker container and thread its URL into the agent env.
+            extra_env: dict[str, str] = {}
+            transport = (
+                self._agent.platform.transport if self._agent and self._agent.platform else None
+            )
+            if transport and transport.type == "nats":
+                graph.add(NatsServerNode(self._client))
+                extra_env["VYSTAK_TRANSPORT_TYPE"] = "nats"
+                extra_env["VYSTAK_NATS_URL"] = "nats://vystak-nats:4222"
+                if transport.config and getattr(transport.config, "subject_prefix", None):
+                    extra_env["VYSTAK_NATS_SUBJECT_PREFIX"] = transport.config.subject_prefix
 
             # Services (sessions, memory, services list)
             for svc in self._all_services():
@@ -152,6 +166,8 @@ class DockerProvider(PlatformProvider):
                 self._agent,
                 self._generated_code,
                 plan,
+                peer_routes_json=peer_routes if peer_routes is not None else "{}",
+                extra_env=extra_env,
             )
             graph.add(agent_node)
 
@@ -265,7 +281,7 @@ class DockerProvider(PlatformProvider):
         self,
         plan: DeployPlan,
         channel: Channel,
-        resolved_routes: dict[str, str],
+        resolved_routes: dict[str, dict[str, str]],
     ) -> DeployResult:
         try:
             plugin = get_plugin(channel.type)
@@ -278,22 +294,45 @@ class DockerProvider(PlatformProvider):
             )
 
         try:
+            import json
+
             code = plugin.generate_code(channel, resolved_routes)
 
             from vystak.provisioning import ProvisionGraph
 
-            from vystak_provider_docker.nodes import DockerChannelNode, DockerNetworkNode
+            from vystak_provider_docker.nodes import (
+                DockerChannelNode,
+                DockerNetworkNode,
+                NatsServerNode,
+            )
 
             host_port = channel.config.get("port", 8080)
 
             graph = ProvisionGraph()
             graph.add(DockerNetworkNode(self._client))
+
+            # Transport wiring for channels. The channel server bootstraps
+            # its own Transport from env just like the agents do.
+            channel_extra_env: dict[str, str] = {
+                "VYSTAK_ROUTES_JSON": json.dumps(resolved_routes, separators=(",", ":")),
+            }
+            transport = channel.platform.transport if channel.platform else None
+            if transport and transport.type == "nats":
+                graph.add(NatsServerNode(self._client))
+                channel_extra_env["VYSTAK_TRANSPORT_TYPE"] = "nats"
+                channel_extra_env["VYSTAK_NATS_URL"] = "nats://vystak-nats:4222"
+                if transport.config and getattr(transport.config, "subject_prefix", None):
+                    channel_extra_env["VYSTAK_NATS_SUBJECT_PREFIX"] = (
+                        transport.config.subject_prefix
+                    )
+
             channel_node = DockerChannelNode(
                 self._client,
                 channel,
                 code,
                 plan.target_hash,
                 host_port=host_port,
+                extra_env=channel_extra_env,
             )
             graph.add(channel_node)
 

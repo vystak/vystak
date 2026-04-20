@@ -32,12 +32,9 @@ class SlackChannelPlugin(ChannelPlugin):
     config_schema = SlackChannelConfig
 
     def generate_code(
-        self, channel: Channel, resolved_routes: dict[str, str]
+        self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
-        rules = [
-            {"match": rule.match, "agent": rule.agent}
-            for rule in channel.routes
-        ]
+        rules = [{"match": rule.match, "agent": rule.agent} for rule in channel.routes]
         return GeneratedCode(
             files={
                 "server.py": SERVER_PY,
@@ -49,9 +46,7 @@ class SlackChannelPlugin(ChannelPlugin):
             entrypoint="server.py",
         )
 
-    def provision_nodes(
-        self, channel: Channel, platform: Platform
-    ) -> list[Provisionable]:
+    def provision_nodes(self, channel: Channel, platform: Platform) -> list[Provisionable]:
         # Platform provider wraps GeneratedCode in its native container node.
         return []
 

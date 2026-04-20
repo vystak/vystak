@@ -33,6 +33,7 @@ class ContainerAppNode(Provisionable):
         generated_code: GeneratedCode,
         plan: DeployPlan,
         platform_config: dict,
+        peer_routes_json: str = "{}",
     ):
         self._aca_client = aca_client
         self._docker_client = docker_client
@@ -41,6 +42,7 @@ class ContainerAppNode(Provisionable):
         self._generated_code = generated_code
         self._plan = plan
         self._platform_config = platform_config
+        self._peer_routes_json = peer_routes_json
         self._fqdn: str | None = None
 
     @property
@@ -178,6 +180,12 @@ class ContainerAppNode(Provisionable):
             # Inject extra env vars (gateway URL, peer URLs, etc.)
             for key, value in self._platform_config.get("env", {}).items():
                 env_vars.append({"name": key, "value": value})
+
+            # Inject transport bootstrap vars so the server picks up the right transport type
+            env_vars.append(
+                {"name": "VYSTAK_TRANSPORT_TYPE", "value": self._agent.platform.transport.type}
+            )
+            env_vars.append({"name": "VYSTAK_ROUTES_JSON", "value": self._peer_routes_json})
 
             # Inject database connection strings from upstream Postgres nodes
             if hasattr(self._agent, "sessions") and self._agent.sessions:

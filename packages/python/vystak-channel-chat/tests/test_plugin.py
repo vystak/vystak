@@ -38,8 +38,14 @@ class TestChatChannelPlugin:
     def test_generate_code_emits_expected_files(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": "http://vystak-weather-agent:8000",
-            "time-agent": "http://vystak-time-agent:8000",
+            "weather-agent": {
+                "canonical": "weather-agent.agents.default",
+                "address": "http://vystak-weather-agent:8000",
+            },
+            "time-agent": {
+                "canonical": "time-agent.agents.default",
+                "address": "http://vystak-time-agent:8000",
+            },
         }
         code = plugin.generate_code(_channel(), resolved)
 
@@ -54,19 +60,32 @@ class TestChatChannelPlugin:
     def test_routes_baked_into_routes_json(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": "http://vystak-weather-agent:8000",
+            "weather-agent": {
+                "canonical": "weather-agent.agents.default",
+                "address": "http://vystak-weather-agent:8000",
+            },
         }
         code = plugin.generate_code(_channel(), resolved)
         routes = json.loads(code.files["routes.json"])
         assert routes == resolved
 
-    def test_server_template_is_self_contained(self):
+    def test_server_template_imports_vystak_transport(self):
+        """The container imports `vystak.transport` at startup. `vystak` and
+        `vystak_transport_http` are bundled as source by DockerChannelNode,
+        so they don't appear in requirements.txt; they're on PYTHONPATH via
+        COPY . . in the Dockerfile.
+        """
         plugin = ChatChannelPlugin()
         code = plugin.generate_code(_channel(), {})
         server = code.files["server.py"]
-        # Must not import from vystak — the container has no vystak dependency.
-        assert "from vystak" not in server
-        assert "import vystak" not in server
+        assert "from vystak.transport import AgentClient" in server
+        # They must NOT appear in requirements.txt — the container would
+        # try to pip-install them from PyPI, which fails for
+        # vystak-transport-http (not published) and gets a stale version
+        # for vystak.
+        reqs = code.files["requirements.txt"]
+        assert "vystak>=" not in reqs
+        assert "vystak-transport-http" not in reqs
 
     def test_empty_routes_still_valid(self):
         plugin = ChatChannelPlugin()
@@ -123,7 +142,15 @@ class TestGeneratedServer:
     def test_health_endpoint(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"weather-agent": "http://example.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {
+                "weather-agent": {
+                    "canonical": "weather-agent.agents.default",
+                    "address": "http://example.test",
+                }
+            },
+        )
         client = TestClient(app)
         resp = client.get("/health")
         assert resp.status_code == 200
@@ -136,7 +163,10 @@ class TestGeneratedServer:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"a": "http://a.test", "b": "http://b.test"},
+            {
+                "a": {"canonical": "a.agents.default", "address": "http://a.test"},
+                "b": {"canonical": "b.agents.default", "address": "http://b.test"},
+            },
         )
         client = TestClient(app)
         resp = client.get("/v1/models")
@@ -147,7 +177,15 @@ class TestGeneratedServer:
     def test_chat_completion_unknown_model_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/chat/completions",
@@ -163,7 +201,15 @@ class TestGeneratedServer:
         """Streaming shouldn't bypass the unknown-model guard."""
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/chat/completions",
@@ -180,10 +226,13 @@ class TestGeneratedServer:
 class TestServerTemplateStreaming:
     """String-level checks that the generated server contains streaming logic."""
 
-    def test_template_mentions_send_subscribe(self):
+    def test_template_uses_agent_client_stream(self):
+        """Streaming now goes through `AgentClient.stream_task()`; the raw
+        JSON-RPC `tasks/sendSubscribe` envelope is built inside HttpTransport.
+        """
         from vystak_channel_chat.server_template import SERVER_PY
 
-        assert "tasks/sendSubscribe" in SERVER_PY
+        assert ".stream_task(" in SERVER_PY
 
     def test_template_emits_done_sentinel(self):
         from vystak_channel_chat.server_template import SERVER_PY
@@ -200,6 +249,55 @@ class TestServerTemplateStreaming:
         from vystak_channel_chat.server_template import SERVER_PY
 
         assert "if request.stream:" in SERVER_PY
+
+
+class TestServerTemplateTransportBootstrap:
+    """Task 15: the channel server must bootstrap an AgentClient from env."""
+
+    def test_reads_vystak_routes_json_env(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "VYSTAK_ROUTES_JSON" in SERVER_PY
+
+    def test_has_build_transport_helper(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_build_transport_from_env" in SERVER_PY
+
+    def test_installs_agent_client_as_default(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "AgentClient" in SERVER_PY
+        # The process-level default client must be installed so _default_client()
+        # returns something from the route handlers.
+        assert "_DEFAULT_CLIENT" in SERVER_PY
+
+    def test_uses_http_transport_plugin(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "HttpTransport" in SERVER_PY
+        assert "vystak_transport_http" in SERVER_PY
+
+    def test_chat_dispatch_goes_through_agent_client(self):
+        """The non-streaming /v1/chat/completions dispatch is a send_task call,
+        not a raw httpx.AsyncClient POST to /a2a.
+        """
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert ".send_task(" in SERVER_PY
+        # The old raw /a2a httpx posting must be gone.
+        assert '/a2a"' not in SERVER_PY
+        assert "'tasks/send'" not in SERVER_PY
+
+    def test_fallback_to_routes_json(self):
+        """While providers are still on the old route-shape, the server must
+        tolerate a legacy routes.json and convert it to the new shape.
+        """
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "routes.json" in SERVER_PY
+        # Single-line migration-state warning log.
+        assert "routes.json fallback" in SERVER_PY
 
 
 class TestServerTemplateResponsesApi:
@@ -229,10 +327,37 @@ class TestServerTemplateResponsesApi:
         assert "previous_response_id" in SERVER_PY
         assert "invalid_previous_response" in SERVER_PY
 
-    def test_template_proxies_responses_stream(self):
+    def test_template_uses_stream_responses(self):
         from vystak_channel_chat.server_template import SERVER_PY
 
-        assert "_proxy_responses_stream" in SERVER_PY
+        assert "_stream_responses" in SERVER_PY
+
+    def test_template_uses_create_response(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().create_response(" in SERVER_PY
+
+    def test_template_uses_create_response_stream(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().create_response_stream(" in SERVER_PY
+
+    def test_template_uses_get_response(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().get_response(" in SERVER_PY
+
+    def test_template_no_direct_httpx_responses_post(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        # The old byte-proxy pattern must be gone — no raw httpx POST to /v1/responses.
+        assert 'client.post(f"{agent_url}/v1/responses"' not in SERVER_PY
+        assert "httpx" not in SERVER_PY
+
+    def test_requirements_no_httpx(self):
+        from vystak_channel_chat.server_template import REQUIREMENTS
+
+        assert "httpx" not in REQUIREMENTS
 
 
 class TestGeneratedResponsesApi:
@@ -262,7 +387,15 @@ class TestGeneratedResponsesApi:
     def test_responses_unknown_model_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
+        )
         client = TestClient(app)
         resp = client.post(
             "/v1/responses",
@@ -274,7 +407,15 @@ class TestGeneratedResponsesApi:
     def test_responses_get_unknown_id_returns_404(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        app = self._boot_generated_app(tmp_path, {"known-agent": "http://known.test"})
+        app = self._boot_generated_app(
+            tmp_path,
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
+        )
         client = TestClient(app)
         resp = client.get("/v1/responses/resp-never-created")
         assert resp.status_code == 404

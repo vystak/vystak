@@ -8,27 +8,88 @@ SERVER_PY = '''\
 """Chat channel — OpenAI-compatible endpoint routing to agents via A2A."""
 
 import json
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+# Configure root logging so module loggers (incl. vystak.transport.nats,
+# vystak.channel.chat) actually emit. Uvicorn has its own handlers for
+# uvicorn.* but propagation to root is what vystak.* needs.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+logger = logging.getLogger("vystak.channel.chat")
+
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
 
 
-def _load_routes() -> dict:
-    if not ROUTES_PATH.exists():
-        return {}
-    return json.loads(ROUTES_PATH.read_text())
+def _load_routes_raw() -> dict:
+    """Load the transport route table.
+
+    Canonical shape (Task 14+):
+        VYSTAK_ROUTES_JSON={"<short>": {"canonical": "...", "address": "..."}}
+
+    Fallback (pre-Task-17 providers still emit `routes.json` with the old
+    `{short: URL}` map; we convert it here). Task 17/18 will rewrite the
+    providers to populate the env var directly and drop the fallback.
+    """
+    env_raw = os.environ.get("VYSTAK_ROUTES_JSON")
+    if env_raw:
+        raw = json.loads(env_raw)
+        if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+            return raw
+        # Env var was set but holds legacy {short: URL} shape — convert.
+        return {
+            short: {"canonical": f"{short}.agents.default", "address": value}
+            for short, value in raw.items()
+        }
+
+    if ROUTES_PATH.exists():
+        logger.warning(
+            "Using routes.json fallback; VYSTAK_ROUTES_JSON not set"
+        )
+        raw = json.loads(ROUTES_PATH.read_text())
+        if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+            # Already in the new shape — short-circuit.
+            return raw
+        # Old shape: short → URL. Derive a canonical name. Wrong for
+        # non-default namespaces, but acceptable during migration.
+        return {
+            short: {"canonical": f"{short}.agents.default", "address": value}
+            for short, value in raw.items()
+        }
+
+    return {}
 
 
-ROUTES: dict[str, str] = _load_routes()
+_ROUTES_RAW: dict = _load_routes_raw()
+
+# Short-name → canonical-name map for AgentClient.
+_client_routes: dict[str, str] = {
+    short: entry["canonical"] for short, entry in _ROUTES_RAW.items()
+}
+# Canonical-name → wire-address map for HttpTransport and the /v1/responses
+# byte-level proxy.
+_http_routes: dict[str, str] = {
+    entry["canonical"]: entry["address"] for entry in _ROUTES_RAW.values()
+}
+# Short-name → direct HTTP URL for the /v1/responses byte-proxy and for
+# /health + /v1/models listings. Agents run FastAPI on port 8000 regardless
+# of A2A transport (Plan A's "FastAPI always-on" principle), so the HTTP
+# endpoint is reachable even when the A2A path goes over NATS. On Docker,
+# container DNS is `vystak-<agent_name>` on vystak-net.
+ROUTES: dict[str, str] = {
+    short: f"http://vystak-{short}:8000" for short in _ROUTES_RAW
+}
 
 # response_id -> agent_name. Populated by /v1/responses proxy so GETs for a
 # stored response land on the agent that created it. In-memory and non-HA:
@@ -48,6 +109,41 @@ class ChatCompletionRequest(BaseModel):
 
 
 app = FastAPI(title="vystak-channel-chat")
+
+
+# --- Transport bootstrap ---
+# Install the process-level AgentClient BEFORE any route handlers that call
+# _default_client(). Mirrors the bootstrap emitted by the LangChain adapter.
+from vystak.transport import AgentClient as _AgentClient  # noqa: E402
+from vystak.transport import client as _vystak_client_module  # noqa: E402
+
+
+def _build_transport_from_env():
+    transport_type = os.environ.get("VYSTAK_TRANSPORT_TYPE", "http")
+    if transport_type == "http":
+        from vystak_transport_http import HttpTransport
+
+        return HttpTransport(routes=_http_routes)
+    if transport_type == "nats":
+        from vystak_transport_nats import NatsTransport
+
+        url = os.environ["VYSTAK_NATS_URL"]
+        prefix = os.environ.get("VYSTAK_NATS_SUBJECT_PREFIX", "vystak")
+        return NatsTransport(url=url, subject_prefix=prefix)
+    raise RuntimeError(
+        f"unsupported VYSTAK_TRANSPORT_TYPE={transport_type}"
+    )
+
+
+_transport = _build_transport_from_env()
+_vystak_client_module._DEFAULT_CLIENT = _AgentClient(
+    transport=_transport,
+    routes=_client_routes,
+)
+
+
+def _default_client() -> _AgentClient:
+    return _vystak_client_module._default_client()
 
 
 @app.get("/health")
@@ -92,22 +188,6 @@ def _coerce_text(value) -> str:
     return str(value)
 
 
-def _extract_text(a2a_resp: dict) -> str:
-    """Return the final text response from an A2A tasks/send payload."""
-    result = a2a_resp.get("result", {}) or {}
-    status = result.get("status", {}) or {}
-    status_message = status.get("message", {}) or {}
-    parts = status_message.get("parts", []) or []
-    collected: list[str] = []
-    for part in parts:
-        if not isinstance(part, dict):
-            continue
-        if part.get("type") and part.get("type") != "text":
-            continue
-        collected.append(_coerce_text(part.get("text", "")))
-    return "".join(collected)
-
-
 def _pick_last_user(messages: list[ChatMessage]) -> str:
     for msg in reversed(messages):
         if msg.role == "user" and msg.content:
@@ -137,30 +217,18 @@ async def chat_completions(request: ChatCompletionRequest):
 
     last_user = _pick_last_user(request.messages)
     session_id = str(uuid.uuid4())
-    agent_url = ROUTES[agent_name]
 
     if request.stream:
         return StreamingResponse(
-            _stream_chunks(agent_url, request.model, session_id, last_user),
+            _stream_chunks(agent_name, request.model, session_id, last_user),
             media_type="text/event-stream",
         )
 
-    a2a_request = {
-        "jsonrpc": "2.0",
-        "method": "tasks/send",
-        "id": 1,
-        "params": {
-            "id": session_id,
-            "sessionId": session_id,
-            "message": {"role": "user", "parts": [{"text": last_user}]},
-        },
-    }
-
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{agent_url}/a2a", json=a2a_request)
-        a2a_resp = resp.json()
-
-    response_text = _extract_text(a2a_resp)
+    response_text = await _default_client().send_task(
+        agent_name,
+        last_user,
+        metadata={"sessionId": session_id},
+    )
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -182,19 +250,8 @@ async def chat_completions(request: ChatCompletionRequest):
     }
 
 
-async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str):
-    """Translate A2A SSE (tasks/sendSubscribe) → OpenAI chat.completion.chunk SSE."""
-    a2a_request = {
-        "jsonrpc": "2.0",
-        "method": "tasks/sendSubscribe",
-        "id": 1,
-        "params": {
-            "id": session_id,
-            "sessionId": session_id,
-            "message": {"role": "user", "parts": [{"text": text}]},
-        },
-    }
-
+async def _stream_chunks(agent_name: str, model: str, session_id: str, text: str):
+    """Translate A2A stream events → OpenAI chat.completion.chunk SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
 
@@ -212,37 +269,21 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
 
     finished = False
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", f"{agent_url}/a2a", json=a2a_request) as resp:
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    try:
-                        event = json.loads(line[6:])
-                    except json.JSONDecodeError:
-                        continue
-
-                    result = event.get("result", {})
-                    artifact = result.get("artifact") or {}
-                    for part in artifact.get("parts", []):
-                        if not isinstance(part, dict):
-                            continue
-                        # A2A artifact parts can be text, thinking, tool_use,
-                        # input_json_delta, etc. (LangGraph streams all event
-                        # types). Only text is meaningful content for an
-                        # OpenAI Chat Completions client — drop the rest.
-                        if part.get("type") and part.get("type") != "text":
-                            continue
-                        text_part = _coerce_text(part.get("text", ""))
-                        if text_part:
-                            yield _chunk({"content": text_part})
-
-                    if result.get("final"):
-                        yield _chunk({}, finish_reason="stop")
-                        yield "data: [DONE]\\n\\n"
-                        finished = True
-                        return
-    except httpx.HTTPError as e:
+        async for event in _default_client().stream_task(
+            agent_name,
+            text,
+            metadata={"sessionId": session_id},
+        ):
+            # A2AEvent carries (type, text, data, final). Only text-bearing
+            # content translates to an OpenAI chunk delta.
+            if event.text:
+                yield _chunk({"content": event.text})
+            if event.final:
+                yield _chunk({}, finish_reason="stop")
+                yield "data: [DONE]\\n\\n"
+                finished = True
+                return
+    except Exception as e:
         err = {
             "error": {
                 "message": f"Upstream agent error: {e}",
@@ -256,8 +297,7 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
         return
     finally:
         if not finished:
-            # Agent closed the stream without a terminal `final: true` event
-            # (common when LangGraph ends without emitting the A2A sentinel).
+            # Agent closed the stream without a terminal `final: true` event.
             # Still emit finish + [DONE] so OpenAI clients don't hang.
             yield _chunk({}, finish_reason="stop")
             yield "data: [DONE]\\n\\n"
@@ -265,11 +305,11 @@ async def _stream_chunks(agent_url: str, model: str, session_id: str, text: str)
 
 @app.post("/v1/responses")
 async def create_response(request: Request):
-    """Proxy OpenAI Responses API to the target agent.
+    """Route OpenAI Responses API to the target agent via AgentClient.
 
     Unlike /v1/chat/completions we don't translate A2A — agents already emit
     the Responses API shape (the LangChain adapter's /v1/responses endpoint).
-    Just route by `model` and forward the bytes.
+    Routes by `model` through the configured transport (HTTP or NATS).
     """
     try:
         body: dict[str, Any] = await request.json()
@@ -290,7 +330,6 @@ async def create_response(request: Request):
     if agent_name not in ROUTES:
         return _not_found(model)
 
-    agent_url = ROUTES[agent_name]
     streaming = bool(body.get("stream", False))
 
     # Guard cross-agent response chaining — previous_response_id is only valid
@@ -315,14 +354,16 @@ async def create_response(request: Request):
 
     if streaming:
         return StreamingResponse(
-            _proxy_responses_stream(agent_url, agent_name, body),
+            _stream_responses(agent_name, body),
             media_type="text/event-stream",
         )
 
+    session_id = str(uuid.uuid4())
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(f"{agent_url}/v1/responses", json=body)
-    except httpx.HTTPError as e:
+        result = await _default_client().create_response(
+            agent_name, body, metadata={"sessionId": session_id},
+        )
+    except Exception as e:
         return JSONResponse(
             status_code=502,
             content={
@@ -334,70 +375,38 @@ async def create_response(request: Request):
             },
         )
 
+    if isinstance(result, dict) and result.get("id") and body.get("store", True):
+        _RESPONSE_OWNERS[result["id"]] = agent_name
+
+    return JSONResponse(result)
+
+
+async def _stream_responses(agent_name: str, body: dict):
+    """Stream /v1/responses SSE from agent through to client via AgentClient."""
     try:
-        payload = resp.json()
-    except Exception:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "message": "Upstream returned non-JSON response",
-                    "type": "upstream_error",
-                    "code": "agent_unreachable",
-                }
-            },
-        )
+        async for chunk in _default_client().create_response_stream(
+            agent_name, body, metadata={}, timeout=300,
+        ):
+            # Chunk is already an OpenAI response-stream event dict.
+            # Emit as SSE to the client.
+            yield f"data: {json.dumps(chunk)}\\n\\n"
 
-    resp_id = payload.get("id") if isinstance(payload, dict) else None
-    if resp_id:
-        _RESPONSE_OWNERS[resp_id] = agent_name
-
-    return JSONResponse(status_code=resp.status_code, content=payload)
-
-
-async def _proxy_responses_stream(agent_url: str, agent_name: str, body: dict):
-    """Stream /v1/responses SSE from agent through to client byte-for-byte."""
-    try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            async with client.stream(
-                "POST", f"{agent_url}/v1/responses", json=body
-            ) as resp:
-                async for line in resp.aiter_lines():
-                    # Preserve line structure; SSE is line-delimited
-                    if not line:
-                        yield "\\n"
-                        continue
-
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str and data_str != "[DONE]":
-                            try:
-                                event = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                event = None
-                            if isinstance(event, dict):
-                                resp_obj = event.get("response")
-                                if isinstance(resp_obj, dict):
-                                    rid = resp_obj.get("id")
-                                    if isinstance(rid, str):
-                                        _RESPONSE_OWNERS[rid] = agent_name
-
-                    yield line + "\\n"
-    except httpx.HTTPError as e:
+            # Capture response_id for GET routing when we see response.created.
+            if chunk.get("type") == "response.created":
+                resp = chunk.get("response", {})
+                if isinstance(resp, dict) and resp.get("id") and body.get("store", True):
+                    _RESPONSE_OWNERS[resp["id"]] = agent_name
+    except Exception as e:
         err = {
-            "error": {
-                "message": f"Upstream agent error: {e}",
-                "type": "upstream_error",
-                "code": "agent_unreachable",
-            }
+            "type": "error",
+            "error": {"message": str(e)},
         }
         yield f"data: {json.dumps(err)}\\n\\n"
-        yield "data: [DONE]\\n\\n"
 
 
 @app.get("/v1/responses/{response_id}")
 async def get_response(response_id: str):
-    """Look up the owning agent from the in-memory map and proxy the GET."""
+    """Look up the owning agent from the in-memory map and retrieve via AgentClient."""
     owner = _RESPONSE_OWNERS.get(response_id)
     if owner is None:
         return JSONResponse(
@@ -414,23 +423,9 @@ async def get_response(response_id: str):
             },
         )
 
-    if owner not in ROUTES:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "message": f"Owning agent '{owner}' is no longer routed",
-                    "type": "upstream_error",
-                    "code": "agent_unreachable",
-                }
-            },
-        )
-
-    agent_url = ROUTES[owner]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(f"{agent_url}/v1/responses/{response_id}")
-    except httpx.HTTPError as e:
+        result = await _default_client().get_response(owner, response_id)
+    except Exception as e:
         return JSONResponse(
             status_code=502,
             content={
@@ -442,10 +437,18 @@ async def get_response(response_id: str):
             },
         )
 
-    try:
-        return JSONResponse(status_code=resp.status_code, content=resp.json())
-    except Exception:
-        return JSONResponse(status_code=resp.status_code, content={"id": response_id})
+    if result is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "code": "response_not_found",
+                    "message": f"{response_id} not found",
+                }
+            },
+        )
+
+    return JSONResponse(result)
 
 
 if __name__ == "__main__":
@@ -457,19 +460,25 @@ if __name__ == "__main__":
 '''
 
 
-DOCKERFILE = '''\
+DOCKERFILE = """\
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 CMD ["python", "server.py"]
-'''
+"""
 
 
-REQUIREMENTS = '''\
+# vystak + vystak_transport_http are bundled as source by DockerChannelNode
+# (they're on PYTHONPATH via COPY . . in the Dockerfile).
+# pyyaml + aiosqlite are vystak's own runtime deps — needed because
+# vystak/__init__.py eagerly imports schema.loader (yaml) and stores (aiosqlite).
+REQUIREMENTS = """\
 fastapi>=0.115
 uvicorn>=0.34
-httpx>=0.28
 pydantic>=2.0
-'''
+pyyaml>=6.0
+aiosqlite>=0.20
+nats-py>=2.6
+"""

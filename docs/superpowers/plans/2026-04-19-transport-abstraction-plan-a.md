@@ -10,6 +10,25 @@
 
 ---
 
+## Plan Errata (2026-04-19, post-Task-1)
+
+When writing the plan I mis-modelled the existing schema: the spec referenced a top-level `Workspace` bundle with `.agents`, `.platforms`, `.transports`, `.services` lists. **That class does not exist in this codebase.** The existing `Workspace` is a per-agent execution sandbox (filesystem / terminal / browser flags). Users declare `Agent`, `Channel`, `Platform`, etc. as module-level variables in `vystak.py`; the CLI loader scans the module for `Agent` and `Channel` instances into a `Definitions` dataclass.
+
+**The repo-wide pattern is embedded objects, not name-refs**: `Agent.platform: Platform`, `Platform.provider: Provider`. This plan is realigned to use the same pattern for transport.
+
+**Realignment (decided 2026-04-19, user-approved):**
+
+- `Platform` gains `transport: Transport | None = None` — a direct instance, not a name ref. Populated by a `Platform` model-validator that synthesises `Transport(name="default-http", type="http")` when unset.
+- No top-level `Workspace.transports` list; no synthesis logic on a bundle.
+- `EnvironmentOverride` (renamed from `WorkspaceOverride`) operates on the `Definitions` dataclass produced by the loader, not on a `Workspace`. Shape: `{platforms: dict[str, PlatformOverride]}` where `PlatformOverride.transport: Transport | None` replaces `platform.transport` wholesale.
+- No new transport-scanning in the CLI loader — transports are embedded in platforms, so overlays find them by walking `definitions.agents` and inspecting `.platform`.
+
+**Tasks affected:** 2 (rewritten below), 17, 18, 19, 20, 21, 22, 23. Tasks 1, 3–16, and 24–26 are unaffected (they touch `vystak.transport` internals, which are orthogonal to the schema wiring). **Tasks 17–23 must be rewritten in-place when the plan reaches them** — they currently still reference the old Workspace model; do not execute them as-written.
+
+The spec document (`docs/superpowers/specs/2026-04-19-transport-abstraction-design.md`) will get a matching erratum when the plan reaches Task 25 (docs).
+
+---
+
 ## Important Notes for the Engineer
 
 - **Package name is `vystak`, not `agentstack`.** Older plans in this directory reference the legacy name; ignore that.
@@ -304,176 +323,155 @@ integration lands in a follow-up commit."
 
 ---
 
-### Task 2: Platform.transport + Workspace.transports fields
+### Task 2: Embed `transport` on `Platform`
 
 **Files:**
 - Modify: `packages/python/vystak/src/vystak/schema/platform.py`
-- Modify: `packages/python/vystak/src/vystak/schema/workspace.py`
 - Modify: `packages/python/vystak/tests/schema/test_transport_schema.py`
 
-- [ ] **Step 1: Add failing tests**
+**What this task does:** Add `transport: Transport | None = None` to `Platform`. A `model_validator(mode="after")` on `Platform` fills in a default `Transport(name="default-http", type="http")` when unset. This is the embedded-object pattern (matching `Platform.provider: Provider`).
 
-Append to `packages/python/vystak/tests/schema/test_transport_schema.py`:
+**Before you begin, read:**
+- `packages/python/vystak/src/vystak/schema/platform.py` — current `Platform` shape. Its fields today are `type: str`, `provider: Provider`, `namespace: str = "default"`, `config: dict = {}`. It already inherits from `NamedModel`.
+- `packages/python/vystak/src/vystak/schema/transport.py` (committed in Task 1) — the `Transport` model.
+
+- [ ] **Step 1: Write failing tests**
+
+Append to `packages/python/vystak/tests/schema/test_transport_schema.py` (keep existing imports; the file already imports `pytest`, `ValidationError`, and the transport models):
 
 ```python
-from vystak.schema import Agent, Model, Platform, Provider, Workspace
+from vystak.schema import Platform, Provider
 
 
 class TestPlatformTransport:
-    def _agent(self):
-        return Agent(
-            name="a",
-            model=Model(
-                name="m",
-                provider=Provider(type="anthropic", api_key_env="K"),
+    def _provider(self) -> Provider:
+        return Provider(name="docker", type="docker")
+
+    def test_default_transport_synthesized(self):
+        """Platform without an explicit transport gets a default-http."""
+        p = Platform(name="main", type="docker", provider=self._provider())
+        assert p.transport is not None
+        assert p.transport.name == "default-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_http_transport_preserved(self):
+        p = Platform(
+            name="main",
+            type="docker",
+            provider=self._provider(),
+            transport=Transport(name="my-http", type="http"),
+        )
+        assert p.transport.name == "my-http"
+        assert p.transport.type == "http"
+
+    def test_explicit_nats_transport_preserved(self):
+        p = Platform(
+            name="aca",
+            type="container-apps",
+            provider=Provider(name="azure", type="azure"),
+            transport=Transport(
+                name="bus",
+                type="nats",
+                config=NatsConfig(jetstream=True),
             ),
         )
+        assert p.transport.type == "nats"
+        assert p.transport.config.jetstream is True
 
-    def test_platform_transport_optional(self):
-        p = Platform(name="p", provider="docker")
-        assert p.transport is None
+    def test_transport_config_mismatch_still_rejected(self):
+        """The Transport-level validator (from Task 1) still fires when
+        Transport is embedded in a Platform."""
+        with pytest.raises(ValidationError, match="config.type"):
+            Platform(
+                name="main",
+                type="docker",
+                provider=self._provider(),
+                transport=Transport(
+                    name="bus", type="nats", config=HttpConfig()
+                ),
+            )
 
-    def test_platform_transport_by_name(self):
-        p = Platform(name="p", provider="docker", transport="bus")
-        assert p.transport == "bus"
-
-
-class TestWorkspaceTransports:
-    def _agent(self):
-        return Agent(
-            name="a",
-            model=Model(
-                name="m",
-                provider=Provider(type="anthropic", api_key_env="K"),
-            ),
-        )
-
-    def test_workspace_default_synthesizes_http(self):
-        p = Platform(name="main", provider="docker")
-        ws = Workspace(agents=[self._agent()], platforms=[p])
-        names = [t.name for t in ws.transports]
-        assert "default-http" in names
-        default = next(t for t in ws.transports if t.name == "default-http")
-        assert default.type == "http"
-
-    def test_workspace_custom_transport_used_as_is(self):
-        t = Transport(name="bus", type="nats")
-        p = Platform(name="main", provider="docker", transport="bus")
-        ws = Workspace(agents=[self._agent()], platforms=[p], transports=[t])
-        assert [t.name for t in ws.transports] == ["bus"]
-        # Platform still references the user-provided name
-        assert ws.platforms[0].transport == "bus"
-
-    def test_workspace_platform_without_transport_gets_default(self):
-        p = Platform(name="main", provider="docker")
-        ws = Workspace(agents=[self._agent()], platforms=[p])
-        # Platform's transport field was filled in with the synthesised default
-        assert ws.platforms[0].transport == "default-http"
-
-    def test_workspace_rejects_unknown_transport_ref(self):
-        p = Platform(name="main", provider="docker", transport="nonexistent")
-        with pytest.raises(ValidationError, match="transport 'nonexistent'"):
-            Workspace(agents=[self._agent()], platforms=[p])
+    def test_default_transport_is_a_new_instance_per_platform(self):
+        """Two platforms should not share the same default-http instance —
+        mutating one must not affect the other."""
+        p1 = Platform(name="a", type="docker", provider=self._provider())
+        p2 = Platform(name="b", type="docker", provider=self._provider())
+        assert p1.transport is not p2.transport
 ```
 
 - [ ] **Step 2: Run tests to see them fail**
 
 ```bash
-uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v
+uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v -k TestPlatformTransport
 ```
 
-Expected: new tests FAIL with AttributeError or ValidationError (field doesn't exist yet).
+Expected: tests fail with `Platform` rejecting the `transport=` kwarg (field doesn't exist yet).
 
-- [ ] **Step 3: Add `transport` field to `Platform`**
+- [ ] **Step 3: Add the `transport` field and default-synthesis validator to `Platform`**
 
-In `packages/python/vystak/src/vystak/schema/platform.py`, add a new field alongside the existing fields. Locate the `class Platform(BaseModel):` declaration and add:
-
-```python
-    transport: str | None = None
-```
-
-Position it after `provider` and before any `services` or `channels` fields to preserve logical grouping. Place above any existing `model_config`.
-
-- [ ] **Step 4: Add `transports` list + synthesize/validate in `Workspace`**
-
-Open `packages/python/vystak/src/vystak/schema/workspace.py`. Add import:
+Open `packages/python/vystak/src/vystak/schema/platform.py` and replace its body with:
 
 ```python
+"""Platform model — deployment target for agents."""
+
+from typing import Self
+
+from pydantic import model_validator
+
+from vystak.schema.common import NamedModel
+from vystak.schema.provider import Provider
 from vystak.schema.transport import Transport
-```
 
-In the `class Workspace(BaseModel):` body, add the new field next to `agents`, `channels`, `services`:
 
-```python
-    transports: list[Transport] = Field(default_factory=list)
-```
+class Platform(NamedModel):
+    """A deployment target where agents run."""
 
-Then add a model validator that runs *after* base validation. Import `model_validator` if not already imported. Add:
+    type: str
+    provider: Provider
+    namespace: str = "default"
+    config: dict = {}
+    transport: Transport | None = None
 
-```python
     @model_validator(mode="after")
-    def _synthesize_and_validate_transports(self) -> "Workspace":
-        # Synthesize a default HTTP transport if none declared.
-        if not self.transports:
-            self.transports = [Transport(name="default-http", type="http")]
-
-        transport_names = {t.name for t in self.transports}
-
-        # Default any platform without an explicit transport to the first one.
-        # If multiple transports exist and a platform has no transport set,
-        # require the user to be explicit.
-        default_name = (
-            "default-http"
-            if "default-http" in transport_names and len(transport_names) == 1
-            else None
-        )
-
-        for platform in self.platforms:
-            if platform.transport is None:
-                if default_name is None:
-                    raise ValueError(
-                        f"platform '{platform.name}' has no transport set and "
-                        f"multiple transports are declared ({sorted(transport_names)}); "
-                        f"set Platform.transport explicitly"
-                    )
-                platform.transport = default_name
-            elif platform.transport not in transport_names:
-                raise ValueError(
-                    f"platform '{platform.name}' references transport "
-                    f"'{platform.transport}' which is not declared in "
-                    f"Workspace.transports (have: {sorted(transport_names)})"
-                )
+    def _default_transport(self) -> Self:
+        if self.transport is None:
+            self.transport = Transport(name="default-http", type="http")
         return self
 ```
 
-- [ ] **Step 5: Run tests and verify they pass**
+Notes:
+- The validator synthesises a **new** `Transport` instance each time (critical for the `test_default_transport_is_a_new_instance_per_platform` test — Pydantic would otherwise share a class-level default).
+- `Self` comes from `typing` (Python 3.11+); matches the existing style of `agent.py`.
+
+- [ ] **Step 4: Run tests and verify they pass**
 
 ```bash
-uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v
+uv run pytest packages/python/vystak/tests/schema/test_transport_schema.py -v -k TestPlatformTransport
 ```
 
-Expected: all tests PASS (old + new).
+Expected: 5/5 new tests pass.
 
-- [ ] **Step 6: Run full test suite to check for regressions**
+- [ ] **Step 5: Run full lint + test**
 
 ```bash
-just test-python && just lint-python
+just lint-python && just test-python
 ```
 
-Expected: PASS. If pre-existing `Workspace` tests break because they now get a default-http transport, inspect the failing test — it probably asserts `len(ws.transports) == 0`, which should be updated to acknowledge the synthesized default. Fix only the assertion; do not change test intent.
+Expected: PASS. If any pre-existing `Platform`-using tests break because they now assert `platform.transport is None`, update only the failing assertion to `platform.transport.type == "http"` or `platform.transport.name == "default-http"` — do not change test intent.
 
-- [ ] **Step 7: Commit**
+If `just fmt-python` auto-fixes anything (import ordering, line length), stage the formatted files and include them in the commit.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/python/vystak/src/vystak/schema/platform.py \
-        packages/python/vystak/src/vystak/schema/workspace.py \
         packages/python/vystak/tests/schema/test_transport_schema.py
-git commit -m "feat(schema): wire Transport into Platform and Workspace
+git commit -m "feat(schema): embed Transport on Platform
 
-Adds Platform.transport (name ref) and Workspace.transports (list). If no
-transport is declared, Workspace synthesises a 'default-http' transport
-and assigns it to every platform. Referencing an unknown transport fails
-validation."
+Platform gains a transport: Transport | None field. A model_validator
+synthesises Transport(name='default-http', type='http') when unset so
+every platform always resolves to a concrete transport. Matches the
+existing embedded-object pattern (Platform.provider: Provider)."
 ```
 
 ---
@@ -3012,234 +3010,786 @@ AgentClient, resolved_routes carries {canonical, address} per short name."
 
 ---
 
-### Task 17: Docker provider wires `TransportPlugin`
+### Task 17: Docker provider wires `TransportPlugin` (realigned)
+
+**Realigned scope (2026-04-19):** The current DockerProvider operates per-agent (`set_agent(agent)` + `apply(plan)`) and per-channel (`apply_channel(plan, channel, resolved_routes)`). There is no top-level Workspace iteration inside the provider. The CLI command (`apply.py`) is the orchestrator. So Task 17 splits between provider, plugins, and CLI.
 
 **Files:**
-- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py`
-- Modify: provider tests
+- Modify: `packages/python/vystak-transport-http/src/vystak_transport_http/plugin.py` — add `resolve_address_for(agent, platform)` helper
+- Create: `packages/python/vystak-provider-docker/src/vystak_provider_docker/transport_wiring.py` — small utility that builds the peer-route map + picks a TransportPlugin from an agent's transport type
+- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py` — accept `peer_routes` kwarg through `apply()` + `apply_channel()`; thread into container env; flip channel `resolved_routes` shape
+- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/nodes/agent.py` — merge `VYSTAK_TRANSPORT_TYPE` + `VYSTAK_ROUTES_JSON` into the agent container env
+- Modify: `packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py` and `vystak-channel-slack/src/vystak_channel_slack/plugin.py` — flip `generate_code` signature to `resolved_routes: dict[str, dict[str, str]]`; update `routes.json` emission accordingly
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — compute peer routes once upfront using the richer shape; pass to `provider.apply(plan, peer_routes=...)` and to `provider.apply_channel(plan, channel, resolved_routes=...)`
+- Tests in each affected package.
 
-- [ ] **Step 1: Add a transport-plugin registry to the provider**
+**Guiding invariants:**
+- Canonical names are known from the workspace alone. Wire addresses on Docker are deterministic (`http://{slug(name)}-{slug(ns)}:{port}/a2a`). So peer routes can be computed once, upfront, before any container deploys — no two-phase deploy needed.
+- The **per-agent `VYSTAK_ROUTES_JSON`** a container sees is `{peer_short_name: {canonical, address}}` for **all other agents in the workspace** (we're not restricting by channel routes — the agent can call any declared peer). Keeping this simple for v1.
+- Channels use a **restricted** route map — only the agents referenced by `channel.routes[*].agent`. The channel plugin's `resolved_routes` parameter takes the richer shape.
 
-In `provider.py`, at module scope, add:
+---
+
+- [ ] **Step 1: Add `resolve_address_for` to `HttpTransportPlugin`**
+
+Edit `packages/python/vystak-transport-http/src/vystak_transport_http/plugin.py`:
 
 ```python
+"""HttpTransportPlugin — registers the HTTP transport with providers."""
+
+from __future__ import annotations
+
+from vystak.providers.base import GeneratedCode, TransportPlugin
+from vystak.schema import Platform, Transport
+from vystak.schema.agent import Agent
+from vystak.transport.naming import slug
+
+
+class HttpTransportPlugin(TransportPlugin):
+    type = "http"
+
+    def build_provision_nodes(self, transport: Transport, platform: Platform):
+        return []
+
+    def generate_env_contract(
+        self, transport: Transport, context: dict
+    ) -> dict[str, str]:
+        return {"VYSTAK_TRANSPORT_TYPE": "http"}
+
+    def generate_listener_code(self, transport: Transport) -> GeneratedCode | None:
+        return None
+
+    def resolve_address_for(
+        self, agent: Agent, platform: Platform
+    ) -> str:
+        """Docker-style DNS URL for an agent. Azure provider will override via its own plugin or kwarg."""
+        ns = slug(platform.namespace or "default")
+        port = agent.port or 8000
+        return f"http://{slug(agent.name)}-{ns}:{port}/a2a"
+```
+
+Update the package's test file (`packages/python/vystak-transport-http/tests/test_http_plugin.py`) to add a test for `resolve_address_for`:
+
+```python
+def test_resolve_address_for():
+    from vystak.schema import Platform, Provider
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    p = HttpTransportPlugin()
+    provider = Provider(name="docker", type="docker")
+    platform = Platform(name="main", type="docker", provider=provider, namespace="prod")
+    agent = Agent(
+        name="time-agent",
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+    url = p.resolve_address_for(agent, platform)
+    assert url == "http://time-agent-prod:8000/a2a"
+```
+
+- [ ] **Step 2: Create `transport_wiring.py` in the Docker provider**
+
+Create `packages/python/vystak-provider-docker/src/vystak_provider_docker/transport_wiring.py`:
+
+```python
+"""Transport wiring for Docker deployments.
+
+Maps an agent's transport type -> TransportPlugin instance, and provides a
+helper to compute the VYSTAK_ROUTES_JSON payload for a given agent.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
 from vystak_transport_http import HttpTransportPlugin
 
-_TRANSPORT_PLUGINS: dict[str, type] = {
+if TYPE_CHECKING:
+    from vystak.providers.base import TransportPlugin
+    from vystak.schema.agent import Agent
+
+_TRANSPORT_PLUGINS: dict[str, type["TransportPlugin"]] = {
     "http": HttpTransportPlugin,
 }
+
+
+def get_transport_plugin(transport_type: str) -> "TransportPlugin":
+    try:
+        return _TRANSPORT_PLUGINS[transport_type]()
+    except KeyError:
+        raise KeyError(
+            f"No TransportPlugin registered for type {transport_type!r}; "
+            f"known: {sorted(_TRANSPORT_PLUGINS)}"
+        ) from None
+
+
+def build_peer_routes(subject: "Agent", peers: list["Agent"]) -> dict[str, dict[str, str]]:
+    """Return {peer_short_name: {canonical, address}} for every peer agent.
+
+    `subject` is the agent whose container is being configured; its own entry
+    is excluded from the map. `peers` is the full agents list from the CLI.
+    """
+    transport = subject.platform.transport
+    plugin = get_transport_plugin(transport.type)
+    routes: dict[str, dict[str, str]] = {}
+    for peer in peers:
+        if peer.name == subject.name:
+            continue
+        if peer.platform is None:
+            continue
+        routes[peer.name] = {
+            "canonical": peer.canonical_name,
+            "address": plugin.resolve_address_for(peer, peer.platform),
+        }
+    return routes
+
+
+def build_routes_json(subject: "Agent", peers: list["Agent"]) -> str:
+    return json.dumps(build_peer_routes(subject, peers))
 ```
 
-Plan B adds `"nats"` to this dict.
-
-- [ ] **Step 2: Resolve `transport_plugin` in `apply()`**
-
-Find the method in `DockerProvider` that iterates the workspace's agents, channels, and services to build the `ProvisionGraph`. Before building agent and channel nodes, resolve the transport:
+Create `packages/python/vystak-provider-docker/tests/test_transport_wiring.py`:
 
 ```python
-transport = next(
-    t for t in workspace.transports
-    if t.name == platform.transport
+"""Tests for peer-route wiring."""
+
+import json
+
+from vystak.schema import Platform, Provider, Transport
+from vystak.schema.agent import Agent
+from vystak.schema.model import Model
+from vystak_provider_docker.transport_wiring import (
+    build_peer_routes,
+    build_routes_json,
+    get_transport_plugin,
 )
-plugin_cls = _TRANSPORT_PLUGINS[transport.type]
-transport_plugin = plugin_cls()
 
-# Broker provisioning nodes (empty list for http):
-for node in transport_plugin.build_provision_nodes(transport, platform):
-    graph.add(node)
 
-# Env contract for agents/channels:
-transport_env = transport_plugin.generate_env_contract(transport, context={})
+def _agent(name: str, namespace: str = "default") -> Agent:
+    provider = Provider(name="docker", type="docker")
+    platform = Platform(
+        name="main", type="docker", provider=provider, namespace=namespace,
+        transport=Transport(name="default-http", type="http"),
+    )
+    return Agent(
+        name=name,
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+
+
+def test_get_transport_plugin_http():
+    p = get_transport_plugin("http")
+    assert p.type == "http"
+
+
+def test_build_peer_routes_excludes_self():
+    a = _agent("assistant")
+    b = _agent("weather")
+    c = _agent("time")
+    routes = build_peer_routes(a, [a, b, c])
+    assert set(routes.keys()) == {"weather", "time"}
+    assert routes["weather"]["canonical"] == "weather.agents.default"
+    assert routes["weather"]["address"] == "http://weather-default:8000/a2a"
+
+
+def test_build_routes_json_is_valid_json():
+    a = _agent("assistant")
+    b = _agent("weather")
+    payload = build_routes_json(a, [a, b])
+    parsed = json.loads(payload)
+    assert parsed["weather"]["canonical"] == "weather.agents.default"
 ```
 
-- [ ] **Step 3: Thread `transport_env` into agent and channel container envs**
+- [ ] **Step 3: Thread peer routes into `DockerAgentNode`**
 
-Every agent and channel container node must receive `transport_env` merged into its `environment` map. Also inject `VYSTAK_ROUTES_JSON` (computed from the workspace's agents + transport's resolve_address for the channel's allowed peers).
+Inspect `packages/python/vystak-provider-docker/src/vystak_provider_docker/nodes/agent.py` (or wherever `DockerAgentNode` lives — find with `grep -rn "class DockerAgentNode" packages/python/vystak-provider-docker/`).
 
-Concretely, after constructing each agent / channel container node's environment dict, merge:
+Locate where the container's `environment` dict is built. Add two new env vars: `VYSTAK_TRANSPORT_TYPE` (from `agent.platform.transport.type`) and `VYSTAK_ROUTES_JSON` (from a `peer_routes_json: str` attribute on the node).
+
+Add `peer_routes_json: str = "{}"` as a keyword-only constructor parameter on `DockerAgentNode` with a default empty-dict JSON string. Then in the environment-building block:
 
 ```python
 environment = {
-    **transport_env,
-    "VYSTAK_ROUTES_JSON": _build_routes_json(workspace, transport),
-    # ... existing keys ...
+    **existing_env,
+    "VYSTAK_TRANSPORT_TYPE": self._agent.platform.transport.type,
+    "VYSTAK_ROUTES_JSON": self._peer_routes_json,
 }
 ```
 
-Add a `_build_routes_json` helper on the provider (or in a new `docker_provider/routes.py`) that loops through agents and produces:
+Store the kwarg on `self._peer_routes_json` in `__init__`.
+
+- [ ] **Step 4: Update `DockerProvider.apply()` to accept `peer_routes`**
+
+In `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py`:
 
 ```python
-{
-    agent.name: {
-        "canonical": agent.canonical_name,
-        "address": transport_plugin_impl.resolve_address_for(agent, platform),
-    }
-    for agent in workspace.agents
+def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
+    ...
+    agent_node = DockerAgentNode(
+        self._client,
+        self._agent,
+        self._generated_code,
+        plan,
+        peer_routes_json=peer_routes or "{}",
+    )
+    ...
+```
+
+`peer_routes` is a JSON-encoded string. Callers (the CLI) use `build_routes_json(agent, peers)` to build it.
+
+- [ ] **Step 5: Update `DockerProvider.apply_channel()` for richer route shape**
+
+Update the signature:
+
+```python
+def apply_channel(
+    self,
+    plan: DeployPlan,
+    channel: Channel,
+    resolved_routes: dict[str, dict[str, str]],
+) -> DeployResult:
+```
+
+The existing body calls `plugin.generate_code(channel, resolved_routes)` — that still works; the plugin signatures in Tasks 15/16 currently declare `dict[str, str]`. Update them in Step 6 below.
+
+- [ ] **Step 6: Flip channel plugin signatures**
+
+In `packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py` and `vystak-channel-slack/src/vystak_channel_slack/plugin.py`, change:
+
+```python
+def generate_code(self, channel: Channel, resolved_routes: dict[str, dict[str, str]]) -> GeneratedCode:
+    routes_json = json.dumps(resolved_routes, indent=2)
+    return GeneratedCode(
+        files={
+            "server.py": SERVER_PY,
+            "routes.json": routes_json,
+            ...
+        },
+    )
+```
+
+The emitted `routes.json` now contains the richer shape. The server's backward-compat path (from Task 15/16) detects the new shape and uses it directly (short-circuit the legacy shape conversion). Add a check in the server's `_load_routes_raw`:
+
+```python
+# If the first value is already a dict with "canonical"+"address", use as-is;
+# else convert legacy {short: URL} shape.
+if raw and isinstance(next(iter(raw.values())), dict) and "canonical" in next(iter(raw.values())):
+    return raw
+# legacy path
+return {
+    short: {"canonical": f"{short}.agents.default", "address": url}
+    for short, url in raw.items()
 }
 ```
 
-Where `resolve_address_for` lives on the transport plugin and returns the Docker DNS URL for HTTP (`http://{slug(name)}-{slug(ns)}:8000/a2a`). For clean separation, add an **optional** method to `HttpTransportPlugin`:
+- [ ] **Step 7: Update CLI `apply.py` to compute peer routes upfront**
+
+In `packages/python/vystak-cli/src/vystak_cli/commands/apply.py`:
+
+Import at top:
+```python
+from vystak_provider_docker.transport_wiring import build_routes_json
+```
+(This couples the CLI to `vystak-provider-docker`. Acceptable for v1 — when Task 18 lands, extract into a provider-agnostic helper. For now the CLI already imports from provider packages via `provider_factory`.)
+
+Before the agent deploy loop, compute `all_agents = list(defs.agents)`. Inside the loop where `provider.apply(deploy_plan)` is called:
 
 ```python
-def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
-    from vystak.transport.naming import slug
-    ns = slug(agent.namespace or "default")
-    return f"http://{slug(agent.name)}-{ns}:{agent.port or 8000}/a2a"
+peer_routes = build_routes_json(agent, all_agents)
+result = provider.apply(deploy_plan, peer_routes=peer_routes)
 ```
 
-- [ ] **Step 4: Update docker-provider tests**
+For the channel loop, replace the existing `resolved_routes` computation with the richer shape. Use `build_peer_routes(channel_subject, filtered_peers)` — channel doesn't have a "subject" agent, so construct a filtered peer list from `agent_urls` + each agent's `canonical_name`:
+
+```python
+from vystak_provider_docker.transport_wiring import get_transport_plugin
+
+# Build a map of {agent_name: Agent} for lookup
+agents_by_name = {a["name"]: a["agent"] for a in deployed_agents}
+
+resolved_routes = {}
+for rule in channel.routes:
+    if rule.agent in agents_by_name:
+        peer_agent = agents_by_name[rule.agent]
+        plugin = get_transport_plugin(peer_agent.platform.transport.type)
+        resolved_routes[rule.agent] = {
+            "canonical": peer_agent.canonical_name,
+            "address": plugin.resolve_address_for(peer_agent, peer_agent.platform),
+        }
+```
+
+Then pass `resolved_routes` to `provider.apply_channel(...)` — signature already updated in Step 5.
+
+- [ ] **Step 8: Update docker-provider tests**
 
 ```bash
-grep -rn "environment" packages/python/vystak-provider-docker/tests/ | head -30
 uv run pytest packages/python/vystak-provider-docker/tests/ -v
 ```
 
-Expect failures around environment shapes; update assertions to expect `VYSTAK_TRANSPORT_TYPE=http` and a well-formed `VYSTAK_ROUTES_JSON` in each agent container's env.
+Fix assertions that expected old-shape channel routes or old env shapes. If tests instantiate `DockerAgentNode` directly, add `peer_routes_json="{}"` kwarg to satisfy the new signature.
 
-- [ ] **Step 5: Run full suite**
+- [ ] **Step 9: Update channel-plugin tests**
+
+```bash
+uv run pytest packages/python/vystak-channel-chat/tests/ packages/python/vystak-channel-slack/tests/ -v
+```
+
+The plugin tests pass `resolved_routes` to `generate_code`. Change test fixtures to the new shape `{"foo": {"canonical": "foo.agents.default", "address": "http://foo-default:8000/a2a"}}`.
+
+- [ ] **Step 10: Run full lint + test**
 
 ```bash
 just lint-python && just test-python
 ```
 
-- [ ] **Step 6: Commit**
+All gates green before commit.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-git add packages/python/vystak-provider-docker/
-git commit -m "feat(provider-docker): wire TransportPlugin through apply()
+git add packages/python/vystak-transport-http/ \
+        packages/python/vystak-provider-docker/ \
+        packages/python/vystak-channel-chat/src/vystak_channel_chat/plugin.py \
+        packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py \
+        packages/python/vystak-channel-chat/tests/ \
+        packages/python/vystak-channel-slack/src/vystak_channel_slack/plugin.py \
+        packages/python/vystak-channel-slack/src/vystak_channel_slack/server_template.py \
+        packages/python/vystak-channel-slack/tests/ \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py
+git commit -m "feat(provider-docker): thread TransportPlugin through agent + channel apply
 
-DockerProvider now resolves the platform's transport to a TransportPlugin,
-adds any provision nodes the plugin requires, and injects VYSTAK_TRANSPORT_*
-env vars + VYSTAK_ROUTES_JSON (canonical-name-keyed) into every agent and
-channel container. HTTP path preserves current Docker DNS behaviour."
+DockerProvider.apply() now accepts peer_routes (JSON string) and injects
+VYSTAK_TRANSPORT_TYPE + VYSTAK_ROUTES_JSON into the agent container env.
+apply_channel() signature updated: resolved_routes is now
+dict[str, dict[str, str]] carrying {canonical, address} per short name.
+
+HttpTransportPlugin gains resolve_address_for(agent, platform), producing
+Docker DNS URLs deterministically from canonical names. Channel plugins
+(chat + slack) flip generate_code signatures to match.
+
+CLI (apply command) computes peer routes once upfront from the full agent
+list via a new vystak-provider-docker.transport_wiring helper, then
+passes the JSON to each provider.apply() call. Peer routes are
+computable before any container deploys because wire addresses are
+deterministic from the workspace definition.
+
+Existing server templates' backward-compat routes.json fallback still
+works — they short-circuit when the new shape is detected."
 ```
 
 ---
 
-### Task 18: Azure provider wires `TransportPlugin`
+### Task 18: Azure provider wires `TransportPlugin` (realigned, minimal scope)
+
+**Realigned scope (2026-04-19):** Azure ACA's container-app ingress FQDN is NOT deterministic before the managed environment exists — the `defaultDomain` includes a random slug Azure assigns on env creation. Unlike Docker where peer URLs are fully predictable from the workspace definition, Azure peer URLs require a post-env lookup. For v1, Task 18 does the minimum: signature parity with Docker (so the CLI can call apply uniformly) and `VYSTAK_TRANSPORT_TYPE` env injection. **`VYSTAK_ROUTES_JSON` is left empty on Azure in v1** — users continue using the existing manual `export WEATHER_AGENT_URL=...` workaround for Azure multi-agent setups. Proper Azure peer-route support is a follow-up (likely a two-phase deploy that picks up env.defaultDomain after first deploy).
 
 **Files:**
 - Modify: `packages/python/vystak-provider-azure/src/vystak_provider_azure/provider.py`
-- Modify: provider tests
-
-Follow the exact same pattern as Task 17:
-
-- [ ] **Step 1: Same transport-plugin registry.**
-- [ ] **Step 2: Resolve `transport_plugin` in `apply()`.**
-- [ ] **Step 3: Merge `transport_env` into every container app's environment; inject `VYSTAK_ROUTES_JSON`.**
-- [ ] **Step 4: For HTTP, emit the ACA FQDN pattern for each agent's address: `https://{slug(name)}-{slug(ns)}.{region}.azurecontainerapps.io/a2a`.** Add this to `HttpTransportPlugin.resolve_address_for` — or better, accept the FQDN from the `ContainerAppNode`'s output and look it up post-provision. For this plan, add a `platform_region` kwarg to `resolve_address_for` and derive from `platform.region` on Azure.
-- [ ] **Step 5: Run azure-provider tests.**
-- [ ] **Step 6: Commit.**
-
-```bash
-git add packages/python/vystak-provider-azure/
-git commit -m "feat(provider-azure): wire TransportPlugin through apply()
-
-Azure provider adopts the same TransportPlugin resolution as the Docker
-provider. For HTTP transport, container app FQDNs are emitted into the
-VYSTAK_ROUTES_JSON address map using existing ACA naming conventions."
-```
+- Modify: `packages/python/vystak-provider-azure/src/vystak_provider_azure/nodes/container_app.py` (or wherever `ContainerAppNode` lives — verify with grep)
+- Modify: `packages/python/vystak-provider-azure/tests/` — update tests that broke due to signature changes
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — already passes `peer_routes=None` gracefully via the try/except in Task 17c; only minor adjustment if needed
 
 ---
 
-### Task 19: Hash tree integration
+- [ ] **Step 1: Locate and read `ContainerAppNode`**
 
-**Files:**
-- Modify: `packages/python/vystak/src/vystak/hash/tree.py`
-- Modify: `packages/python/vystak/tests/hash/test_tree.py`
+```bash
+grep -rn "class ContainerAppNode" packages/python/vystak-provider-azure/
+```
 
-- [ ] **Step 1: Write failing tests for hash sensitivity**
+Read the full class; identify where container-app environment variables are built. Currently it's likely inside the `provision()` method where a `Container` or `ContainerApp` CRD spec is constructed.
 
-Add to (or create) `packages/python/vystak/tests/hash/test_tree.py`:
+- [ ] **Step 2: Add `peer_routes_json` kwarg to `ContainerAppNode`**
+
+Add a keyword-only constructor parameter with a safe default:
 
 ```python
-from vystak.hash.tree import AgentHashTree
-from vystak.schema import (
-    Agent, Model, Provider, Platform, Transport, NatsConfig, Workspace,
+def __init__(
+    self,
+    *,
+    aca_client,
+    docker_client,
+    rg_name,
+    agent,
+    generated_code,
+    plan,
+    platform_config,
+    peer_routes_json: str = "{}",
+):
+    ...
+    self._peer_routes_json = peer_routes_json
+```
+
+(If the existing `__init__` is positional, convert to keyword-only with `*,` or add `peer_routes_json` at the end with a default. Match the existing style.)
+
+- [ ] **Step 3: Inject transport env vars into the container-app env**
+
+Inside `provision()` where container `env` list is built, merge two new entries. If the existing code uses Azure SDK's `EnvironmentVar(name=..., value=...)`:
+
+```python
+env_vars.append(
+    EnvironmentVar(name="VYSTAK_TRANSPORT_TYPE", value=self._agent.platform.transport.type)
 )
-
-
-def _ws(transport: Transport | None = None) -> Workspace:
-    agent = Agent(
-        name="a",
-        model=Model(name="m", provider=Provider(type="anthropic", api_key_env="K")),
-    )
-    platform = Platform(name="main", provider="docker", transport=transport.name if transport else None)
-    transports = [transport] if transport else []
-    return Workspace(agents=[agent], platforms=[platform], transports=transports)
-
-
-def test_hash_changes_when_transport_type_changes():
-    ws1 = _ws(Transport(name="bus", type="http"))
-    ws2 = _ws(Transport(name="bus", type="nats", config=NatsConfig()))
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 != h2
-
-
-def test_hash_unchanged_for_byo_connection():
-    ws1 = _ws(Transport(name="bus", type="nats", config=NatsConfig()))
-    # Same transport, different BYO connection — should not trigger re-deploy.
-    t2 = Transport(
-        name="bus", type="nats", config=NatsConfig(),
-        connection={"url_env": "OTHER_URL"},
-    )
-    ws2 = _ws(t2)
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 == h2
-
-
-def test_default_http_platform_without_transport_consistent():
-    # Two platforms identical but one omits transport — after synthesis,
-    # hash should match.
-    ws1 = _ws()  # no transport declared, synthesises default-http
-    ws2 = _ws(Transport(name="default-http", type="http"))
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 == h2
+env_vars.append(
+    EnvironmentVar(name="VYSTAK_ROUTES_JSON", value=self._peer_routes_json)
+)
 ```
 
-- [ ] **Step 2: Run — expect failures**
+If the existing code uses plain dicts, match that pattern instead.
 
-```bash
-uv run pytest packages/python/vystak/tests/hash/ -v
-```
+- [ ] **Step 4: Thread the kwarg through `AzureProvider.apply()`**
 
-Expected: `test_hash_changes_when_transport_type_changes` FAILS because transport doesn't contribute to the hash yet.
-
-- [ ] **Step 3: Extend `AgentHashTree.for_workspace`**
-
-Open `packages/python/vystak/src/vystak/hash/tree.py`. Find where agent hashing composes inputs. Add transport contribution:
+In `provider.py`, update the `apply()` signature:
 
 ```python
-# For each agent:
-platform = _platform_for_agent(workspace, agent)
-transport = next(t for t in workspace.transports if t.name == platform.transport)
-transport_hash_input = {
-    "type": transport.type,
-    "config": (transport.config.model_dump() if transport.config else None),
-    # Deliberately exclude `connection` — BYO endpoint changes are portable.
-}
+def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
 ```
 
-Merge `transport_hash_input` into the existing hash-input dict for the agent. Use `json.dumps(..., sort_keys=True)` to get deterministic ordering.
+When constructing `ContainerAppNode(...)` inside, pass:
 
-- [ ] **Step 4: Run tests**
+```python
+ContainerAppNode(
+    aca_client=aca_client,
+    docker_client=docker_client,
+    rg_name=rg_name,
+    agent=self._agent,
+    generated_code=self._generated_code,
+    plan=plan,
+    platform_config=cfg,
+    peer_routes_json=peer_routes or "{}",
+)
+```
+
+- [ ] **Step 5: Flip `apply_channel()`'s route-shape annotation**
+
+```python
+def apply_channel(
+    self,
+    plan: DeployPlan,
+    channel: Channel,
+    resolved_routes: dict[str, dict[str, str]],
+) -> DeployResult:
+```
+
+The existing body calls `plugin.generate_code(channel, resolved_routes)` — the plugin signatures were already flipped in Task 17b. Just update the annotation.
+
+Also verify the Azure channel-app node (`AzureChannelAppNode` or similar) receives the `generated_code` from the plugin correctly. Spot-check `grep -rn "class AzureChannelAppNode\|apply_channel" packages/python/vystak-provider-azure/` to locate and confirm the shape flows correctly.
+
+- [ ] **Step 6: `HttpTransportPlugin.resolve_address_for` returns Docker-style URL — leaves Azure paths empty**
+
+No changes to `HttpTransportPlugin.resolve_address_for`. On Azure, when the CLI attempts to build `peer_routes` for an agent on an Azure platform, it will produce URLs shaped like `http://{slug(name)}-{slug(ns)}:8000/a2a` — which is **wrong for Azure**. But the generated agent server uses `_DEFAULT_CLIENT`'s routes only when `ask_agent(...)` is called; if the user isn't calling peer agents (single-agent deployments) or is manually exporting `TIME_AGENT_URL`-style env vars for multi-agent (the existing workaround), this wrongness is inert.
+
+**Document the limitation**: add a comment in `apply.py`'s agent loop:
+
+```python
+# TODO: v1 limitation — build_routes_json produces Docker-style URLs.
+# For Azure multi-agent setups, peers still require manual env-var export
+# (e.g. TIME_AGENT_URL=https://time-agent-prod.<env-domain>/a2a).
+# Proper Azure peer-route support: looks up env.defaultDomain post-deploy
+# and does a second-pass container update. Follow-up task.
+peer_routes = ...
+```
+
+Alternatively, special-case Azure in the CLI: skip `build_routes_json` and pass `peer_routes=None` when the platform provider is Azure. This is cleaner:
+
+```python
+peer_routes: str | None = None
+if agent.platform is not None and agent.platform.provider.type == "docker":
+    try:
+        plugin = get_transport_plugin(agent.platform.transport.type)
+        peer_routes = build_routes_json(list(defs.agents), plugin, agent.platform)
+    except Exception:
+        pass
+```
+
+(Currently Task 17c's code is provider-agnostic — tighten to `provider.type == "docker"` explicitly so we don't silently ship broken URLs on Azure.)
+
+- [ ] **Step 7: Update azure-provider tests**
 
 ```bash
-uv run pytest packages/python/vystak/tests/hash/ -v
+uv run pytest packages/python/vystak-provider-azure/tests/ -v
 ```
 
-Expected: PASS.
+Fix any assertions that break due to:
+- `ContainerAppNode` kwarg-only / new param (constructor calls).
+- `AzureProvider.apply` / `apply_channel` new signatures.
+- Tests that assert against environment-variable lists now including `VYSTAK_TRANSPORT_TYPE` and `VYSTAK_ROUTES_JSON`.
 
-- [ ] **Step 5: Run full suite**
+- [ ] **Step 8: Update CLI test if needed**
+
+If Task 17c's CLI test mocks `provider.apply(...)`, verify the mock still matches. If Step 6's Docker-only guard is added, test the Azure skip path.
+
+- [ ] **Step 9: Final gate**
 
 ```bash
 just lint-python && just test-python
 ```
 
-Expected: PASS. (Some existing hash-sensitivity tests may also be affected; update only their comparison constants, not their semantics.)
+All gates green before commit.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add packages/python/vystak-provider-azure/ \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py
+git commit -m "feat(provider-azure): thread TransportPlugin signature parity with Docker
+
+AzureProvider.apply() accepts peer_routes kwarg (Docker parity).
+apply_channel() signature flipped to dict[str, dict[str, str]].
+ContainerAppNode injects VYSTAK_TRANSPORT_TYPE into every container app
+so the generated server's transport bootstrap activates correctly.
+
+Known limitation (documented in apply.py): Azure peer-route URL
+population is deferred to a follow-up task because ACA's environment
+default_domain is only known post-deploy. For v1, Azure multi-agent
+setups continue using the existing manual env-var export workaround
+(TIME_AGENT_URL=..., WEATHER_AGENT_URL=...). Docker multi-agent gets
+the full peer_routes treatment from Task 17."
+```
+
+---
+
+### Task 19: Hash tree integration (realigned)
+
+**Realigned scope (2026-04-19):** The `hash_agent(agent: Agent)` function in `packages/python/vystak/src/vystak/hash/tree.py` is the authoritative hash entry point — no `AgentHashTree.for_workspace` exists. The realignment reads `agent.platform.transport` directly (embedded model) and contributes a new `transport` section to the hash tree.
+
+**Files:**
+- Modify: `packages/python/vystak/src/vystak/hash/tree.py` — add `transport` section to `AgentHashTree` + compose it in `hash_agent`
+- Create or modify: `packages/python/vystak/tests/hash/test_tree.py` (may exist already — check with `ls`)
+
+**Existing hash tree structure** (for reference):
+
+```python
+@dataclass
+class AgentHashTree:
+    brain: str
+    skills: str
+    mcp_servers: str
+    workspace: str
+    resources: str
+    secrets: str
+    sessions: str
+    memory: str
+    services: str
+    root: str   # combined
+```
+
+Add `transport: str` alongside the existing sections, contributing to `root`.
+
+---
+
+- [ ] **Step 1: Write failing tests**
+
+Check if `packages/python/vystak/tests/hash/test_tree.py` exists. If not, create it. If it exists, append to it.
+
+```python
+"""Hash-tree tests for transport integration."""
+
+from vystak.hash.tree import AgentHashTree, hash_agent
+from vystak.schema import (
+    Agent,
+    HttpConfig,
+    Model,
+    NatsConfig,
+    Platform,
+    Provider,
+    Transport,
+    TransportConnection,
+)
+
+
+def _agent(transport: Transport | None = None) -> Agent:
+    """Build an Agent with an embedded Platform + Transport for hashing tests."""
+    platform = Platform(
+        name="main",
+        type="docker",
+        provider=Provider(name="docker", type="docker"),
+        transport=transport,  # None triggers the default-http synthesis
+    )
+    return Agent(
+        name="a",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
+        ),
+        platform=platform,
+    )
+
+
+class TestTransportHashing:
+    def test_transport_section_present(self):
+        tree = hash_agent(_agent())
+        assert hasattr(tree, "transport")
+        assert isinstance(tree.transport, str)
+        assert len(tree.transport) == 64  # sha256 hex
+
+    def test_hash_changes_when_transport_type_changes(self):
+        t1 = Transport(name="bus", type="http")
+        t2 = Transport(name="bus", type="nats", config=NatsConfig())
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport != h2.transport
+        assert h1.root != h2.root
+
+    def test_hash_changes_when_config_changes(self):
+        t1 = Transport(name="bus", type="nats", config=NatsConfig(jetstream=True))
+        t2 = Transport(name="bus", type="nats", config=NatsConfig(jetstream=False))
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport != h2.transport
+        assert h1.root != h2.root
+
+    def test_hash_unchanged_for_byo_connection(self):
+        # Same transport type/config, different BYO connection — portable.
+        t1 = Transport(
+            name="bus", type="nats", config=NatsConfig(),
+            connection=TransportConnection(url_env="DEV_NATS_URL"),
+        )
+        t2 = Transport(
+            name="bus", type="nats", config=NatsConfig(),
+            connection=TransportConnection(url_env="PROD_NATS_URL"),
+        )
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
+
+    def test_hash_unchanged_for_transport_name(self):
+        # The transport's `name` field is identity for references, not config.
+        # Should not affect the agent's hash.
+        t1 = Transport(name="bus-alpha", type="http")
+        t2 = Transport(name="bus-beta", type="http")
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
+
+    def test_default_http_synthesis_consistent(self):
+        # An agent built with platform.transport=None gets default-http
+        # synthesised; hash should match an explicit Transport(name="default-http", type="http").
+        h1 = hash_agent(_agent(None))
+        h2 = hash_agent(_agent(Transport(name="default-http", type="http")))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
+
+    def test_no_platform_agent_hashes_null_transport(self):
+        # Edge case: agent without a platform. Hash must be stable, not error.
+        agent = Agent(
+            name="a",
+            model=Model(
+                name="m",
+                provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
+            ),
+            platform=None,
+        )
+        tree = hash_agent(agent)
+        # Transport section still present; computed as "null" hash.
+        assert tree.transport is not None
+        assert len(tree.transport) == 64
+```
+
+- [ ] **Step 2: Run tests to confirm failures**
+
+```bash
+uv run pytest packages/python/vystak/tests/hash/test_tree.py -v
+```
+
+Expected: `AttributeError: 'AgentHashTree' object has no attribute 'transport'` — the dataclass doesn't have this field yet.
+
+- [ ] **Step 3: Extend `AgentHashTree` and `hash_agent`**
+
+Edit `packages/python/vystak/src/vystak/hash/tree.py`:
+
+1. Add `transport: str` to the `AgentHashTree` dataclass (alongside existing sections, alphabetical or at the end — match existing order by placing after `services`).
+
+2. Add a helper `_hash_transport` near `_hash_str`:
+
+```python
+import json
+
+
+def _hash_transport(agent: Agent) -> str:
+    """Contribute transport identity (type + config) to the agent hash.
+
+    `connection` is excluded — BYO URLs/credentials are portable across
+    environments without triggering redeploy. `name` is also excluded —
+    it's an identity field for cross-resource references, not config.
+    """
+    if agent.platform is None or agent.platform.transport is None:
+        return _hash_str(None)
+    transport = agent.platform.transport
+    payload = {
+        "type": transport.type,
+        "config": transport.config.model_dump() if transport.config else None,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+```
+
+3. In `hash_agent`, compute `transport = _hash_transport(agent)` and include it in the `sections` concat + the returned `AgentHashTree`:
+
+```python
+def hash_agent(agent: Agent) -> AgentHashTree:
+    brain = hash_model(agent.model)
+    skills = _hash_list(agent.skills)
+    mcp_servers = _hash_list(agent.mcp_servers)
+    workspace = _hash_optional(agent.workspace)
+    resources = _hash_list(agent.resources)
+    secrets = _hash_list(agent.secrets)
+    sessions = _hash_optional(agent.sessions)
+    memory = _hash_optional(agent.memory)
+    services = _hash_list(agent.services)
+    transport = _hash_transport(agent)
+
+    sections = "|".join(
+        [
+            brain,
+            skills,
+            mcp_servers,
+            workspace,
+            resources,
+            secrets,
+            sessions,
+            memory,
+            services,
+            transport,
+        ]
+    )
+    root = hashlib.sha256(sections.encode()).hexdigest()
+
+    return AgentHashTree(
+        brain=brain,
+        skills=skills,
+        mcp_servers=mcp_servers,
+        workspace=workspace,
+        resources=resources,
+        secrets=secrets,
+        sessions=sessions,
+        memory=memory,
+        services=services,
+        transport=transport,
+        root=root,
+    )
+```
+
+- [ ] **Step 4: Run tests — expect pass**
+
+```bash
+uv run pytest packages/python/vystak/tests/hash/ -v
+```
+
+Expected: all 7 new `TestTransportHashing` tests PASS.
+
+- [ ] **Step 5: Run full gates**
+
+```bash
+just lint-python && just test-python
+```
+
+Expected: PASS. Note: **existing hash tests will break** because the `root` hash now includes the transport section — any test that pins `root` to a specific hex string needs regeneration. If that happens, run the failing test, capture the new `root` value from the failure output, and update the expected constant. **Do not change the test's semantic assertion** — only the pinned value.
 
 - [ ] **Step 6: Commit**
 
@@ -3248,14 +3798,380 @@ git add packages/python/vystak/src/vystak/hash/tree.py \
         packages/python/vystak/tests/hash/
 git commit -m "feat(hash): include transport type/config in AgentHashTree
 
-Switching a platform's transport type or broker-specific config triggers
-re-deploy. BYO connection URL/credentials are excluded from the hash —
-same agent, different broker instance, should be portable."
+Adds a transport section to the agent hash tree, reading directly from
+agent.platform.transport (embedded Transport pattern). Changes to
+transport.type or transport.config trigger redeploy; BYO connection
+details and the transport's own name are excluded — same agent, different
+broker instance or reference name, remains portable."
 ```
 
 ---
 
-### Task 20: `WorkspaceOverride` schema
+### Tasks 20–22 (realigned, consolidated): `EnvironmentOverride` + CLI `--env` flag
+
+**Realigned scope (2026-04-19):** The original Task 20 used a `Workspace` bundle that doesn't exist. Tasks 20, 21, 22 are consolidated into one focused deliverable that targets the **main use case**: "dev uses HTTP locally, prod uses NATS in production."
+
+**Simplified v1 scope:**
+- Python-only overlays (`vystak.<env>.py`). YAML support deferred — it's trivially addable later since the `EnvironmentOverride.apply()` function is shape-agnostic.
+- `EnvironmentOverride` has one field: `transports: dict[str, Transport]` mapping **platform name → replacement Transport**. Every agent whose `platform.name` matches gets its `platform.transport` replaced.
+- CLI `--env` flag on `apply` command only. `plan`, `destroy`, `status`, `logs` integration deferred.
+- No `platforms: dict[str, PlatformOverride]` abstraction; transport swap is the only thing overridable in v1.
+
+**Files:**
+- Create: `packages/python/vystak/src/vystak/schema/overrides.py` — `EnvironmentOverride` with `apply(definitions) -> definitions`
+- Modify: `packages/python/vystak/src/vystak/schema/__init__.py` — export `EnvironmentOverride`
+- Create: `packages/python/vystak/tests/schema/test_overrides.py` — 5 tests
+- Modify: `packages/python/vystak-cli/src/vystak_cli/loader.py` — overlay lookup + apply
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — `--env` click option + plumb through
+- Create: `packages/python/vystak-cli/tests/test_env_overlay.py` — end-to-end CLI test
+
+---
+
+- [ ] **Step 1: Write failing tests for `EnvironmentOverride`**
+
+Create `packages/python/vystak/tests/schema/test_overrides.py`:
+
+```python
+"""Tests for EnvironmentOverride — per-environment config swaps."""
+
+from __future__ import annotations
+
+import pytest
+
+from vystak.schema import (
+    Agent, HttpConfig, Model, NatsConfig, Platform, Provider, Transport,
+)
+from vystak.schema.overrides import EnvironmentOverride
+
+
+def _agent(agent_name: str, platform_name: str, transport_type: str = "http") -> Agent:
+    platform = Platform(
+        name=platform_name,
+        type="docker",
+        provider=Provider(name="docker", type="docker"),
+        transport=Transport(name="t", type=transport_type),
+    )
+    return Agent(
+        name=agent_name,
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+
+
+class TestEnvironmentOverride:
+    def test_empty_override_is_noop(self):
+        agents = [_agent("a", "main")]
+        merged = EnvironmentOverride().apply(agents)
+        assert merged[0].platform.transport.type == "http"
+
+    def test_override_replaces_transport_on_matching_platform(self):
+        agents = [_agent("a", "main"), _agent("b", "main")]
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply(agents)
+        assert merged[0].platform.transport.type == "nats"
+        assert merged[1].platform.transport.type == "nats"
+
+    def test_override_affects_only_matching_platform(self):
+        a_main = _agent("a", "main")
+        b_aca = _agent("b", "aca")
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply([a_main, b_aca])
+        assert merged[0].platform.transport.type == "nats"
+        assert merged[1].platform.transport.type == "http"
+
+    def test_override_unknown_platform_raises(self):
+        agents = [_agent("a", "main")]
+        override = EnvironmentOverride(
+            transports={"nonexistent": Transport(name="bus", type="nats")}
+        )
+        with pytest.raises(ValueError, match="nonexistent"):
+            override.apply(agents)
+
+    def test_apply_does_not_mutate_base(self):
+        agents = [_agent("a", "main")]
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply(agents)
+        # Base agent still has the original http transport.
+        assert agents[0].platform.transport.type == "http"
+        # Merged list has the nats transport.
+        assert merged[0].platform.transport.type == "nats"
+```
+
+- [ ] **Step 2: Run — expect ImportError**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py -v
+```
+
+- [ ] **Step 3: Implement `EnvironmentOverride`**
+
+Create `packages/python/vystak/src/vystak/schema/overrides.py`:
+
+```python
+"""EnvironmentOverride — per-environment configuration swap.
+
+Applied to a list of agents loaded from vystak.py; typically used to swap
+the transport on a named platform for a specific environment (dev/prod).
+
+Future expansion: more fields (e.g., model overrides, channel overrides)
+can be added to EnvironmentOverride without breaking the apply() contract.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+
+from pydantic import BaseModel, Field
+
+from vystak.schema.agent import Agent
+from vystak.schema.transport import Transport
+
+
+class EnvironmentOverride(BaseModel):
+    """Overlay applied to a list of agents at load time.
+
+    Attributes:
+        transports: Maps platform name -> replacement Transport. Every
+            agent whose platform.name matches has its transport swapped
+            for the override.
+    """
+
+    transports: dict[str, Transport] = Field(default_factory=dict)
+
+    def apply(self, agents: list[Agent]) -> list[Agent]:
+        """Return a new list of agents with overrides applied.
+
+        The input `agents` list and its elements are not mutated.
+        Raises ValueError if any override key references a platform name
+        not present in the agents' platforms.
+        """
+        if not self.transports:
+            return list(agents)
+
+        known_platform_names = {
+            a.platform.name for a in agents if a.platform is not None
+        }
+        unknown = set(self.transports) - known_platform_names
+        if unknown:
+            raise ValueError(
+                f"EnvironmentOverride references unknown platform(s): "
+                f"{sorted(unknown)}; known: {sorted(known_platform_names)}"
+            )
+
+        merged = deepcopy(agents)
+        for agent in merged:
+            if agent.platform is None:
+                continue
+            if agent.platform.name in self.transports:
+                agent.platform.transport = self.transports[agent.platform.name]
+        return merged
+```
+
+Note: setting `agent.platform.transport = ...` requires `validate_assignment=True` on `Platform` **or** on its `NamedModel` base. Check whether the schema has `validate_assignment=True` by inspecting `common.py`. If not, a cleaner approach is reconstructing the platform:
+
+```python
+# Alternative, if validate_assignment is off:
+platform_dump = agent.platform.model_dump()
+platform_dump["transport"] = self.transports[agent.platform.name].model_dump()
+agent.platform = Platform.model_validate(platform_dump)
+```
+
+Try the direct assignment first (simplest); if tests fail on assignment validation, fall back to the reconstruction path.
+
+- [ ] **Step 4: Export from `schema/__init__.py`**
+
+```python
+from vystak.schema.overrides import EnvironmentOverride
+# And add "EnvironmentOverride" to __all__ alphabetically.
+```
+
+- [ ] **Step 5: Run tests — should pass**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py -v
+```
+
+Expected: 5/5 passing.
+
+- [ ] **Step 6: Extend the CLI loader for overlays**
+
+Open `packages/python/vystak-cli/src/vystak_cli/loader.py`. Add a new function `load_environment_override(base_path: Path, env: str) -> EnvironmentOverride`:
+
+```python
+def load_environment_override(base_path: Path, env: str) -> "EnvironmentOverride":
+    """Look for vystak.<env>.py next to base_path; return its `override`.
+
+    Raises FileNotFoundError if no overlay file exists and `env` is set.
+    """
+    from vystak.schema.overrides import EnvironmentOverride
+
+    overlay_path = base_path.parent / f"vystak.{env}.py"
+    if not overlay_path.exists():
+        raise FileNotFoundError(
+            f"env={env!r} requested but no {overlay_path.name} next to {base_path}"
+        )
+    module = _exec_python_file(overlay_path)
+    override = getattr(module, "override", None)
+    if not isinstance(override, EnvironmentOverride):
+        raise ValueError(
+            f"{overlay_path} must define `override: EnvironmentOverride`; "
+            f"got {type(override).__name__ if override else 'None'}"
+        )
+    return override
+```
+
+(The helper `_exec_python_file` already exists in `loader.py` — reuse it.)
+
+- [ ] **Step 7: Add `--env` to the `apply` command**
+
+In `packages/python/vystak-cli/src/vystak_cli/commands/apply.py`:
+
+1. Add a new click option on the `apply` function:
+
+```python
+@click.option(
+    "--env", "-e",
+    default=None,
+    envvar="VYSTAK_ENV",
+    help="Environment name. Applies vystak.<env>.py overlay if present.",
+)
+```
+
+2. After loading definitions but before the agent deploy loop, apply the overlay if `env` is set:
+
+```python
+if env:
+    from vystak_cli.loader import load_environment_override
+    from pathlib import Path
+
+    base_path = Path(file_path) if file_path else find_agent_file()
+    override = load_environment_override(base_path, env)
+    defs.agents = override.apply(defs.agents)
+    click.echo(f"Environment: {env}")
+else:
+    click.echo("Environment: (base)")
+```
+
+(Adjust the `base_path` line to match how `file_path` is resolved elsewhere in the file — grep for `find_agent_file` or similar.)
+
+- [ ] **Step 8: Write a CLI-level test**
+
+Create `packages/python/vystak-cli/tests/test_env_overlay.py`:
+
+```python
+"""End-to-end test for --env overlay flag."""
+
+from __future__ import annotations
+
+import textwrap
+from pathlib import Path
+
+import pytest
+
+
+def _write(dir_: Path, filename: str, content: str) -> Path:
+    p = dir_ / filename
+    p.write_text(textwrap.dedent(content).lstrip())
+    return p
+
+
+def test_load_environment_override(tmp_path):
+    """Loader resolves vystak.<env>.py overlay and returns the override."""
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", """
+        from vystak.schema import Agent, Model, Platform, Provider
+        agent = Agent(
+            name="a",
+            model=Model(name="m", provider=Provider(name="p", type="anthropic", api_key_env="K")),
+            platform=Platform(name="main", type="docker", provider=Provider(name="docker", type="docker")),
+        )
+    """)
+
+    _write(tmp_path, "vystak.prod.py", """
+        from vystak.schema import EnvironmentOverride, NatsConfig, Transport
+        override = EnvironmentOverride(
+            transports={
+                "main": Transport(name="prod-bus", type="nats", config=NatsConfig()),
+            },
+        )
+    """)
+
+    override = load_environment_override(tmp_path / "vystak.py", env="prod")
+    assert "main" in override.transports
+    assert override.transports["main"].type == "nats"
+
+
+def test_missing_overlay_file_raises(tmp_path):
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", "# empty")
+    with pytest.raises(FileNotFoundError, match="vystak.nonexistent.py"):
+        load_environment_override(tmp_path / "vystak.py", env="nonexistent")
+
+
+def test_overlay_without_override_raises(tmp_path):
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", "# empty")
+    _write(tmp_path, "vystak.bad.py", """
+        # No `override` variable defined.
+        x = 42
+    """)
+
+    with pytest.raises(ValueError, match="must define `override`"):
+        load_environment_override(tmp_path / "vystak.py", env="bad")
+```
+
+- [ ] **Step 9: Run CLI + schema tests**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py \
+              packages/python/vystak-cli/tests/test_env_overlay.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 10: Run full gates**
+
+```bash
+just lint-python && just test-python
+```
+
+Expected: green.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add packages/python/vystak/src/vystak/schema/overrides.py \
+        packages/python/vystak/src/vystak/schema/__init__.py \
+        packages/python/vystak/tests/schema/test_overrides.py \
+        packages/python/vystak-cli/src/vystak_cli/loader.py \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py \
+        packages/python/vystak-cli/tests/test_env_overlay.py
+git commit -m "feat(schema,cli): EnvironmentOverride + vystak apply --env flag
+
+Adds per-environment config swap for transports. User writes
+vystak.<env>.py declaring an 'override: EnvironmentOverride' variable
+mapping platform name to replacement Transport. Running
+'vystak apply --env prod' loads the overlay and swaps transports on
+matching platforms before deploy.
+
+v1 scope: transport swap only, Python overlays only, apply command only.
+YAML support, other fields, and other commands are follow-ups."
+```
+
+---
+
+### Task 20: `WorkspaceOverride` schema (original — superseded by the consolidated Tasks 20–22 above)
+
+**Superseded:** The text below was the original plan before realignment. Skip it. The consolidated "Tasks 20–22 (realigned)" section above is the canonical task.
 
 **Files:**
 - Create: `packages/python/vystak/src/vystak/schema/overrides.py`

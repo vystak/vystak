@@ -23,6 +23,7 @@ def _make_agent(name="my-agent"):
     agent.platform.config = {}
     agent.platform.provider.config = {}
     agent.platform.provider.type = "azure"
+    agent.platform.transport = None  # avoids MagicMock in _hash_transport JSON serialization
     return agent
 
 

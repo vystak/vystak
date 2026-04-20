@@ -10,6 +10,7 @@ from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
+from vystak.schema.transport import Transport
 
 if TYPE_CHECKING:
     from vystak.provisioning import Provisionable
@@ -123,9 +124,7 @@ class ChannelPlugin(ABC):
     config_schema: type[BaseModel]
 
     @abstractmethod
-    def generate_code(
-        self, channel: Channel, resolved_routes: dict[str, str]
-    ) -> GeneratedCode:
+    def generate_code(self, channel: Channel, resolved_routes: dict[str, str]) -> GeneratedCode:
         """Emit channel-pod source code.
 
         `resolved_routes` maps agent name → URL reachable from the channel
@@ -134,12 +133,43 @@ class ChannelPlugin(ABC):
         ...
 
     @abstractmethod
-    def provision_nodes(
-        self, channel: Channel, platform: Platform
-    ) -> list["Provisionable"]: ...
+    def provision_nodes(self, channel: Channel, platform: Platform) -> list["Provisionable"]: ...
 
     @abstractmethod
     def thread_name(self, event: dict) -> str: ...
 
     @abstractmethod
     def health_check(self, deployment: dict) -> str: ...
+
+
+class TransportPlugin(ABC):
+    """Plugin that wires a specific Transport type into a platform.
+
+    Mirrors ChannelPlugin: handles broker provisioning, env-contract
+    generation for agent/channel containers, and the listener-startup code
+    snippet injected into the generated agent server.py.
+    """
+
+    type: str = ""  # "http" | "nats" | "azure-service-bus"
+
+    @abstractmethod
+    def build_provision_nodes(
+        self, transport: "Transport", platform: "Platform"
+    ) -> list["Provisionable"]:
+        """Return the broker infra nodes this transport needs on this
+        platform. Returns an empty list for http or for BYO connections."""
+
+    @abstractmethod
+    def generate_env_contract(self, transport: "Transport", context: dict) -> dict[str, str]:
+        """Env vars the provider should inject into every agent/channel
+        container so they can construct the matching Transport at runtime.
+
+        Keys follow the `VYSTAK_TRANSPORT_*` convention. `context` carries
+        provisioner-specific values (resolved broker URL, secret ARNs, etc.).
+        """
+
+    @abstractmethod
+    def generate_listener_code(self, transport: "Transport") -> "GeneratedCode | None":
+        """Return a Python source snippet to append to the generated agent
+        server.py that starts the transport listener. Return None if the
+        transport does not need a listener (HTTP — FastAPI already serves)."""
