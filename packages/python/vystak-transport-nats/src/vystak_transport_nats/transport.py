@@ -15,7 +15,7 @@ from vystak.transport import (
     AgentRef,
     Transport,
 )
-from vystak.transport.base import A2AHandlerProtocol
+from vystak.transport.base import ServerDispatcherProtocol
 from vystak.transport.naming import parse_canonical_name, slug
 
 
@@ -203,17 +203,23 @@ class NatsTransport(Transport):
         ):
             yield chunk
 
-    async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
-        nc = await self._connect()
-        subject = self.resolve_address(canonical_name)
-        name, _, _ = parse_canonical_name(canonical_name)
-        queue_group = f"agents.{slug(name)}"
+    async def _handle_inbound(
+        self,
+        body: dict[str, Any],
+        msg: Any,
+        handler: ServerDispatcherProtocol,
+        nc: NATSClient,
+    ) -> None:
+        """Route a single inbound JSON-RPC message to the right dispatcher method.
 
-        async def on_message(msg: Any) -> None:
-            try:
-                body = json.loads(msg.data)
-                method = body.get("method", "tasks/send")
-                params = body.get("params", {})
+        Extracted from ``serve`` so the routing logic is directly unit-testable
+        without a live NATS connection.
+        """
+        try:
+            method = body.get("method", "tasks/send")
+            params = body.get("params", {})
+
+            if method in ("tasks/send", "tasks/sendSubscribe"):
                 m = A2AMessage(
                     role=params.get("message", {}).get("role", "user"),
                     parts=params.get("message", {}).get("parts", []),
@@ -221,11 +227,12 @@ class NatsTransport(Transport):
                     metadata=params.get("metadata", {}),
                 )
                 metadata = params.get("metadata", {})
+
                 if method == "tasks/sendSubscribe":
-                    async for event in handler.dispatch_stream(m, metadata):
+                    async for event in handler.dispatch_a2a_stream(m, metadata):
                         await nc.publish(msg.reply, event.model_dump_json().encode())
                 else:
-                    result = await handler.dispatch(m, metadata)
+                    result = await handler.dispatch_a2a(m, metadata)
                     reply_body = {
                         "jsonrpc": "2.0",
                         "id": body.get("id"),
@@ -235,10 +242,65 @@ class NatsTransport(Transport):
                         },
                     }
                     await nc.publish(msg.reply, json.dumps(reply_body).encode())
+            elif method == "responses/create":
+                request = params.get("request", {})
+                metadata_r = body.get("metadata", {})
+                result = await handler.dispatch_responses_create(request, metadata_r)
+                reply_body = {
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "result": result,
+                }
+                await nc.publish(msg.reply, json.dumps(reply_body).encode())
+            elif method == "responses/createStream":
+                request = params.get("request", {})
+                metadata_r = body.get("metadata", {})
+                async for chunk in handler.dispatch_responses_create_stream(
+                    request, metadata_r
+                ):
+                    await nc.publish(msg.reply, json.dumps(chunk).encode())
+            elif method == "responses/get":
+                response_id = params.get("response_id", "")
+                result = await handler.dispatch_responses_get(response_id)
+                reply_body = {
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "result": result,
+                }
+                await nc.publish(msg.reply, json.dumps(reply_body).encode())
+            else:
+                if msg.reply:
+                    err = {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "error": {
+                            "code": -32601,
+                            "message": f"Unknown method: {method}",
+                        },
+                    }
+                    await nc.publish(msg.reply, json.dumps(err).encode())
+        except Exception as e:
+            if msg.reply:
+                err = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
+                await nc.publish(msg.reply, json.dumps(err).encode())
+
+    async def serve(
+        self, canonical_name: str, handler: ServerDispatcherProtocol
+    ) -> None:
+        nc = await self._connect()
+        subject = self.resolve_address(canonical_name)
+        name, _, _ = parse_canonical_name(canonical_name)
+        queue_group = f"agents.{slug(name)}"
+
+        async def on_message(msg: Any) -> None:
+            try:
+                body = json.loads(msg.data)
             except Exception as e:
                 if msg.reply:
-                    err = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
+                    err = {"jsonrpc": "2.0", "error": {"code": -32700, "message": str(e)}}
                     await nc.publish(msg.reply, json.dumps(err).encode())
+                return
+            await self._handle_inbound(body, msg, handler, nc)
 
         await nc.subscribe(subject, queue=queue_group, cb=on_message)
         # Block forever; caller runs this under asyncio.create_task

@@ -10,7 +10,6 @@ import uvicorn
 from fastapi import FastAPI, Request
 from sse_starlette.sse import EventSourceResponse
 from vystak.transport import (
-    A2AHandler,
     A2AMessage,
     AgentRef,
 )
@@ -18,8 +17,12 @@ from vystak.transport.contract import TransportContract
 from vystak_transport_http import HttpTransport
 
 
-def _build_app(handler: A2AHandler) -> FastAPI:
-    """Minimal FastAPI app exposing /a2a for the test agent."""
+def _build_app(handler) -> FastAPI:
+    """Minimal FastAPI app exposing /a2a for the test agent.
+
+    ``handler`` is a ``ServerDispatcherProtocol`` (per Plan C), so A2A calls
+    route via ``dispatch_a2a`` / ``dispatch_a2a_stream``.
+    """
     app = FastAPI()
 
     @app.post("/a2a")
@@ -37,12 +40,12 @@ def _build_app(handler: A2AHandler) -> FastAPI:
 
         if body.get("method") == "tasks/sendSubscribe":
             async def gen():
-                async for ev in handler.dispatch_stream(message, metadata):
+                async for ev in handler.dispatch_a2a_stream(message, metadata):
                     yield {"data": ev.model_dump_json()}
 
             return EventSourceResponse(gen())
 
-        result = await handler.dispatch(message, metadata)
+        result = await handler.dispatch_a2a(message, metadata)
         return {
             "jsonrpc": "2.0",
             "id": body.get("id"),
@@ -82,7 +85,7 @@ class TestHttpTransport(TransportContract):
     @pytest.fixture
     def serve_agent(self, unused_tcp_port):
         @asynccontextmanager
-        async def _ctx(canonical_name: str, handler: A2AHandler):
+        async def _ctx(canonical_name: str, handler):
             app = _build_app(handler)
             async with _serve(app, unused_tcp_port):
                 client = HttpTransport(

@@ -37,6 +37,37 @@ from vystak.transport.types import (
 )
 
 
+class _A2AOnlyDispatcher:
+    """Test-only ``ServerDispatcherProtocol`` adapter around an ``A2AHandler``.
+
+    Plan C's ``Transport.serve`` accepts a ``ServerDispatcherProtocol``.
+    Contract tests only exercise A2A paths, so we fan ``dispatch_a2a*`` calls
+    through to the underlying handler and stub the Responses methods.
+    """
+
+    def __init__(self, a2a: A2AHandler) -> None:
+        self._a2a = a2a
+
+    async def dispatch_a2a(self, message, metadata):
+        return await self._a2a.dispatch(message, metadata)
+
+    def dispatch_a2a_stream(self, message, metadata):
+        return self._a2a.dispatch_stream(message, metadata)
+
+    async def dispatch_responses_create(self, request, metadata):
+        raise NotImplementedError("contract tests do not cover responses/create")
+
+    def dispatch_responses_create_stream(self, request, metadata):
+        async def _empty():
+            if False:
+                yield {}
+
+        return _empty()
+
+    async def dispatch_responses_get(self, response_id):
+        return None
+
+
 class TransportContract:
     """Pytest mixin. Subclass and provide a `serve_agent` fixture."""
 
@@ -57,7 +88,7 @@ class TransportContract:
         async def streaming(msg, metadata):
             yield A2AEvent(type="final", text="n/a", final=True)
 
-        handler = A2AHandler(one_shot=one_shot, streaming=streaming)
+        handler = _A2AOnlyDispatcher(A2AHandler(one_shot=one_shot, streaming=streaming))
         async with serve_agent("echo.agents.default", handler) as client:
             ref = AgentRef(canonical_name="echo.agents.default")
             msg = A2AMessage.from_text("hi")
@@ -74,7 +105,7 @@ class TransportContract:
         async def streaming(msg, metadata):
             yield A2AEvent(type="final", text=msg.parts[0]["text"], final=True)
 
-        handler = A2AHandler(one_shot=one_shot, streaming=streaming)
+        handler = _A2AOnlyDispatcher(A2AHandler(one_shot=one_shot, streaming=streaming))
         async with serve_agent("echo.agents.default", handler) as client:
             ref = AgentRef(canonical_name="echo.agents.default")
 
@@ -110,7 +141,7 @@ class TransportContract:
         async def streaming(msg, metadata):
             yield A2AEvent(type="final", text="late", final=True)
 
-        handler = A2AHandler(one_shot=one_shot, streaming=streaming)
+        handler = _A2AOnlyDispatcher(A2AHandler(one_shot=one_shot, streaming=streaming))
         async with serve_agent("slow.agents.default", handler) as client:
             ref = AgentRef(canonical_name="slow.agents.default")
             msg = A2AMessage.from_text("hi")
@@ -127,7 +158,7 @@ class TransportContract:
                 yield A2AEvent(type="token", text=ch)
             yield A2AEvent(type="final", text="abc", final=True)
 
-        handler = A2AHandler(one_shot=one_shot, streaming=streaming)
+        handler = _A2AOnlyDispatcher(A2AHandler(one_shot=one_shot, streaming=streaming))
         async with serve_agent("s.agents.default", handler) as client:
             ref = AgentRef(canonical_name="s.agents.default")
             events = []

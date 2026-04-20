@@ -193,3 +193,31 @@ class TestResponsesAPIContract:
         """ServerDispatcherProtocol is @runtime_checkable."""
         # An object without the methods is not an instance.
         assert not isinstance(object(), ServerDispatcherProtocol)
+
+    def test_server_dispatcher_protocol_accepts_compliant_stub(self):
+        """A minimal class implementing all five methods satisfies the protocol."""
+
+        class _Stub:
+            async def dispatch_a2a(self, message, metadata):
+                return A2AResult(text="x", correlation_id="c")
+
+            def dispatch_a2a_stream(self, message, metadata):
+                async def _g():
+                    yield A2AEvent(type="final", text="x", final=True)
+
+                return _g()
+
+            async def dispatch_responses_create(self, request, metadata):
+                return {"id": "r"}
+
+            def dispatch_responses_create_stream(self, request, metadata):
+                async def _g():
+                    yield {"type": "response.completed"}
+
+                return _g()
+
+            async def dispatch_responses_get(self, response_id):
+                return None
+
+        stub = _Stub()
+        assert isinstance(stub, ServerDispatcherProtocol)

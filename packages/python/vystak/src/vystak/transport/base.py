@@ -31,7 +31,13 @@ from vystak.transport.types import (
 
 @runtime_checkable
 class A2AHandlerProtocol(Protocol):
-    """Structural type for A2AHandler — avoids a circular import."""
+    """Narrow pre-Plan-C protocol for A2A-only handlers.
+
+    Retained for backward compatibility with callers that operate exclusively
+    against A2A dispatch. Plan C's transport listener uses
+    :class:`ServerDispatcherProtocol`, which exposes both A2A and Responses API
+    dispatch methods under distinct names.
+    """
 
     async def dispatch(
         self,
@@ -113,12 +119,16 @@ class Transport(ABC):
         yield A2AEvent(type="final", text=result.text, final=True)
 
     @abstractmethod
-    async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
+    async def serve(self, canonical_name: str, handler: ServerDispatcherProtocol) -> None:
         """Join the load-balanced group for this agent and feed incoming
         messages into `handler`.
 
         `canonical_name` is the full `{name}.agents.{ns}` identifier; the
         transport derives its own subject / queue / URL routing from it.
+
+        `handler` implements :class:`ServerDispatcherProtocol` and fans
+        incoming JSON-RPC methods out to the appropriate handler (A2A vs
+        Responses API).
 
         For the HTTP transport this is typically a no-op (FastAPI's /a2a
         route is already running).

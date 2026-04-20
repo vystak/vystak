@@ -593,3 +593,32 @@ class TestTransportBootstrap:
         assert "VYSTAK_NATS_URL" in source
         assert "VYSTAK_NATS_SUBJECT_PREFIX" in source
         assert "NatsTransport" in source
+
+    def test_generated_server_emits_server_dispatcher_class(self):
+        """Generated server defines a ServerDispatcher class fanning A2A vs
+        Responses methods to the respective handlers."""
+        source = generate_server_py(_basic_agent())
+        assert "class ServerDispatcher:" in source
+        # All five ServerDispatcherProtocol methods must be present.
+        assert "async def dispatch_a2a(" in source
+        assert "def dispatch_a2a_stream(" in source
+        assert "async def dispatch_responses_create(" in source
+        assert "def dispatch_responses_create_stream(" in source
+        assert "async def dispatch_responses_get(" in source
+
+    def test_generated_server_instantiates_dispatcher_and_passes_to_serve(self):
+        """Dispatcher is constructed from the existing handlers and passed to
+        the transport listener."""
+        source = generate_server_py(_basic_agent())
+        assert "_server_dispatcher = ServerDispatcher(" in source
+        assert "a2a_handler=_a2a_handler" in source
+        assert "responses_handler=_responses_handler" in source
+        assert "handler=_server_dispatcher" in source
+
+    def test_generated_server_dispatcher_streams_are_sync_def(self):
+        """Stream methods must return the underlying async iterator directly
+        (i.e. be regular ``def``, not ``async def``)."""
+        source = generate_server_py(_basic_agent())
+        # Ensure the streaming methods are NOT ``async def``.
+        assert "async def dispatch_a2a_stream(" not in source
+        assert "async def dispatch_responses_create_stream(" not in source

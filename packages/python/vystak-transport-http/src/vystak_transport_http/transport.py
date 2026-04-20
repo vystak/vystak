@@ -15,7 +15,7 @@ from vystak.transport import (
     AgentRef,
     Transport,
 )
-from vystak.transport.base import A2AHandlerProtocol
+from vystak.transport.base import ServerDispatcherProtocol
 
 
 class HttpTransport(Transport):
@@ -93,7 +93,7 @@ class HttpTransport(Transport):
                 yield A2AEvent.model_validate(parsed)
 
     async def serve(
-        self, canonical_name: str, handler: A2AHandlerProtocol
+        self, canonical_name: str, handler: ServerDispatcherProtocol
     ) -> None:
         # FastAPI's /a2a route already handles inbound HTTP; nothing to do.
         return None
