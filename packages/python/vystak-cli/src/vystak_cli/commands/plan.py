@@ -89,3 +89,81 @@ def plan(files, file_path):
             click.echo(f"  Target hash: {tree.root[:16]}...")
 
         click.echo()
+
+    _emit_vault_plan(defs)
+
+
+def _emit_vault_plan(defs) -> None:
+    """Emit Vault / Identities / Secrets / Grants sections when a vault is
+    declared in the loaded config.
+
+    Kept offline: the real push/skip decision happens at `apply` time inside
+    ``SecretSyncNode`` — plan only surfaces *what will be attempted*. No secret
+    VALUES are ever printed here at any verbosity.
+    """
+    vault = getattr(defs, "vault", None)
+    if vault is None:
+        return
+
+    # --- Vault
+    create_or_link = "create" if vault.mode.value == "deploy" else "link"
+    click.echo("Vault:")
+    click.echo(
+        f"  {vault.name} "
+        f"({vault.type.value}, {vault.mode.value}, {vault.provider.name})"
+        f"  will {create_or_link}"
+    )
+    click.echo()
+
+    # --- Identities (one UAMI per agent-side and workspace-side secret set)
+    click.echo("Identities:")
+    for agent in defs.agents:
+        if agent.secrets:
+            click.echo(f"  {agent.name}-agent      will create (UAMI, lifecycle: None)")
+        if agent.workspace is not None and agent.workspace.secrets:
+            click.echo(f"  {agent.name}-workspace  will create (UAMI, lifecycle: None)")
+    click.echo()
+
+    # --- Secrets — declared-name list only, status deferred to apply time
+    click.echo("Secrets:")
+    seen: set[str] = set()
+    for agent in defs.agents:
+        for s in agent.secrets:
+            if s.name in seen:
+                continue
+            seen.add(s.name)
+            click.echo(
+                f"  {s.name}  will push  "
+                f"(presence depends on .env and vault state)"
+            )
+        if agent.workspace is not None:
+            for s in agent.workspace.secrets:
+                if s.name in seen:
+                    continue
+                seen.add(s.name)
+                click.echo(
+                    f"  {s.name}  will push  "
+                    f"(presence depends on .env and vault state)"
+                )
+    for channel in defs.channels:
+        for s in channel.secrets:
+            if s.name in seen:
+                continue
+            seen.add(s.name)
+            click.echo(
+                f"  {s.name}  will push  "
+                f"(presence depends on .env and vault state)"
+            )
+    click.echo()
+
+    # --- Grants — agent UAMI / workspace UAMI gets read on each declared secret
+    click.echo("Grants:")
+    for agent in defs.agents:
+        for s in agent.secrets:
+            click.echo(f"  {agent.name}-agent      \u2192 {s.name}  will assign")
+        if agent.workspace is not None:
+            for s in agent.workspace.secrets:
+                click.echo(
+                    f"  {agent.name}-workspace  \u2192 {s.name}  will assign"
+                )
+    click.echo()
