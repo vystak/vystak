@@ -1,3 +1,5 @@
 """NATS JetStream transport for Vystak."""
 
-__all__: list[str] = []  # populated in Task 2
+from vystak_transport_nats.transport import NatsTransport
+
+__all__ = ["NatsTransport"]
