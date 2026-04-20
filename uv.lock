@@ -60,6 +60,15 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-common"
+version = "1.1.28"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/71/f6f71a276e2e69264a97ad39ef850dca0a04fce67b12570730cb38d0ccac/azure-common-1.1.28.zip", hash = "sha256:4ac0cd3214e36b6a1b6a442686722a5d8cc449603aa833f3f0f40bda836704a3", size = 20914, upload-time = "2022-02-03T19:39:44.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/55/7f118b9c1b23ec15ca05d15a578d8207aa1706bc6f7c87218efffbbf875d/azure_common-1.1.28-py2.py3-none-any.whl", hash = "sha256:5c12d3dcf4ec20599ca6b0d3e09e86e146353d443e7fcc050c9a19c1f9df20ad", size = 14462, upload-time = "2022-02-03T19:39:42.417Z" },
+]
+
+[[package]]
 name = "azure-core"
 version = "1.39.0"
 source = { registry = "https://pypi.org/simple" }
@@ -154,6 +163,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/01/d782a0e58a8cbf49afabef7872c029872b6e5b12d7a5f89d635f219795e3/azure_mgmt_loganalytics-13.1.1.tar.gz", hash = "sha256:4f971ee9d43fdc99e8299f44ca9f8f7a3b5f100be139fb0a9dac7efef8b698af", size = 134047, upload-time = "2026-01-05T09:52:25.827Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/30/041fcaac73e26b76f162bf1eee0bf5637bcb1b76f479bec077095f59d19a/azure_mgmt_loganalytics-13.1.1-py3-none-any.whl", hash = "sha256:73382d5036f478d3f6e856a0effc3637be2ebc782ab667fc45b25707edceaa55", size = 218285, upload-time = "2026-01-05T09:52:27.226Z" },
+]
+
+[[package]]
+name = "azure-mgmt-msi"
+version = "7.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-common" },
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/83/f2e8eeca619905ffc48205664ad10e7cdfc168be522a06d04bea54e41556/azure_mgmt_msi-7.1.0.tar.gz", hash = "sha256:1a01a089f1f66cb0d4b2886603d5ba415f360eff0be6f685737ecdd59c78225b", size = 177406, upload-time = "2025-07-21T06:26:50.414Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/38/6c7fee6d6b543c8c2eddb00f4c9584c07ada660b54760bf0a155de41e5b3/azure_mgmt_msi-7.1.0-py3-none-any.whl", hash = "sha256:4810d5559e71bd3c4e3e8bce311753fbe993d2bda23805bb81d3ca66786ad4da", size = 252909, upload-time = "2025-07-21T06:26:51.525Z" },
 ]
 
 [[package]]
@@ -1168,6 +1192,7 @@ dependencies = [
     { name = "azure-mgmt-containerregistry" },
     { name = "azure-mgmt-keyvault" },
     { name = "azure-mgmt-loganalytics" },
+    { name = "azure-mgmt-msi" },
     { name = "azure-mgmt-rdbms" },
     { name = "azure-mgmt-resource" },
     { name = "docker" },
@@ -1182,6 +1207,7 @@ requires-dist = [
     { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
     { name = "azure-mgmt-keyvault", specifier = ">=10.0.0" },
     { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
+    { name = "azure-mgmt-msi", specifier = ">=7.0.0" },
     { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
     { name = "azure-mgmt-resource", specifier = ">=23.0" },
     { name = "docker", specifier = ">=7.0" },
