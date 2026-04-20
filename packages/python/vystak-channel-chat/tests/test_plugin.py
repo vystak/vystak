@@ -303,10 +303,37 @@ class TestServerTemplateResponsesApi:
         assert "previous_response_id" in SERVER_PY
         assert "invalid_previous_response" in SERVER_PY
 
-    def test_template_proxies_responses_stream(self):
+    def test_template_uses_stream_responses(self):
         from vystak_channel_chat.server_template import SERVER_PY
 
-        assert "_proxy_responses_stream" in SERVER_PY
+        assert "_stream_responses" in SERVER_PY
+
+    def test_template_uses_create_response(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().create_response(" in SERVER_PY
+
+    def test_template_uses_create_response_stream(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().create_response_stream(" in SERVER_PY
+
+    def test_template_uses_get_response(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        assert "_default_client().get_response(" in SERVER_PY
+
+    def test_template_no_direct_httpx_responses_post(self):
+        from vystak_channel_chat.server_template import SERVER_PY
+
+        # The old byte-proxy pattern must be gone — no raw httpx POST to /v1/responses.
+        assert 'client.post(f"{agent_url}/v1/responses"' not in SERVER_PY
+        assert "httpx" not in SERVER_PY
+
+    def test_requirements_no_httpx(self):
+        from vystak_channel_chat.server_template import REQUIREMENTS
+
+        assert "httpx" not in REQUIREMENTS
 
 
 class TestGeneratedResponsesApi:
