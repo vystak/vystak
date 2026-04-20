@@ -46,6 +46,12 @@ class FakeTransport(Transport):
     async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
         return None
 
+    async def create_response(self, agent, request, metadata, *, timeout):
+        return {"id": "resp-fake", "created_at": 0, "model": "fake"}
+
+    async def get_response(self, agent, response_id, *, timeout):
+        return None
+
 
 class TestAgentClient:
     @pytest.mark.asyncio

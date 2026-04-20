@@ -6,7 +6,7 @@ that importing `vystak.transport` from a production container (which has
 no pytest) works.
 """
 
-from vystak.transport.base import Transport
+from vystak.transport.base import ServerDispatcherProtocol, Transport
 from vystak.transport.client import AgentClient, ask_agent
 from vystak.transport.handler import A2AHandler
 from vystak.transport.naming import (
@@ -28,6 +28,7 @@ __all__ = [
     "A2AResult",
     "AgentClient",
     "AgentRef",
+    "ServerDispatcherProtocol",
     "Transport",
     "ask_agent",
     "canonical_agent_name",

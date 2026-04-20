@@ -12,6 +12,7 @@ from vystak.transport import (
 )
 from vystak.transport.base import (
     A2AHandlerProtocol,
+    ServerDispatcherProtocol,
 )
 
 
@@ -41,6 +42,12 @@ class FakeTransport(Transport):
 
     async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
         self.served.append(canonical_name)
+
+    async def create_response(self, agent, request, metadata, *, timeout):
+        return {"id": "resp-fake", "created_at": 0, "model": "fake"}
+
+    async def get_response(self, agent, response_id, *, timeout):
+        return None
 
 
 class TestTransport:
@@ -79,3 +86,110 @@ class TestTransport:
     def test_resolve_address(self):
         t = FakeTransport()
         assert t.resolve_address("x.agents.prod") == "fake://x.agents.prod"
+
+
+class TestResponsesAPIContract:
+    @pytest.mark.asyncio
+    async def test_create_response_default_raises(self):
+        """Transport without overrides raises NotImplementedError on create_response."""
+
+        class Minimal(Transport):
+            type = "minimal"
+
+            def resolve_address(self, canonical_name: str) -> str:
+                return "fake"
+
+            async def send_task(self, *a, **kw):
+                pass
+
+            async def serve(self, *a, **kw):
+                pass
+
+        t = Minimal()
+        ref = AgentRef(canonical_name="a.agents.default")
+        with pytest.raises(NotImplementedError):
+            await t.create_response(ref, {}, {}, timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_create_response_stream_degradation(self):
+        """Default create_response_stream calls create_response and yields a
+        single terminal chunk."""
+
+        class OneShotOnly(Transport):
+            type = "oneshot"
+            supports_streaming = False
+
+            def resolve_address(self, canonical_name: str) -> str:
+                return "fake"
+
+            async def send_task(self, *a, **kw):
+                pass
+
+            async def serve(self, *a, **kw):
+                pass
+
+            async def create_response(self, agent, request, metadata, *, timeout):
+                return {"id": "resp-1", "output": [{"content": "hello"}]}
+
+            async def get_response(self, agent, response_id, *, timeout):
+                return None
+
+        t = OneShotOnly()
+        ref = AgentRef(canonical_name="a.agents.default")
+        chunks = [c async for c in t.create_response_stream(ref, {}, {}, timeout=5)]
+        assert len(chunks) == 1
+        assert chunks[0]["type"] == "response.completed"
+        assert chunks[0]["response"]["id"] == "resp-1"
+
+    @pytest.mark.asyncio
+    async def test_get_response_default_raises(self):
+        """Transport without overrides raises NotImplementedError on get_response."""
+
+        class Minimal(Transport):
+            type = "minimal2"
+
+            def resolve_address(self, canonical_name: str) -> str:
+                return "fake"
+
+            async def send_task(self, *a, **kw):
+                pass
+
+            async def serve(self, *a, **kw):
+                pass
+
+        t = Minimal()
+        ref = AgentRef(canonical_name="a.agents.default")
+        with pytest.raises(NotImplementedError):
+            await t.get_response(ref, "some-id", timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_get_response_returns_none_for_unknown(self):
+        """Concrete implementation returning None for unknown IDs is honored."""
+
+        class WithGet(Transport):
+            type = "g"
+
+            def resolve_address(self, canonical_name: str) -> str:
+                return "fake"
+
+            async def send_task(self, *a, **kw):
+                pass
+
+            async def serve(self, *a, **kw):
+                pass
+
+            async def create_response(self, *a, **kw):
+                return {}
+
+            async def get_response(self, agent, response_id, *, timeout):
+                return None if response_id == "missing" else {"id": response_id}
+
+        t = WithGet()
+        ref = AgentRef(canonical_name="a.agents.default")
+        assert await t.get_response(ref, "missing", timeout=5) is None
+        assert (await t.get_response(ref, "resp-1", timeout=5))["id"] == "resp-1"
+
+    def test_server_dispatcher_protocol_is_runtime_checkable(self):
+        """ServerDispatcherProtocol is @runtime_checkable."""
+        # An object without the methods is not an instance.
+        assert not isinstance(object(), ServerDispatcherProtocol)

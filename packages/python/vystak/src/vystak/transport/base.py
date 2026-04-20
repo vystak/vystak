@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from vystak.transport.types import (
     A2AEvent,
@@ -44,6 +44,36 @@ class A2AHandlerProtocol(Protocol):
         message: A2AMessage,
         metadata: dict,
     ) -> AsyncIterator[A2AEvent]: ...
+
+
+@runtime_checkable
+class ServerDispatcherProtocol(Protocol):
+    """Full server-side dispatcher covering both A2A and Responses API methods.
+
+    Concrete transport listeners receive an instance of this protocol (typically
+    a ServerDispatcher from the adapter) and route incoming JSON-RPC messages
+    to the appropriate method.
+    """
+
+    async def dispatch_a2a(
+        self, message: A2AMessage, metadata: dict[str, Any]
+    ) -> A2AResult: ...
+
+    async def dispatch_a2a_stream(
+        self, message: A2AMessage, metadata: dict[str, Any]
+    ) -> AsyncIterator[A2AEvent]: ...
+
+    async def dispatch_responses_create(
+        self, request: dict[str, Any], metadata: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
+    async def dispatch_responses_create_stream(
+        self, request: dict[str, Any], metadata: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]: ...
+
+    async def dispatch_responses_get(
+        self, response_id: str
+    ) -> dict[str, Any] | None: ...
 
 
 class Transport(ABC):
@@ -93,3 +123,51 @@ class Transport(ABC):
         For the HTTP transport this is typically a no-op (FastAPI's /a2a
         route is already running).
         """
+
+    async def create_response(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        """One-shot OpenAI Responses API create. Returns the ResponseObject dict.
+
+        Transports with native Responses API support must override this.
+        Default raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement create_response"
+        )
+
+    async def create_response_stream(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streamed Responses API create. Default: degrade to one-shot + terminal chunk.
+
+        Transports with native streaming support override.
+        """
+        result = await self.create_response(agent, request, metadata, timeout=timeout)
+        yield {"type": "response.completed", "response": result}
+
+    async def get_response(
+        self,
+        agent: AgentRef,
+        response_id: str,
+        *,
+        timeout: float,
+    ) -> dict[str, Any] | None:
+        """Fetch a stored ResponseObject by id. Returns None if not found.
+
+        Transports with native Responses API support must override this.
+        Default raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_response"
+        )
