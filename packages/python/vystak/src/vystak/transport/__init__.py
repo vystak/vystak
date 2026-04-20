@@ -9,6 +9,7 @@ no pytest) works.
 from vystak.transport.base import ServerDispatcherProtocol, Transport
 from vystak.transport.client import AgentClient, ask_agent
 from vystak.transport.handler import A2AHandler
+from vystak.transport.idempotency import IdempotencyCache, extract_idempotency_key
 from vystak.transport.naming import (
     canonical_agent_name,
     parse_canonical_name,
@@ -28,10 +29,12 @@ __all__ = [
     "A2AResult",
     "AgentClient",
     "AgentRef",
+    "IdempotencyCache",
     "ServerDispatcherProtocol",
     "Transport",
     "ask_agent",
     "canonical_agent_name",
+    "extract_idempotency_key",
     "parse_canonical_name",
     "slug",
 ]
