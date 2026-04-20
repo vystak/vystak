@@ -395,5 +395,70 @@ def test_list_never_prints_values_vault_backend(tmp_path):
     assert "sk-" not in result.output
 
 
+# ---------------------------------------------------------------------------
+# rotate-approle
+# ---------------------------------------------------------------------------
+
+
+def test_rotate_approle_single_principal(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(VAULT_FIXTURE_YAML)
+    runner = CliRunner()
+    with patch("vystak_cli.commands.secrets._make_vault_client") as mock_vc:
+        fake = MagicMock()
+        fake.upsert_approle.return_value = ("role-new", "secret-new")
+        mock_vc.return_value = fake
+        with patch("vystak_cli.commands.secrets._write_approle_volume"):
+            with patch("vystak_cli.commands.secrets._restart_sidecar"):
+                result = runner.invoke(
+                    secrets,
+                    [
+                        "rotate-approle",
+                        "assistant-agent",
+                        "--file",
+                        str(config),
+                    ],
+                )
+    assert result.exit_code == 0, result.output
+    fake.upsert_approle.assert_called_once()
+    assert "rotated" in result.output
+    assert "assistant-agent" in result.output
+
+
+def test_rotate_approle_kv_type_not_applicable(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(
+        """\
+providers:
+  azure: {type: azure, config: {location: eastus2, resource_group: rg}}
+  anthropic: {type: anthropic}
+platforms:
+  aca: {type: container-apps, provider: azure}
+vault:
+  name: v
+  provider: azure
+  type: key-vault
+  mode: deploy
+  config: {vault_name: v}
+models:
+  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
+agents:
+  - name: assistant
+    model: sonnet
+    secrets: [{name: ANTHROPIC_API_KEY}]
+    platform: aca
+"""
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        secrets,
+        ["rotate-approle", "assistant-agent", "--file", str(config)],
+    )
+    assert result.exit_code != 0
+    # either word shows this isn't for KV-backed setups
+    out = result.output.lower()
+    assert "not applicable" in out or "vault" in out
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

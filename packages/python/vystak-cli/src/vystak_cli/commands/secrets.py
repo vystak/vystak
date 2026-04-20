@@ -150,6 +150,63 @@ def _vault_list_names(vault: Vault) -> list[str]:
     return client.kv_list()
 
 
+def _collect_principals_from_config(config_path: Path) -> dict[str, list[str]]:
+    """Return ``{principal_name → [secret_name, ...]}`` for the config.
+
+    Principals are one per (agent, side) with ``-agent`` / ``-workspace``
+    suffix. Used by ``rotate-approle`` to know which AppRole names and
+    which volumes to write credentials into.
+    """
+    agents, _channels, _vault = _load_config(config_path)
+    result: dict[str, list[str]] = {}
+    for a in agents:
+        if a.secrets:
+            result[f"{a.name}-agent"] = [s.name for s in a.secrets]
+        if a.workspace is not None and a.workspace.secrets:
+            result[f"{a.name}-workspace"] = [s.name for s in a.workspace.secrets]
+    return result
+
+
+def _write_approle_volume(principal_name: str, role_id: str, secret_id: str) -> None:
+    """Overwrite the role_id + secret_id files in the principal's approle volume.
+
+    Mirrors ``AppRoleCredentialsNode`` — uses a throwaway alpine container
+    because Docker named volumes have no host path we can write to
+    directly.
+    """
+    import shlex
+
+    import docker as _docker
+
+    dc = _docker.from_env()
+    volume_name = f"vystak-{principal_name}-approle"
+    script = (
+        f"printf %s {shlex.quote(role_id)} > /target/role_id && "
+        f"chmod 400 /target/role_id && "
+        f"printf %s {shlex.quote(secret_id)} > /target/secret_id && "
+        f"chmod 400 /target/secret_id"
+    )
+    dc.containers.run(
+        image="alpine:3.19",
+        command=["sh", "-c", script],
+        volumes={volume_name: {"bind": "/target", "mode": "rw"}},
+        remove=True,
+    )
+
+
+def _restart_sidecar(principal_name: str) -> None:
+    """Restart the Vault Agent sidecar so it picks up the rotated creds."""
+    import docker as _docker
+
+    dc = _docker.from_env()
+    name = f"vystak-{principal_name}-vault-agent"
+    try:
+        c = dc.containers.get(name)
+        c.restart()
+    except Exception:
+        pass
+
+
 # --- subcommands ----------------------------------------------------------
 
 
@@ -278,6 +335,60 @@ def set_cmd(assignment: str, file: str):
         client = _make_kv_secret_client(_vault_display_name(vault))
         client.set_secret(name, value)
     click.echo(f"  set     {name}")
+
+
+@secrets.command("rotate-approle")
+@click.argument("principal", required=False)
+@click.option(
+    "--rotate-role-id",
+    is_flag=True,
+    help="Also rotate role_id (default: only secret_id).",
+)
+@click.option("--all", "rotate_all", is_flag=True, help="Rotate every principal.")
+@click.option("--file", default="vystak.yaml")
+def rotate_approle_cmd(principal, rotate_role_id, rotate_all, file):
+    """Rotate AppRole credentials for a principal (Hashi-only).
+
+    Generates a fresh ``secret_id`` (and optionally ``role_id``), writes
+    them into the principal's AppRole volume, then restarts the Vault
+    Agent sidecar so it authenticates with the new creds on the next
+    template render cycle.
+    """
+    from vystak.schema.common import VaultType
+
+    _declared, vault = _collect_declared_secrets(Path(file))
+    if vault is None or vault.type is not VaultType.VAULT:
+        raise click.ClickException(
+            "rotate-approle is not applicable — only HashiCorp Vault "
+            "deployments (Vault(type='vault')) have AppRoles to rotate."
+        )
+
+    principals = _collect_principals_from_config(Path(file))
+
+    targets: list[str] = []
+    if rotate_all:
+        targets = list(principals.keys())
+    elif principal:
+        if principal not in principals:
+            raise click.ClickException(
+                f"Unknown principal '{principal}'. "
+                f"Known: {', '.join(principals.keys()) or '(none)'}"
+            )
+        targets = [principal]
+    else:
+        raise click.ClickException("Specify a principal name or --all.")
+
+    client = _make_vault_client(vault)
+    for name in targets:
+        role_id, secret_id = client.upsert_approle(
+            role_name=name,
+            policies=[f"{name}-policy"],
+            token_ttl="1h",
+            token_max_ttl="24h",
+        )
+        _write_approle_volume(name, role_id, secret_id)
+        _restart_sidecar(name)
+        click.echo(f"  rotated  {name}")
 
 
 @secrets.command("diff")
