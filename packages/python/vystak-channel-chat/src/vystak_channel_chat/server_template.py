@@ -19,6 +19,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+# Configure root logging so module loggers (incl. vystak.transport.nats,
+# vystak.channel.chat) actually emit. Uvicorn has its own handlers for
+# uvicorn.* but propagation to root is what vystak.* needs.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
 logger = logging.getLogger("vystak.channel.chat")
 
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
