@@ -164,7 +164,7 @@ class AzureProvider(PlatformProvider):
             changes={"root": (current_hash, target_hash)},
         )
 
-    def apply(self, plan: DeployPlan) -> DeployResult:
+    def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
             return DeployResult(
                 agent_name=plan.agent_name,
@@ -291,6 +291,7 @@ class AzureProvider(PlatformProvider):
                     generated_code=self._generated_code,
                     plan=plan,
                     platform_config=cfg,
+                    peer_routes_json=peer_routes or "{}",
                 )
             )
 
@@ -571,7 +572,7 @@ class AzureProvider(PlatformProvider):
         self,
         plan: DeployPlan,
         channel: Channel,
-        resolved_routes: dict[str, str],
+        resolved_routes: dict[str, dict[str, str]],
     ) -> DeployResult:
         try:
             plugin = get_plugin(channel.type)

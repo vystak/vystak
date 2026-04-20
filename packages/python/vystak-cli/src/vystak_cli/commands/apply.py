@@ -92,8 +92,11 @@ def apply(files, file_path, force):
 
             provider.set_listener(PrintListener(indent="    "))
 
+        # v1: peer-route wiring is only implemented for Docker; Azure agents
+        # use the manual env-var export workaround until ACA defaultDomain
+        # lookup is added.
         peer_routes: str | None = None
-        if agent.platform is not None:
+        if agent.platform is not None and agent.platform.provider.type == "docker":
             try:
                 plugin = get_transport_plugin(agent.platform.transport.type)
                 peer_routes = build_routes_json(list(defs.agents), plugin, agent.platform)
