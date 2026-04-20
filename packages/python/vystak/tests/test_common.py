@@ -4,6 +4,8 @@ from vystak.schema.common import (
     ChannelType,
     McpTransport,
     NamedModel,
+    VaultMode,
+    VaultType,
     WorkspaceType,
 )
 
@@ -49,3 +51,13 @@ class TestMcpTransport:
         expected = {"stdio", "sse", "streamable_http"}
         actual = {mt.value for mt in McpTransport}
         assert actual == expected
+
+
+def test_vault_type_enum_values():
+    assert VaultType.KEY_VAULT.value == "key-vault"
+    assert list(VaultType) == [VaultType.KEY_VAULT]
+
+
+def test_vault_mode_enum_values():
+    assert VaultMode.DEPLOY.value == "deploy"
+    assert VaultMode.EXTERNAL.value == "external"

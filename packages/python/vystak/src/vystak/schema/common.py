@@ -43,3 +43,12 @@ class AgentProtocol(StrEnum):
     A2A_TURN = "a2a-turn"
     A2A_STREAM = "a2a-stream"
     MEDIA_BRIDGE = "media-bridge"
+
+
+class VaultType(StrEnum):
+    KEY_VAULT = "key-vault"  # Azure Key Vault — only v1-supported backend
+
+
+class VaultMode(StrEnum):
+    DEPLOY = "deploy"
+    EXTERNAL = "external"
