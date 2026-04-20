@@ -26,6 +26,8 @@ dependencies = [
     "vystak>=0.1.0",
     "vystak-adapter-langchain>=0.1.0",
     "vystak-provider-docker>=0.1.0",
+    "vystak-channel-chat>=0.1.0",
+    "vystak-channel-slack>=0.1.0",
     "click>=8.0",
 ]
 
@@ -49,3 +51,5 @@ packages = ["src/vystak_cli"]
 vystak = { workspace = true }
 vystak-adapter-langchain = { workspace = true }
 vystak-provider-docker = { workspace = true }
+vystak-channel-chat = { workspace = true }
+vystak-channel-slack = { workspace = true }

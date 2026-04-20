@@ -2,7 +2,7 @@
 
 from vystak.providers.base import (
     AgentStatus,
-    ChannelAdapter,
+    ChannelPlugin,
     DeployPlan,
     DeployResult,
     FrameworkAdapter,
@@ -13,7 +13,7 @@ from vystak.providers.base import (
 
 __all__ = [
     "AgentStatus",
-    "ChannelAdapter",
+    "ChannelPlugin",
     "DeployPlan",
     "DeployResult",
     "FrameworkAdapter",

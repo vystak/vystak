@@ -20,6 +20,7 @@ const sidebars = {
         'concepts/agents',
         'concepts/models',
         'concepts/providers-and-platforms',
+        'concepts/transport',
         'concepts/services',
         'concepts/channels',
       ],
@@ -30,6 +31,7 @@ const sidebars = {
       items: [
         'deploying/docker',
         'deploying/azure',
+        'deploying/environments',
         'deploying/gateway',
       ],
     },

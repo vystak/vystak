@@ -38,3 +38,4 @@ Thumbs.db
 
 # Tooling workspaces (brainstorm sessions, local agent state)
 .superpowers/
+.worktrees/

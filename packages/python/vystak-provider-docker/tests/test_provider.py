@@ -185,6 +185,79 @@ class TestApply:
         assert result.success is False
         assert "set_generated_code" in result.message
 
+    def test_nats_transport_adds_nats_server_node(self, provider, mock_docker_client, sample_code):
+        """When platform.transport.type == 'nats', apply() adds a
+        NatsServerNode to the graph and injects the env contract onto the
+        DockerAgentNode."""
+        from vystak.schema.platform import Platform
+        from vystak.schema.transport import NatsConfig, Transport
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
+
+        platform = Platform(
+            name="local",
+            type="docker",
+            provider=Provider(name="docker", type="docker"),
+            namespace="multi-nats",
+            transport=Transport(
+                name="bus",
+                type="nats",
+                config=NatsConfig(jetstream=True, subject_prefix="vystak-nats"),
+            ),
+        )
+        agent = Agent(
+            name="nats-bot",
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
+            platform=platform,
+        )
+        provider.set_generated_code(sample_code)
+        provider.set_agent(agent)
+        plan = DeployPlan(
+            agent_name="nats-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "nats-server": ProvisionResult(
+                name="nats-server",
+                success=True,
+                info={"url": "nats://vystak-nats:4222"},
+            ),
+            "agent:nats-bot": ProvisionResult(
+                name="agent:nats-bot",
+                success=True,
+                info={"url": "http://localhost:8080"},
+            ),
+        }
+
+        added_nodes: list = []
+
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            mock_graph.add.side_effect = lambda node: added_nodes.append(node)
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
+        assert result.success is True
+        # A NatsServerNode must be in the graph
+        assert any(isinstance(n, NatsServerNode) for n in added_nodes)
+        # The DockerAgentNode must carry VYSTAK_TRANSPORT_TYPE=nats +
+        # VYSTAK_NATS_URL in its extra_env.
+        agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
+        assert len(agent_nodes) == 1
+        env = agent_nodes[0]._extra_env
+        assert env["VYSTAK_TRANSPORT_TYPE"] == "nats"
+        assert env["VYSTAK_NATS_URL"] == "nats://vystak-nats:4222"
+        assert env["VYSTAK_NATS_SUBJECT_PREFIX"] == "vystak-nats"
+
 
 class TestDestroy:
     def test_removes_container(self, provider, mock_docker_client):
@@ -208,8 +281,7 @@ class TestDestroy:
         # Empty containers list for service destroy
         client.containers.list.return_value = []
         provider.set_agent(sample_agent)
-        with patch("vystak_provider_docker.provider.DockerProvider.destroy_gateways"):
-            provider.destroy("test-bot", include_resources=True)
+        provider.destroy("test-bot", include_resources=True)
         container.stop.assert_called_once()
         container.remove.assert_called_once()
 

@@ -37,6 +37,10 @@ uv run pytest packages/python/vystak/tests/test_agent.py -v
 uv run pytest packages/python/vystak/tests/test_agent.py::TestAgent::test_name
 uv run pytest packages/python/ -k "test_hasher"       # by name pattern
 
+# Opt-in Docker integration tests — spin up real containers
+uv run pytest -m docker -v           # runs only docker-marked tests
+# (Default `just test-python` excludes them via `-m 'not docker'`.)
+
 # Docs site (Docusaurus under website/)
 just docs-dev           # pnpm --filter vystak-docs start
 just docs-build

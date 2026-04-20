@@ -1,6 +1,7 @@
 """DockerAgentNode — builds and runs an agent as a Docker container."""
 
 import os
+import shutil
 from pathlib import Path
 
 import docker.errors
@@ -13,11 +14,22 @@ from vystak.schema.agent import Agent
 class DockerAgentNode(Provisionable):
     """Builds a Docker image and runs an agent container."""
 
-    def __init__(self, client, agent: Agent, generated_code: GeneratedCode, plan: DeployPlan):
+    def __init__(
+        self,
+        client,
+        agent: Agent,
+        generated_code: GeneratedCode,
+        plan: DeployPlan,
+        *,
+        peer_routes_json: str = "{}",
+        extra_env: dict[str, str] | None = None,
+    ):
         self._client = client
         self._agent = agent
         self._generated_code = generated_code
         self._plan = plan
+        self._peer_routes_json = peer_routes_json
+        self._extra_env = extra_env or {}
 
     @property
     def name(self) -> str:
@@ -65,6 +77,19 @@ class DockerAgentNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
+            # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
+            # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            import vystak
+            import vystak_transport_http
+            import vystak_transport_nats
+
+            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
+                _src = Path(_mod.__file__).parent
+                _dst = build_dir / _src.name
+                if _dst.exists():
+                    shutil.rmtree(_dst)
+                shutil.copytree(_src, _dst)
+
             # Build Dockerfile
             mcp_installs = ""
             needs_node = False
@@ -103,7 +128,10 @@ class DockerAgentNode(Provisionable):
             self._client.images.build(path=str(build_dir), tag=image_tag)
 
             # Build env vars
-            env = {}
+            env: dict[str, str] = {
+                "VYSTAK_TRANSPORT_TYPE": "http",
+                "VYSTAK_ROUTES_JSON": self._peer_routes_json,
+            }
             for secret in self._agent.secrets:
                 value = os.environ.get(secret.name)
                 if value:
@@ -118,6 +146,10 @@ class DockerAgentNode(Provisionable):
                 dep_result = context.get(self._agent.memory.name)
                 if dep_result and dep_result.info.get("connection_string"):
                     env["MEMORY_STORE_URL"] = dep_result.info["connection_string"]
+
+            # Caller-supplied overrides (e.g. transport-plugin env contract)
+            # take precedence over the defaults above.
+            env.update(self._extra_env)
 
             # Build volumes
             volumes = {}

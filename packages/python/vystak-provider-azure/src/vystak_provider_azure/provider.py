@@ -5,7 +5,8 @@ from pathlib import Path
 
 import docker
 import docker.errors
-from vystak.hash import hash_agent
+from vystak.channels import get_plugin
+from vystak.hash import hash_agent, hash_channel
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -15,12 +16,14 @@ from vystak.providers.base import (
 )
 from vystak.provisioning import ProvisionGraph
 from vystak.schema.agent import Agent
+from vystak.schema.channel import Channel
 from vystak_provider_docker.secrets import get_resource_password
 
 from vystak_provider_azure.auth import get_credential, get_location, get_subscription_id
 from vystak_provider_azure.nodes import (
     ACAEnvironmentNode,
     ACRNode,
+    AzureChannelAppNode,
     AzurePostgresNode,
     ContainerAppNode,
     LogAnalyticsNode,
@@ -161,7 +164,7 @@ class AzureProvider(PlatformProvider):
             changes={"root": (current_hash, target_hash)},
         )
 
-    def apply(self, plan: DeployPlan) -> DeployResult:
+    def apply(self, plan: DeployPlan, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
             return DeployResult(
                 agent_name=plan.agent_name,
@@ -288,6 +291,7 @@ class AzureProvider(PlatformProvider):
                     generated_code=self._generated_code,
                     plan=plan,
                     platform_config=cfg,
+                    peer_routes_json=peer_routes or "{}",
                 )
             )
 
@@ -478,3 +482,266 @@ class AzureProvider(PlatformProvider):
             )
         except Exception:
             return AgentStatus(agent_name=agent_name, running=False, hash=None)
+
+    # ------------------------------------------------------------------
+    # Channel provisioning
+    # ------------------------------------------------------------------
+
+    def _channel_platform_config(self, channel: Channel) -> dict:
+        """Merge provider config with channel's platform-level config."""
+        if channel.platform:
+            merged = dict(channel.platform.config)
+            merged.update(channel.platform.provider.config)
+            return merged
+        return {}
+
+    def _channel_rg_name(self, channel: Channel) -> str:
+        cfg = self._channel_platform_config(channel)
+        return cfg.get("resource_group", f"vystak-{channel.name}-rg")
+
+    def _channel_acr_name(self, channel: Channel) -> str:
+        cfg = self._channel_platform_config(channel)
+        raw = cfg.get("registry", "")
+        if raw:
+            return raw.replace(".azurecr.io", "")
+        rg = self._channel_rg_name(channel)
+        digest = hashlib.md5(rg.encode()).hexdigest()[:8]
+        return f"vystak{digest}"
+
+    def _channel_env_name(self, channel: Channel) -> str:
+        cfg = self._channel_platform_config(channel)
+        if cfg.get("environment"):
+            return cfg["environment"]
+        rg = self._channel_rg_name(channel)
+        return f"{rg}-env"
+
+    def _channel_app_name(self, channel_name: str) -> str:
+        return f"channel-{channel_name}"
+
+    def get_channel_hash(self, channel: Channel) -> str | None:
+        """Read the deployed channel hash from Container App tags."""
+        try:
+            cfg = self._channel_platform_config(channel)
+            credential = get_credential()
+            subscription_id = get_subscription_id(cfg)
+
+            from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
+            aca_client = ContainerAppsAPIClient(credential, subscription_id)
+            rg_name = self._channel_rg_name(channel)
+            app_name = self._channel_app_name(channel.name)
+
+            app = aca_client.container_apps.get(rg_name, app_name)
+            if app.tags:
+                return app.tags.get("vystak:channel-hash")
+        except Exception:
+            pass
+        return None
+
+    def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
+        tree = hash_channel(channel)
+        target_hash = tree.root
+
+        if current_hash == target_hash:
+            return DeployPlan(
+                agent_name=channel.name,
+                actions=[],
+                current_hash=current_hash,
+                target_hash=target_hash,
+                changes={},
+            )
+
+        if current_hash is None:
+            return DeployPlan(
+                agent_name=channel.name,
+                actions=["Create new channel deployment on Azure Container Apps"],
+                current_hash=None,
+                target_hash=target_hash,
+                changes={"all": (None, target_hash)},
+            )
+
+        return DeployPlan(
+            agent_name=channel.name,
+            actions=["Update channel deployment on Azure Container Apps"],
+            current_hash=current_hash,
+            target_hash=target_hash,
+            changes={"root": (current_hash, target_hash)},
+        )
+
+    def apply_channel(
+        self,
+        plan: DeployPlan,
+        channel: Channel,
+        resolved_routes: dict[str, dict[str, str]],
+    ) -> DeployResult:
+        try:
+            plugin = get_plugin(channel.type)
+        except KeyError as e:
+            return DeployResult(
+                agent_name=plan.agent_name,
+                success=False,
+                hash=plan.target_hash,
+                message=str(e),
+            )
+
+        try:
+            code = plugin.generate_code(channel, resolved_routes)
+
+            cfg = self._channel_platform_config(channel)
+            credential = get_credential()
+            subscription_id = get_subscription_id(cfg)
+            location = get_location(cfg)
+
+            from azure.mgmt.appcontainers import ContainerAppsAPIClient
+            from azure.mgmt.containerregistry import ContainerRegistryManagementClient
+            from azure.mgmt.loganalytics import LogAnalyticsManagementClient
+            from azure.mgmt.resource import ResourceManagementClient
+
+            resource_client = ResourceManagementClient(credential, subscription_id)
+            la_client = LogAnalyticsManagementClient(credential, subscription_id)
+            acr_client = ContainerRegistryManagementClient(credential, subscription_id)
+            aca_client = ContainerAppsAPIClient(credential, subscription_id)
+            docker_client = self._create_docker_client()
+
+            rg_name = self._channel_rg_name(channel)
+            acr_name = self._channel_acr_name(channel)
+            env_name = self._channel_env_name(channel)
+            tags = {
+                "vystak:managed": "true",
+                "vystak:channel": channel.name,
+            }
+
+            acr_existing = bool(cfg.get("registry"))
+            env_existing = bool(cfg.get("environment"))
+
+            graph = ProvisionGraph()
+            if self._listener:
+                graph.set_listener(self._listener)
+
+            graph.add(
+                ResourceGroupNode(
+                    client=resource_client,
+                    rg_name=rg_name,
+                    location=location,
+                    tags=tags,
+                )
+            )
+            graph.add(
+                LogAnalyticsNode(
+                    client=la_client,
+                    rg_name=rg_name,
+                    workspace_name=f"{rg_name}-logs",
+                    location=location,
+                    tags=tags,
+                )
+            )
+            graph.add(
+                ACRNode(
+                    client=acr_client,
+                    rg_name=rg_name,
+                    registry_name=acr_name,
+                    location=location,
+                    existing=acr_existing,
+                    tags=tags,
+                )
+            )
+            graph.add(
+                ACAEnvironmentNode(
+                    client=aca_client,
+                    rg_name=rg_name,
+                    env_name=env_name,
+                    location=location,
+                    existing=env_existing,
+                    tags=tags,
+                )
+            )
+            graph.add(
+                AzureChannelAppNode(
+                    aca_client=aca_client,
+                    docker_client=docker_client,
+                    rg_name=rg_name,
+                    channel=channel,
+                    generated_code=code,
+                    plan=plan,
+                    platform_config=cfg,
+                )
+            )
+
+            results = graph.execute()
+
+            node_result = results.get(f"channel-app:{channel.name}")
+            if node_result and node_result.success:
+                url = node_result.info.get("url", "?")
+                return DeployResult(
+                    agent_name=channel.name,
+                    success=True,
+                    hash=plan.target_hash,
+                    message=f"Deployed channel {channel.name} at {url}",
+                )
+
+            error = node_result.error if node_result else "Channel node not found"
+            return DeployResult(
+                agent_name=channel.name,
+                success=False,
+                hash=plan.target_hash,
+                message=f"Channel deployment failed: {error}",
+            )
+        except Exception as e:
+            return DeployResult(
+                agent_name=channel.name,
+                success=False,
+                hash=plan.target_hash,
+                message=f"Channel deployment failed: {e}",
+            )
+
+    def destroy_channel(self, channel: Channel) -> None:
+        """Delete the channel's Container App using its own platform context.
+
+        Critical: reads subscription/RG from channel.platform rather than from
+        self._agent — the CLI doesn't set_agent during the channel lifecycle,
+        and mixing the two previously led to silent fallback to the wrong RG.
+        """
+        cfg = self._channel_platform_config(channel)
+        credential = get_credential()
+        subscription_id = get_subscription_id(cfg)
+        rg_name = self._channel_rg_name(channel)
+        app_name = self._channel_app_name(channel.name)
+
+        from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
+        aca_client = ContainerAppsAPIClient(credential, subscription_id)
+        poller = aca_client.container_apps.begin_delete(rg_name, app_name)
+        poller.result()
+
+    def channel_status(self, channel: Channel) -> AgentStatus:
+        try:
+            cfg = self._channel_platform_config(channel)
+            credential = get_credential()
+            subscription_id = get_subscription_id(cfg)
+
+            from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
+            aca_client = ContainerAppsAPIClient(credential, subscription_id)
+            rg_name = self._channel_rg_name(channel)
+            app_name = self._channel_app_name(channel.name)
+
+            app = aca_client.container_apps.get(rg_name, app_name)
+            fqdn = (
+                app.configuration.ingress.fqdn
+                if app.configuration and app.configuration.ingress
+                else None
+            )
+            hash_ = app.tags.get("vystak:channel-hash") if app.tags else None
+
+            return AgentStatus(
+                agent_name=channel.name,
+                running=app.provisioning_state == "Succeeded",
+                hash=hash_,
+                info={
+                    "fqdn": fqdn,
+                    "url": f"https://{fqdn}" if fqdn else None,
+                    "provisioning_state": app.provisioning_state,
+                },
+            )
+        except Exception:
+            return AgentStatus(agent_name=channel.name, running=False, hash=None)

@@ -2,8 +2,6 @@ import ast as python_ast
 
 import pytest
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
 from vystak.schema.skill import Skill
@@ -28,7 +26,6 @@ def sample_agent():
             Skill(name="weather", tools=["get_weather", "get_forecast"]),
             Skill(name="time", tools=["get_time"]),
         ],
-        channels=[Channel(name="api", type=ChannelType.API)],
     )
 
 

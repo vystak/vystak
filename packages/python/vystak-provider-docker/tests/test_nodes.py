@@ -7,6 +7,15 @@ from vystak.provisioning.health import CommandHealthCheck, NoopHealthCheck
 from vystak.provisioning.node import ProvisionResult
 
 
+@pytest.fixture()
+def _patched_docker_errors():
+    """Stub ``docker.errors.NotFound`` so nodes can catch it off mocks."""
+    fake_not_found = type("NotFound", (Exception,), {})
+    with patch("docker.errors") as mock_errors:
+        mock_errors.NotFound = fake_not_found
+        yield fake_not_found
+
+
 class TestDockerNetworkNode:
     def test_provision_creates_network(self):
         from vystak_provider_docker.nodes.network import DockerNetworkNode
@@ -215,19 +224,139 @@ class TestDockerAgentNode:
         node = DockerAgentNode(client, agent, MagicMock(), MagicMock())
         assert isinstance(node.health_check(), NoopHealthCheck)
 
+    def test_extra_env_defaults_to_empty(self):
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
 
-class TestDockerGatewayNode:
+        agent = MagicMock()
+        agent.name = "a"
+        agent.sessions = None
+        agent.memory = None
+        agent.services = []
+        node = DockerAgentNode(MagicMock(), agent, MagicMock(), MagicMock())
+        assert node._extra_env == {}
+
+    def test_extra_env_stored(self):
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
+
+        agent = MagicMock()
+        agent.name = "a"
+        agent.sessions = None
+        agent.memory = None
+        agent.services = []
+        node = DockerAgentNode(
+            MagicMock(),
+            agent,
+            MagicMock(),
+            MagicMock(),
+            extra_env={"VYSTAK_TRANSPORT_TYPE": "nats"},
+        )
+        assert node._extra_env["VYSTAK_TRANSPORT_TYPE"] == "nats"
+
+
+class TestDockerChannelNode:
+    def test_extra_env_defaults_to_empty(self):
+        from vystak_provider_docker.nodes.channel import DockerChannelNode
+
+        channel = MagicMock()
+        channel.name = "api"
+        node = DockerChannelNode(MagicMock(), channel, MagicMock(), "hash")
+        assert node._extra_env == {}
+
+    def test_extra_env_stored(self):
+        from vystak_provider_docker.nodes.channel import DockerChannelNode
+
+        channel = MagicMock()
+        channel.name = "api"
+        node = DockerChannelNode(
+            MagicMock(),
+            channel,
+            MagicMock(),
+            "hash",
+            extra_env={"VYSTAK_NATS_URL": "nats://vystak-nats:4222"},
+        )
+        assert node._extra_env == {"VYSTAK_NATS_URL": "nats://vystak-nats:4222"}
+
+
+class TestNatsServerNode:
     def test_name_and_depends_on(self):
-        from vystak_provider_docker.nodes.gateway import DockerGatewayNode
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
+
+        node = NatsServerNode(MagicMock())
+        assert node.name == "nats-server"
+        assert node.depends_on == ["network"]
+
+    def test_provision_creates_container(self, _patched_docker_errors):
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
 
         client = MagicMock()
-        node = DockerGatewayNode(client, "slack-gw", {}, "my-agent")
-        assert node.name == "gateway:slack-gw"
-        assert node.depends_on == ["agent:my-agent"]
+        client.containers.get.side_effect = _patched_docker_errors("not found")
+        network = MagicMock()
+        network.name = "vystak-net"
+        context = {
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
+        }
+        node = NatsServerNode(client)
+        result = node.provision(context=context)
+        assert result.success
+        assert result.info["url"] == "nats://vystak-nats:4222"
+        client.images.pull.assert_called_once_with("nats:2.10-alpine")
+        client.containers.run.assert_called_once()
+        _, kwargs = client.containers.run.call_args
+        assert kwargs["name"] == "vystak-nats"
+        assert kwargs["command"] == ["-js", "-sd", "/data"]
+        assert kwargs["network"] == "vystak-net"
+        assert kwargs["ports"] == {"4222/tcp": 4222}
+        assert kwargs["labels"] == {"vystak.service": "nats"}
 
-    def test_health_check_is_noop(self):
-        from vystak_provider_docker.nodes.gateway import DockerGatewayNode
+    def test_provision_reuses_running_container(self, _patched_docker_errors):
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
 
         client = MagicMock()
-        node = DockerGatewayNode(client, "slack-gw", {}, "my-agent")
-        assert isinstance(node.health_check(), NoopHealthCheck)
+        existing = MagicMock()
+        existing.status = "running"
+        client.containers.get.return_value = existing
+        network = MagicMock()
+        network.name = "vystak-net"
+        context = {
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
+        }
+        node = NatsServerNode(client)
+        result = node.provision(context=context)
+        assert result.success
+        client.containers.run.assert_not_called()
+        existing.start.assert_not_called()
+
+    def test_provision_restarts_stopped_container(self, _patched_docker_errors):
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
+
+        client = MagicMock()
+        existing = MagicMock()
+        existing.status = "exited"
+        client.containers.get.return_value = existing
+        network = MagicMock()
+        network.name = "vystak-net"
+        context = {
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
+        }
+        node = NatsServerNode(client)
+        result = node.provision(context=context)
+        assert result.success
+        existing.start.assert_called_once()
+        client.containers.run.assert_not_called()
+
+    def test_destroy_removes_container(self, _patched_docker_errors):
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
+
+        client = MagicMock()
+        container = MagicMock()
+        client.containers.get.return_value = container
+        NatsServerNode(client).destroy()
+        container.stop.assert_called_once()
+        container.remove.assert_called_once()
+
+    def test_destroy_not_found_is_noop(self, _patched_docker_errors):
+        from vystak_provider_docker.nodes.nats_server import NatsServerNode
+
+        client = MagicMock()
+        client.containers.get.side_effect = _patched_docker_errors("not found")
+        NatsServerNode(client).destroy()  # should not raise

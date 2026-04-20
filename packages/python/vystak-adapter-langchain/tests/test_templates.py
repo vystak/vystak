@@ -2,8 +2,7 @@ import ast as python_ast
 
 import pytest
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType, McpTransport
+from vystak.schema.common import McpTransport
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
@@ -49,7 +48,6 @@ def anthropic_agent(anthropic_provider):
                 prompt="Show your work step by step.",
             ),
         ],
-        channels=[Channel(name="api", type=ChannelType.API)],
     )
 
 
@@ -182,6 +180,48 @@ class TestGenerateServerPy:
         code = generate_server_py(anthropic_agent)
         assert "uvicorn" in code
 
+    def test_responses_handler_class_emitted(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "class ResponsesHandler:" in code
+        assert "async def create(" in code
+        assert "async def create_stream(" in code
+        assert "async def get(" in code
+
+    def test_responses_handler_instantiated(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "_responses_handler = ResponsesHandler(" in code
+        # FastAPI adapter route delegates to handler, not inline logic.
+        assert "_responses_handler.create_stream(" in code
+        assert "_responses_handler.create(" in code
+        assert "_responses_handler.get(" in code
+
+
+class TestGenerateResponsesHandlerCode:
+    """Direct tests for the ResponsesHandler code-gen function."""
+
+    def test_generate_responses_handler_code_contains_class(self, anthropic_agent):
+        from vystak_adapter_langchain.responses import generate_responses_handler_code
+
+        code = generate_responses_handler_code(anthropic_agent)
+        assert "class ResponsesHandler:" in code
+        assert "async def create(" in code
+        assert "async def create_stream(" in code
+        assert "async def get(" in code
+
+    def test_generate_responses_handler_code_preserves_wire_events(self, anthropic_agent):
+        """Streaming path must still emit the same ``response.*`` event types."""
+        from vystak_adapter_langchain.responses import generate_responses_handler_code
+
+        code = generate_responses_handler_code(anthropic_agent)
+        assert "response.created" in code
+        assert "response.output_item.added" in code
+        assert "response.content_part.added" in code
+        assert "response.output_text.delta" in code
+        assert "response.output_text.done" in code
+        assert "response.completed" in code
+        assert "response.function_call_arguments.delta" in code
+        assert "response.function_call_arguments.done" in code
+
 
 class TestGenerateRequirementsTxt:
     def test_anthropic_requirements(self, anthropic_agent):
@@ -203,10 +243,12 @@ class TestGenerateRequirementsTxt:
         lines = reqs.strip().split("\n")
         assert len(lines) >= 6
 
-    def test_no_vystak_in_requirements(self, anthropic_agent):
-        """vystak schema is bundled as openai_types.py, not installed from PyPI."""
+    def test_vystak_not_in_requirements(self, anthropic_agent):
+        """vystak is bundled as source by the Docker provider, not installed
+        from PyPI. It must NOT appear in generated requirements.txt."""
         reqs = generate_requirements_txt(anthropic_agent)
-        assert "vystak" not in reqs
+        assert "vystak>=" not in reqs
+        assert "vystak-transport-http>=" not in reqs
 
 
 @pytest.fixture()
@@ -519,3 +561,64 @@ class TestMCPIntegration:
         code = generate_server_py(mcp_agent_with_resources)
         python_ast.parse(code)
         assert "MultiServerMCPClient" in code
+
+
+def _basic_agent():
+    return Agent(
+        name="basic",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-3-haiku-20240307",
+        ),
+    )
+
+
+class TestTransportBootstrap:
+    def test_generated_server_parses_as_python(self):
+        source = generate_server_py(_basic_agent())
+        python_ast.parse(source)
+
+    def test_generated_server_has_transport_bootstrap(self):
+        source = generate_server_py(_basic_agent())
+        assert "VYSTAK_TRANSPORT_TYPE" in source
+        assert "VYSTAK_ROUTES_JSON" in source
+        assert "AGENT_CANONICAL_NAME" in source
+        assert "_transport.serve(" in source
+
+    def test_generated_server_bootstrap_has_nats_branch(self):
+        """Emitted server source must contain the NATS branch so
+        NATS-deployment containers can boot without regeneration."""
+        source = generate_server_py(_basic_agent())
+        assert "VYSTAK_NATS_URL" in source
+        assert "VYSTAK_NATS_SUBJECT_PREFIX" in source
+        assert "NatsTransport" in source
+
+    def test_generated_server_emits_server_dispatcher_class(self):
+        """Generated server defines a ServerDispatcher class fanning A2A vs
+        Responses methods to the respective handlers."""
+        source = generate_server_py(_basic_agent())
+        assert "class ServerDispatcher:" in source
+        # All five ServerDispatcherProtocol methods must be present.
+        assert "async def dispatch_a2a(" in source
+        assert "def dispatch_a2a_stream(" in source
+        assert "async def dispatch_responses_create(" in source
+        assert "def dispatch_responses_create_stream(" in source
+        assert "async def dispatch_responses_get(" in source
+
+    def test_generated_server_instantiates_dispatcher_and_passes_to_serve(self):
+        """Dispatcher is constructed from the existing handlers and passed to
+        the transport listener."""
+        source = generate_server_py(_basic_agent())
+        assert "_server_dispatcher = ServerDispatcher(" in source
+        assert "a2a_handler=_a2a_handler" in source
+        assert "responses_handler=_responses_handler" in source
+        assert "handler=_server_dispatcher" in source
+
+    def test_generated_server_dispatcher_streams_are_sync_def(self):
+        """Stream methods must return the underlying async iterator directly
+        (i.e. be regular ``def``, not ``async def``)."""
+        source = generate_server_py(_basic_agent())
+        # Ensure the streaming methods are NOT ``async def``.
+        assert "async def dispatch_a2a_stream(" not in source
+        assert "async def dispatch_responses_create_stream(" not in source

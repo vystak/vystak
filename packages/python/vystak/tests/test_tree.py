@@ -1,9 +1,10 @@
-from vystak.hash.tree import hash_agent
+from vystak.hash.tree import hash_agent, hash_channel
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType, McpTransport, WorkspaceType
+from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.common import ChannelType, McpTransport, RuntimeMode, WorkspaceType
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
+from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 from vystak.schema.secret import Secret
 from vystak.schema.service import Postgres, Redis
@@ -19,6 +20,11 @@ def make_agent(**overrides):
     return Agent(**defaults)
 
 
+def make_platform(namespace: str = "default") -> Platform:
+    docker = Provider(name="docker", type="docker")
+    return Platform(name="local", type="docker", provider=docker, namespace=namespace)
+
+
 class TestAgentHashTree:
     def test_deterministic(self):
         agent = make_agent()
@@ -32,7 +38,6 @@ class TestAgentHashTree:
         assert tree.brain
         assert tree.skills
         assert tree.mcp_servers
-        assert tree.channels
         assert tree.workspace
         assert tree.resources
         assert tree.secrets
@@ -59,13 +64,6 @@ class TestAgentHashTree:
         assert tree1.skills != tree2.skills
         assert tree1.root != tree2.root
         assert tree1.brain == tree2.brain
-
-    def test_channel_change_detected(self):
-        agent1 = make_agent(channels=[Channel(name="api", type=ChannelType.API)])
-        agent2 = make_agent(channels=[Channel(name="slack", type=ChannelType.SLACK)])
-        tree1 = hash_agent(agent1)
-        tree2 = hash_agent(agent2)
-        assert tree1.channels != tree2.channels
 
     def test_mcp_change_detected(self):
         agent1 = make_agent()
@@ -127,4 +125,81 @@ class TestAgentHashTreeServices:
         agent2 = make_agent(memory=Postgres(provider=docker))
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
+        assert tree1.root != tree2.root
+
+
+class TestChannelHashTree:
+    def test_deterministic(self):
+        ch = Channel(name="slack", type=ChannelType.SLACK, platform=make_platform())
+        tree1 = hash_channel(ch)
+        tree2 = hash_channel(ch)
+        assert tree1.root == tree2.root
+
+    def test_routes_change_detected(self):
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            routes=[RouteRule(match={"slack_channel": "C1"}, agent="a")],
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            routes=[RouteRule(match={"slack_channel": "C2"}, agent="b")],
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.routes != tree2.routes
+        assert tree1.root != tree2.root
+
+    def test_runtime_mode_change_detected(self):
+        ch1 = Channel(name="voice", type=ChannelType.VOICE, platform=make_platform())
+        ch2 = Channel(
+            name="voice",
+            type=ChannelType.VOICE,
+            platform=make_platform(),
+            runtime_mode=RuntimeMode.PER_SESSION,
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.runtime != tree2.runtime
+        assert tree1.root != tree2.root
+
+    def test_config_change_detected(self):
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            config={"bot_token_secret": "A"},
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            config={"bot_token_secret": "B"},
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.config != tree2.config
+        assert tree1.root != tree2.root
+
+    def test_secrets_change_detected(self):
+        from vystak.schema.secret import Secret
+
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            secrets=[Secret(name="SLACK_BOT_TOKEN")],
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            secrets=[Secret(name="SLACK_APP_TOKEN")],
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.secrets != tree2.secrets
         assert tree1.root != tree2.root

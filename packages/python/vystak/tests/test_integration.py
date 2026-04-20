@@ -42,10 +42,6 @@ def test_full_agent_definition():
                 guardrails={"max_amount": 500},
             ),
         ],
-        channels=[
-            ast.Channel(name="api", type=ast.ChannelType.API),
-            ast.Channel(name="slack", type=ast.ChannelType.SLACK, config={"channel": "#support"}),
-        ],
         mcp_servers=[
             ast.McpServer(name="github", transport=ast.McpTransport.STDIO, command="github-mcp"),
         ],
@@ -63,7 +59,6 @@ def test_full_agent_definition():
 
     assert agent.name == "support-bot"
     assert len(agent.skills) == 1
-    assert len(agent.channels) == 2
     assert len(agent.mcp_servers) == 1
     assert agent.workspace.filesystem is True
     assert len(agent.resources) == 1
@@ -90,7 +85,6 @@ def test_yaml_roundtrip(tmp_path):
         name="bot",
         model=model,
         skills=[ast.Skill(name="greeting", tools=["say_hello"])],
-        channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
     )
     path = tmp_path / "agent.yaml"
     ast.dump_agent(agent, path)

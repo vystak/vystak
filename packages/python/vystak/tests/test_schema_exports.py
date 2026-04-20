@@ -1,5 +1,6 @@
 from vystak.schema import (
     Agent,
+    AgentProtocol,
     Cache,
     Channel,
     ChannelType,
@@ -17,12 +18,13 @@ from vystak.schema import (
     Queue,
     Redis,
     Resource,
+    RouteRule,
+    RuntimeMode,
     Secret,
     Service,
     SessionStore,
     Skill,
     SkillRequirements,
-    SlackChannel,
     Sqlite,
     VectorStore,
     Workspace,
@@ -33,6 +35,7 @@ from vystak.schema import (
 def test_all_schema_types_importable():
     types = [
         Agent,
+        AgentProtocol,
         Cache,
         Channel,
         ChannelType,
@@ -50,18 +53,19 @@ def test_all_schema_types_importable():
         Queue,
         Redis,
         Resource,
+        RouteRule,
+        RuntimeMode,
         Secret,
         Service,
         SessionStore,
         Skill,
         SkillRequirements,
-        SlackChannel,
         Sqlite,
         VectorStore,
         Workspace,
         WorkspaceType,
     ]
-    assert len(types) == 28
+    assert len(types) == 30
 
 
 def test_service_types_importable_from_top_level():

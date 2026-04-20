@@ -3,8 +3,6 @@ import json
 import pytest
 import yaml
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel
-from vystak.schema.common import ChannelType
 from vystak.schema.loader import dump_agent, load_agent
 from vystak.schema.model import Model
 from vystak.schema.provider import Provider
@@ -22,7 +20,6 @@ def sample_agent_dict():
             "model_name": "claude-sonnet-4-20250514",
         },
         "skills": [{"name": "greeting", "tools": ["say_hello"]}],
-        "channels": [{"name": "api", "type": "api"}],
     }
 
 
@@ -34,7 +31,6 @@ class TestLoadAgent:
         assert agent.name == "test-bot"
         assert agent.model.model_name == "claude-sonnet-4-20250514"
         assert len(agent.skills) == 1
-        assert agent.channels[0].type == ChannelType.API
 
     def test_load_json(self, tmp_path, sample_agent_dict):
         path = tmp_path / "agent.json"
@@ -85,7 +81,6 @@ class TestDumpAgent:
             name="test-bot",
             model=model,
             skills=[Skill(name="greeting", tools=["say_hello"])],
-            channels=[Channel(name="api", type=ChannelType.API)],
         )
         path = tmp_path / "agent.yaml"
         dump_agent(agent, path)

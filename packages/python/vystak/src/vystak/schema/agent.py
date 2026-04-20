@@ -4,7 +4,6 @@ from typing import Self
 
 from pydantic import model_validator
 
-from vystak.schema.channel import Channel
 from vystak.schema.common import NamedModel
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
@@ -17,12 +16,15 @@ from vystak.schema.workspace import Workspace
 
 
 class Agent(NamedModel):
-    """An AI agent — the central deployable unit."""
+    """An AI agent — the central deployable unit.
+
+    Agents are pure computational units addressable by `canonical_name`. They
+    do not own channels; channels declare routes to agents (see schema.channel).
+    """
 
     instructions: str | None = None
     model: Model
     skills: list[Skill] = []
-    channels: list[Channel] = []
     mcp_servers: list[McpServer] = []
     workspace: Workspace | None = None
     guardrails: dict | None = None
@@ -39,6 +41,11 @@ class Agent(NamedModel):
 
     # Deprecated: kept for backward compatibility
     resources: list[Resource] = []
+
+    @property
+    def canonical_name(self) -> str:
+        ns = self.platform.namespace if self.platform else "default"
+        return f"{self.name}.agents.{ns}"
 
     @model_validator(mode="after")
     def _assign_service_names(self) -> Self:
