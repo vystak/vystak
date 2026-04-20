@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 import yaml
 from vystak.schema.multi_loader import load_multi_yaml
+from vystak.secrets.env_loader import load_env_file
 
 
 @click.group()
@@ -74,6 +75,22 @@ def _kv_list_names(vault_name: str) -> list[str]:
     return [p.name for p in client.list_properties_of_secrets()]
 
 
+def _make_kv_secret_client(vault_name: str):
+    """Construct an Azure Key Vault SecretClient.
+
+    Azure deps are lazy-imported — they're only needed when a vault is
+    declared, so users without the Azure plugin installed can still use
+    env-passthrough flows.
+    """
+    from azure.identity import DefaultAzureCredential
+    from azure.keyvault.secrets import SecretClient
+
+    return SecretClient(
+        vault_url=f"https://{vault_name}.vault.azure.net/",
+        credential=DefaultAzureCredential(),
+    )
+
+
 # --- subcommands ----------------------------------------------------------
 
 
@@ -96,3 +113,52 @@ def list_cmd(file: str):
         else:
             status = "env-passthrough"
         click.echo(f"  {name}  [{status}]")
+
+
+@secrets.command("push")
+@click.option("--file", default="vystak.yaml")
+@click.option("--env-file", default=".env")
+@click.option("--force", is_flag=True, help="Overwrite existing KV values")
+@click.option("--allow-missing", is_flag=True, help="Skip secrets not in .env or vault")
+@click.argument("names", nargs=-1)
+def push_cmd(file: str, env_file: str, force: bool, allow_missing: bool, names):
+    """Push secrets from .env into the vault.
+
+    Default behaviour is push-if-missing: only pushes when KV has no value.
+    ``--force`` overwrites whatever is in KV. ``--allow-missing`` allows
+    declared secrets to be silently skipped when absent from both .env
+    and KV (otherwise this is a hard error).
+
+    Never prints secret VALUES — only names and status markers.
+    """
+    import contextlib
+
+    from azure.core.exceptions import ResourceNotFoundError
+
+    declared, vault_name = _collect_declared_secrets(Path(file))
+    if not vault_name:
+        raise click.ClickException("No vault declared in config; push has nothing to do.")
+
+    target = list(names) if names else declared
+    env_values = load_env_file(Path(env_file), optional=True)
+    client = _make_kv_secret_client(vault_name)
+
+    for name in target:
+        existing = None
+        with contextlib.suppress(ResourceNotFoundError):
+            existing = client.get_secret(name).value
+
+        if existing is not None and not force:
+            click.echo(f"  skip    {name}")
+            continue
+
+        if name in env_values:
+            client.set_secret(name, env_values[name])
+            click.echo(f"  pushed  {name}")
+        elif allow_missing:
+            click.echo(f"  missing {name}")
+        else:
+            raise click.ClickException(
+                f"Secret '{name}' missing from .env and vault. "
+                f"Set in .env, run 'vystak secrets set {name}=...', or pass --allow-missing."
+            )

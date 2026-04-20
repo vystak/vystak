@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # --- workaround: stub optional transport plugins so the commands package
 #     __init__ (which transitively imports vystak_provider_docker.transport_wiring)
@@ -42,6 +42,7 @@ if "vystak_transport_nats" not in sys.modules:
 
 
 import pytest  # noqa: E402
+from azure.core.exceptions import ResourceNotFoundError  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from vystak_cli.commands.secrets import secrets  # noqa: E402
 
@@ -114,6 +115,121 @@ def test_secrets_list_never_prints_values(tmp_path):
     # A value-looking string should not appear:
     assert "sk-" not in result.output
     assert "fake-value" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# push
+# ---------------------------------------------------------------------------
+
+
+def test_secrets_push_pushes_absent_from_env(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=fake-value\n")
+    config = _write_fixture_yaml(tmp_path)
+
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.side_effect = ResourceNotFoundError("not found")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["push", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_client.set_secret.assert_called_once_with("ANTHROPIC_API_KEY", "fake-value")
+    assert "pushed" in result.output
+    assert "ANTHROPIC_API_KEY" in result.output
+
+
+def test_secrets_push_skips_existing_without_force(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=fake-value\n")
+    config = _write_fixture_yaml(tmp_path)
+
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.return_value = MagicMock(value="already-there")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["push", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_client.set_secret.assert_not_called()
+    assert "skip" in result.output
+
+
+def test_secrets_push_force_overwrites(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=new\n")
+    config = _write_fixture_yaml(tmp_path)
+
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.return_value = MagicMock(value="old")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["push", "--force", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_client.set_secret.assert_called_once_with("ANTHROPIC_API_KEY", "new")
+
+
+def test_secrets_push_missing_without_allow_missing_errors(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    config = _write_fixture_yaml(tmp_path)
+
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.side_effect = ResourceNotFoundError("no")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["push", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code != 0
+    mock_client.set_secret.assert_not_called()
+    assert "ANTHROPIC_API_KEY" in result.output
+
+
+def test_secrets_push_allow_missing_skips(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    config = _write_fixture_yaml(tmp_path)
+
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.side_effect = ResourceNotFoundError("no")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["push", "--allow-missing", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_client.set_secret.assert_not_called()
+    assert "missing" in result.output
 
 
 if __name__ == "__main__":
