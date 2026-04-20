@@ -49,6 +49,116 @@ class AzureChannelAppNode(Provisionable):
         self._platform_config = platform_config
         self._fqdn: str | None = None
 
+        # Vault-backed deploy context (set via set_vault_context). When
+        # _vault_key is None, provision() takes the env-passthrough path.
+        self._vault_key: str | None = None
+        self._identity_key: str | None = None
+        self._vault_secrets: list[str] = []
+
+    def set_vault_context(
+        self,
+        *,
+        vault_key: str,
+        identity_key: str,
+        secrets: list[str],
+    ) -> None:
+        """Switch this channel node into vault-backed mode.
+
+        When set, provision() routes revision construction through the
+        build_revision_for_vault helper so channel secrets are wired as
+        per-container `secretRef` entries against a `lifecycle: None` UAMI.
+        """
+        self._vault_key = vault_key
+        self._identity_key = identity_key
+        self._vault_secrets = list(secrets)
+
+    def _build_body(self, context: dict, acr_info: dict) -> dict:
+        """Build the ACA revision body when in vault-backed mode.
+
+        Channels have exactly one container and one UAMI. The body is
+        shaped like build_revision_for_vault's output but sized for a
+        single container — all declared secrets belong to the channel
+        itself, no sidecar.
+        """
+        assert self._vault_key is not None, (
+            "_build_body called without vault context; use legacy path"
+        )
+        vault_info = context[self._vault_key].info
+        id_info = context[self._identity_key].info
+        vault_uri = vault_info["vault_uri"]
+        identity_resource_id = id_info["resource_id"]
+
+        from vystak_provider_azure.nodes.aca_app import _kv_secret_name
+
+        app_name = _channel_app_name(self._channel.name)
+        login_server = acr_info["login_server"]
+        acr_password_value = acr_info["password"]
+        acr_password_secret_ref = "acr-password"
+        image_tag = (
+            acr_info.get("image")
+            or f"{login_server}/{app_name}:{self._plan.target_hash}"
+        )
+        channel_port = int(self._channel.config.get("port", 8080))
+
+        kv_secrets_block: list[dict] = [
+            {
+                "name": _kv_secret_name(s),
+                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "identity": identity_resource_id,
+            }
+            for s in self._vault_secrets
+        ]
+        kv_secrets_block.append(
+            {"name": acr_password_secret_ref, "value": acr_password_value}
+        )
+
+        identity_settings: list[dict] = [
+            {"identity": identity_resource_id, "lifecycle": "None"},
+        ]
+
+        channel_env: list[dict] = [
+            {"name": s, "secretRef": _kv_secret_name(s)} for s in self._vault_secrets
+        ]
+        channel_env.append({"name": "PORT", "value": str(channel_port)})
+
+        containers: list[dict] = [
+            {
+                "name": app_name,
+                "image": image_tag,
+                "env": channel_env,
+            }
+        ]
+
+        return {
+            "location": None,  # Caller fills from platform config
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {identity_resource_id: {}},
+            },
+            "properties": {
+                "configuration": {
+                    "identitySettings": identity_settings,
+                    "secrets": kv_secrets_block,
+                    "registries": [
+                        {
+                            "server": login_server,
+                            "username": login_server.split(".")[0],
+                            "passwordSecretRef": acr_password_secret_ref,
+                        }
+                    ],
+                    "ingress": {
+                        "external": True,
+                        "targetPort": channel_port,
+                        "transport": "auto",
+                    },
+                },
+                "template": {
+                    "containers": containers,
+                    "scale": {"minReplicas": 1, "maxReplicas": 1},
+                },
+            },
+        }
+
     @property
     def name(self) -> str:
         return f"channel-app:{self._channel.name}"
