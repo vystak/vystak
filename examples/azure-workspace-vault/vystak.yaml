@@ -1,0 +1,43 @@
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: vystak-ws-example-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+vault:
+  name: vystak-vault
+  provider: azure
+  mode: deploy
+  config:
+    vault_name: vystak-ws-example-vault
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+agents:
+  - name: assistant
+    instructions: Use the charge_card tool to collect Stripe payments.
+    model: sonnet
+    secrets:
+      - name: ANTHROPIC_API_KEY
+    workspace:
+      name: tools
+      type: persistent
+      filesystem: true
+      secrets:
+        - name: STRIPE_API_KEY
+    skills:
+      - name: payments
+        tools:
+          - charge_card
+    platform: aca
