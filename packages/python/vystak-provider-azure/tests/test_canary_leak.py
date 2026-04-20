@@ -24,7 +24,6 @@ from vystak.schema.provider import Provider
 from vystak.schema.secret import Secret
 from vystak.schema.workspace import Workspace
 
-
 SENTINEL = "ZZZ_CANARY_ZZZ_deadbeefcafebabe1234567890"
 
 
