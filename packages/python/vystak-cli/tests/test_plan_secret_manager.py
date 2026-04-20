@@ -1,39 +1,12 @@
-"""Tests for the Vault-aware section of ``vystak plan`` output.
-
-See comment at the top of ``test_secrets_command.py`` for the reason we
-install ``sys.modules`` stubs for the optional transport packages before
-importing anything under ``vystak_cli.commands``.
-"""
+"""Tests for the Vault-aware section of ``vystak plan`` output."""
 
 from __future__ import annotations
 
-import sys
-import types
 from unittest.mock import MagicMock, patch
 
-# --- workaround: stub optional transport plugins (pre-existing CI issue).
-if "vystak_transport_http" not in sys.modules:
-    _stub_http = types.ModuleType("vystak_transport_http")
-
-    class _HttpTransportPluginStub:
-        pass
-
-    _stub_http.HttpTransportPlugin = _HttpTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_http"] = _stub_http
-
-if "vystak_transport_nats" not in sys.modules:
-    _stub_nats = types.ModuleType("vystak_transport_nats")
-
-    class _NatsTransportPluginStub:
-        pass
-
-    _stub_nats.NatsTransportPlugin = _NatsTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_nats"] = _stub_nats
-
-
-import pytest  # noqa: E402
-from click.testing import CliRunner  # noqa: E402
-from vystak_cli.commands.plan import plan as plan_cmd  # noqa: E402
+import pytest
+from click.testing import CliRunner
+from vystak_cli.commands.plan import plan as plan_cmd
 
 VAULT_YAML = """\
 providers:

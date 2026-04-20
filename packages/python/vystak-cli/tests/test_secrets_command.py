@@ -1,50 +1,14 @@
-"""Tests for the ``vystak secrets`` CLI subcommand group.
-
-Uses direct ``from vystak_cli.commands.secrets import secrets`` invocation
-against the ``secrets`` group directly (via CliRunner), which avoids forcing
-construction of the full top-level ``cli`` group and the transitive imports
-in ``vystak_cli.commands.apply`` that require ``vystak_transport_http``.
-
-A minimal ``sys.modules`` stub for the optional transport packages is
-installed at import time so ``vystak_cli.commands.__init__`` does not blow up
-when pytest discovers this file. The stub only fills the handful of symbols
-that ``vystak_provider_docker.transport_wiring`` reads at import time.
-"""
+"""Tests for the ``vystak secrets`` CLI subcommand group."""
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# --- workaround: stub optional transport plugins so the commands package
-#     __init__ (which transitively imports vystak_provider_docker.transport_wiring)
-#     can be imported in this test process. This is purely a pre-existing-issue
-#     workaround — unrelated to the secrets subcommand itself.
-if "vystak_transport_http" not in sys.modules:
-    _stub_http = types.ModuleType("vystak_transport_http")
-
-    class _HttpTransportPluginStub:
-        pass
-
-    _stub_http.HttpTransportPlugin = _HttpTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_http"] = _stub_http
-
-if "vystak_transport_nats" not in sys.modules:
-    _stub_nats = types.ModuleType("vystak_transport_nats")
-
-    class _NatsTransportPluginStub:
-        pass
-
-    _stub_nats.NatsTransportPlugin = _NatsTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_nats"] = _stub_nats
-
-
-import pytest  # noqa: E402
-from azure.core.exceptions import ResourceNotFoundError  # noqa: E402
-from click.testing import CliRunner  # noqa: E402
-from vystak_cli.commands.secrets import secrets  # noqa: E402
+import pytest
+from azure.core.exceptions import ResourceNotFoundError
+from click.testing import CliRunner
+from vystak_cli.commands.secrets import secrets
 
 FIXTURE_YAML = """\
 providers:

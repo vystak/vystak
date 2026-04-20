@@ -8,38 +8,11 @@ the handoff to ``_run_provider_apply``. They do **not** spin up Azure clients.
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from unittest.mock import patch
 
-# Stub optional transport plugins so vystak_cli.commands.__init__ (which
-# transitively imports vystak_provider_docker.transport_wiring) can be imported
-# cleanly in this test process. This matches the pattern already in
-# test_secrets_command.py and is carried forward from earlier phases even
-# though the workspace now declares the real packages — the stubs remain a
-# harmless no-op when the packages happen to be installed.
-if "vystak_transport_http" not in sys.modules:
-    _stub_http = types.ModuleType("vystak_transport_http")
-
-    class _HttpTransportPluginStub:
-        pass
-
-    _stub_http.HttpTransportPlugin = _HttpTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_http"] = _stub_http
-
-if "vystak_transport_nats" not in sys.modules:
-    _stub_nats = types.ModuleType("vystak_transport_nats")
-
-    class _NatsTransportPluginStub:
-        pass
-
-    _stub_nats.NatsTransportPlugin = _NatsTransportPluginStub  # type: ignore[attr-defined]
-    sys.modules["vystak_transport_nats"] = _stub_nats
-
-
-from click.testing import CliRunner  # noqa: E402
-from vystak_cli.cli import cli  # noqa: E402
+from click.testing import CliRunner
+from vystak_cli.cli import cli
 
 FIXTURE_YAML_WITH_VAULT = """\
 providers:
