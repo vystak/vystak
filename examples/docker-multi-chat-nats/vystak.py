@@ -74,6 +74,28 @@ time_agent = ast.Agent(
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 
+# Coordinator agent. Calls time-agent and weather-agent via A2A (over NATS).
+# Its tools use vystak.transport.ask_agent() — a 3-line replacement for the
+# ~50 lines of httpx + JSON-RPC boilerplate the pre-transport examples used.
+assistant_agent = ast.Agent(
+    name="assistant-agent",
+    instructions=(
+        "You are a coordinator. For weather questions call ask_weather_agent; "
+        "for time questions call ask_time_agent. When the user asks about "
+        "both (e.g. 'what is the weather and time'), call both tools and "
+        "synthesise a single concise reply."
+    ),
+    model=sonnet,
+    platform=platform,
+    skills=[
+        ast.Skill(
+            name="coordinator",
+            tools=["ask_time_agent", "ask_weather_agent"],
+        ),
+    ],
+    secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
+)
+
 chat = ast.Channel(
     name="chat",
     type=ast.ChannelType.CHAT,
@@ -82,5 +104,6 @@ chat = ast.Channel(
     routes=[
         ast.RouteRule(match={}, agent="weather-agent"),
         ast.RouteRule(match={}, agent="time-agent"),
+        ast.RouteRule(match={}, agent="assistant-agent"),
     ],
 )
