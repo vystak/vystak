@@ -162,3 +162,63 @@ def push_cmd(file: str, env_file: str, force: bool, allow_missing: bool, names):
                 f"Secret '{name}' missing from .env and vault. "
                 f"Set in .env, run 'vystak secrets set {name}=...', or pass --allow-missing."
             )
+
+
+@secrets.command("set")
+@click.argument("assignment", required=True)
+@click.option("--file", default="vystak.yaml")
+def set_cmd(assignment: str, file: str):
+    """Push a single secret directly: ``vystak secrets set NAME=VALUE``.
+
+    Intended for one-off bootstrap — does NOT read .env. The value is
+    written to KV directly and never echoed back.
+    """
+    if "=" not in assignment:
+        raise click.ClickException("Use NAME=VALUE syntax.")
+    name, value = assignment.split("=", 1)
+    _, vault_name = _collect_declared_secrets(Path(file))
+    if not vault_name:
+        raise click.ClickException("No vault declared.")
+    client = _make_kv_secret_client(vault_name)
+    client.set_secret(name, value)
+    click.echo(f"  set     {name}")
+
+
+@secrets.command("diff")
+@click.option("--file", default="vystak.yaml")
+@click.option("--env-file", default=".env")
+def diff_cmd(file: str, env_file: str):
+    """Compare .env values vs KV values for declared secrets.
+
+    Prints only names and categories — NEVER the actual values.
+    Categories:
+        same           — env and vault values match
+        differs        — env and vault both present, values don't match
+        env-only       — only in .env
+        vault-only     — only in vault
+        missing        — absent from both
+    """
+    import contextlib
+
+    from azure.core.exceptions import ResourceNotFoundError
+
+    declared, vault_name = _collect_declared_secrets(Path(file))
+    env_values = load_env_file(Path(env_file), optional=True)
+    client = _make_kv_secret_client(vault_name) if vault_name else None
+
+    for name in declared:
+        in_env = name in env_values
+        kv_value = None
+        if client is not None:
+            with contextlib.suppress(ResourceNotFoundError):
+                kv_value = client.get_secret(name).value
+
+        if in_env and kv_value is not None:
+            match = env_values[name] == kv_value
+            click.echo(f"  {name}  {'same' if match else 'differs'}")
+        elif in_env and kv_value is None:
+            click.echo(f"  {name}  env-only (vault missing)")
+        elif not in_env and kv_value is not None:
+            click.echo(f"  {name}  vault-only (env missing)")
+        else:
+            click.echo(f"  {name}  missing (absent in env and vault)")

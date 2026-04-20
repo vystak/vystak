@@ -73,6 +73,33 @@ def _write_fixture_yaml(tmp_path: Path) -> Path:
     return p
 
 
+def _write_fixture_yaml_with_two(tmp_path: Path, names: list[str]) -> Path:
+    secret_block = "\n".join(f"      - {{name: {n}}}" for n in names)
+    body = (
+        "providers:\n"
+        "  azure: {type: azure, config: {location: eastus2}}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  aca: {type: container-apps, provider: azure}\n"
+        "vault:\n"
+        "  name: v\n"
+        "  provider: azure\n"
+        "  mode: deploy\n"
+        "  config: {vault_name: v}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: aca\n"
+        "    secrets:\n"
+        f"{secret_block}\n"
+    )
+    p = tmp_path / "vystak.yaml"
+    p.write_text(body)
+    return p
+
+
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
@@ -230,6 +257,106 @@ def test_secrets_push_allow_missing_skips(tmp_path):
     assert result.exit_code == 0, result.output
     mock_client.set_secret.assert_not_called()
     assert "missing" in result.output
+
+
+# ---------------------------------------------------------------------------
+# set
+# ---------------------------------------------------------------------------
+
+
+def test_secrets_set_pushes_one(tmp_path):
+    config = _write_fixture_yaml(tmp_path)
+    runner = CliRunner()
+    mock_client = MagicMock()
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["set", "ANTHROPIC_API_KEY=explicit", "--file", str(config)],
+        )
+    assert result.exit_code == 0, result.output
+    mock_client.set_secret.assert_called_once_with("ANTHROPIC_API_KEY", "explicit")
+    # Assignment value must not leak into output
+    assert "explicit" not in result.output
+
+
+def test_secrets_set_requires_assignment(tmp_path):
+    config = _write_fixture_yaml(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        secrets,
+        ["set", "ANTHROPIC_API_KEY", "--file", str(config)],
+    )
+    assert result.exit_code != 0
+    assert "NAME=VALUE" in result.output
+
+
+# ---------------------------------------------------------------------------
+# diff
+# ---------------------------------------------------------------------------
+
+
+def test_secrets_diff_shows_present_missing_different(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("A=a-env\nB=b-env\n")
+    config = _write_fixture_yaml_with_two(tmp_path, ["A", "B", "C"])
+    runner = CliRunner()
+    mock_client = MagicMock()
+
+    def _get(n):
+        if n == "A":
+            m = MagicMock()
+            m.value = "a-env"
+            return m
+        if n == "B":
+            m = MagicMock()
+            m.value = "b-different"
+            return m
+        raise ResourceNotFoundError("no")
+
+    mock_client.get_secret.side_effect = _get
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["diff", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "A" in out and "same" in out.lower()
+    assert "B" in out and "differs" in out.lower()
+    assert "C" in out and "missing" in out.lower()
+    # Values MUST NEVER print.
+    assert "a-env" not in out
+    assert "b-env" not in out
+    assert "b-different" not in out
+
+
+def test_secrets_diff_marks_vault_only(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    config = _write_fixture_yaml(tmp_path)
+    runner = CliRunner()
+    mock_client = MagicMock()
+    mock_client.get_secret.return_value = MagicMock(value="some-value")
+    with patch(
+        "vystak_cli.commands.secrets._make_kv_secret_client",
+        return_value=mock_client,
+    ):
+        result = runner.invoke(
+            secrets,
+            ["diff", "--file", str(config), "--env-file", str(env)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "ANTHROPIC_API_KEY" in result.output
+    assert "vault-only" in result.output
+    assert "some-value" not in result.output
 
 
 if __name__ == "__main__":
