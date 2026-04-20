@@ -75,9 +75,11 @@ _client_routes: dict[str, str] = {
 _http_routes: dict[str, str] = {
     entry["canonical"]: entry["address"] for entry in _ROUTES_RAW.values()
 }
-# Short-name → wire-address map kept for /health listings (backward compatible).
+# Short-name → direct HTTP URL for /health listings. Agents run FastAPI
+# on port 8000 regardless of A2A transport; on Docker, container DNS is
+# `vystak-<agent_name>` on vystak-net.
 ROUTES: dict[str, str] = {
-    short: entry["address"] for short, entry in _ROUTES_RAW.items()
+    short: f"http://vystak-{short}:8000" for short in _ROUTES_RAW
 }
 
 

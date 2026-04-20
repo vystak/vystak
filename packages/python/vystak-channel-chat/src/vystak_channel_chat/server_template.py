@@ -75,10 +75,13 @@ _client_routes: dict[str, str] = {
 _http_routes: dict[str, str] = {
     entry["canonical"]: entry["address"] for entry in _ROUTES_RAW.values()
 }
-# Short-name → wire-address map kept for /v1/responses proxying and the
-# /health + /v1/models listings (backward compatible with the old ROUTES dict).
+# Short-name → direct HTTP URL for the /v1/responses byte-proxy and for
+# /health + /v1/models listings. Agents run FastAPI on port 8000 regardless
+# of A2A transport (Plan A's "FastAPI always-on" principle), so the HTTP
+# endpoint is reachable even when the A2A path goes over NATS. On Docker,
+# container DNS is `vystak-<agent_name>` on vystak-net.
 ROUTES: dict[str, str] = {
-    short: entry["address"] for short, entry in _ROUTES_RAW.items()
+    short: f"http://vystak-{short}:8000" for short in _ROUTES_RAW
 }
 
 # response_id -> agent_name. Populated by /v1/responses proxy so GETs for a
