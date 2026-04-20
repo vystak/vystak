@@ -77,6 +77,45 @@ class AgentClient:
         ):
             yield event
 
+    async def create_response(
+        self,
+        agent: str,
+        request: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> dict[str, Any]:
+        ref = self._resolve(agent)
+        return await self._transport.create_response(
+            ref, request, metadata or {}, timeout=timeout,
+        )
+
+    async def create_response_stream(
+        self,
+        agent: str,
+        request: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> AsyncIterator[dict[str, Any]]:
+        ref = self._resolve(agent)
+        async for chunk in self._transport.create_response_stream(
+            ref, request, metadata or {}, timeout=timeout,
+        ):
+            yield chunk
+
+    async def get_response(
+        self,
+        agent: str,
+        response_id: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> dict[str, Any] | None:
+        ref = self._resolve(agent)
+        return await self._transport.get_response(
+            ref, response_id, timeout=timeout,
+        )
+
     def _resolve(self, short_name: str) -> AgentRef:
         try:
             canonical = self._routes[short_name]
