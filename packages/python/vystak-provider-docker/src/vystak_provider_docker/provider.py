@@ -35,6 +35,7 @@ class DockerProvider(PlatformProvider):
         self._client = self._create_client()
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
+        self._vault = None
 
     @staticmethod
     def _create_client():
@@ -51,6 +52,15 @@ class DockerProvider(PlatformProvider):
 
     def set_agent(self, agent: Agent) -> None:
         self._agent = agent
+
+    def set_vault(self, vault) -> None:
+        """Declare the secrets backing store for this deploy.
+
+        Docker provider v1 does not support Vault-backed secrets. When a
+        vault is set, `plan()` raises ValueError to fail fast. Future work
+        may wire a HashiCorp Vault backend here.
+        """
+        self._vault = vault
 
     def _container_name(self, agent_name: str) -> str:
         return f"vystak-{agent_name}"
@@ -85,7 +95,13 @@ class DockerProvider(PlatformProvider):
             return None
         return container.labels.get("vystak.hash")
 
-    def plan(self, agent: Agent, current_hash: str | None) -> DeployPlan:
+    def plan(self, agent: Agent, current_hash: str | None = None) -> DeployPlan:
+        if getattr(self, "_vault", None):
+            raise ValueError(
+                "DockerProvider v1 does not support Vault-backed secrets. "
+                "Use env-passthrough (omit the Vault declaration), or wait for "
+                "the HashiCorp Vault backend spec."
+            )
         tree = hash_agent(agent)
         target_hash = tree.root
         container = self._get_container(agent.name)

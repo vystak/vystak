@@ -286,6 +286,23 @@ class TestDestroy:
         container.remove.assert_called_once()
 
 
+class TestVaultRejection:
+    def test_docker_rejects_vault_at_plan(self, provider, sample_agent):
+        from vystak.schema.common import VaultMode
+        from vystak.schema.vault import Vault
+
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="azure", type="azure"),
+                mode=VaultMode.DEPLOY,
+                config={"vault_name": "vv"},
+            )
+        )
+        with pytest.raises(ValueError, match="Vault"):
+            provider.plan(sample_agent)
+
+
 class TestStatus:
     def test_running(self, provider, mock_docker_client):
         client, _ = mock_docker_client
