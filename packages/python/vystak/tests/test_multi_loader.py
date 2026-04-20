@@ -21,7 +21,7 @@ class TestLoadMultiYaml:
                 {"name": "bot-b", "model": "claude", "platform": "local"},
             ],
         }
-        agents, channels = load_multi_yaml(data)
+        agents, channels, _ = load_multi_yaml(data)
         assert len(agents) == 2
         assert agents[0].name == "bot-a"
         assert agents[1].name == "bot-b"
@@ -37,7 +37,7 @@ class TestLoadMultiYaml:
                 {"name": "b", "model": "claude", "platform": "local"},
             ],
         }
-        agents, _ = load_multi_yaml(data)
+        agents, _channels, _vault = load_multi_yaml(data)
         assert agents[0].platform is agents[1].platform
 
     def test_shared_model_same_object(self):
@@ -52,7 +52,7 @@ class TestLoadMultiYaml:
                 {"name": "b", "model": "claude"},
             ],
         }
-        agents, _ = load_multi_yaml(data)
+        agents, _channels, _vault = load_multi_yaml(data)
         assert agents[0].model is agents[1].model
 
     def test_unknown_provider_raises(self):
@@ -87,7 +87,7 @@ class TestLoadMultiYaml:
             "models": {"claude": {"provider": "azure", "model_name": "claude-sonnet-4-20250514"}},
             "agents": [{"name": "bot", "model": "claude", "platform": "aca"}],
         }
-        agents, _ = load_multi_yaml(data)
+        agents, _channels, _vault = load_multi_yaml(data)
         assert agents[0].platform.provider.config["location"] == "eastus2"
 
     def test_inline_model_still_works(self):
@@ -106,14 +106,15 @@ class TestLoadMultiYaml:
                 }
             ],
         }
-        agents, _ = load_multi_yaml(data)
+        agents, _channels, _vault = load_multi_yaml(data)
         assert agents[0].model.model_name == "claude-sonnet-4-20250514"
 
     def test_empty_returns_empty(self):
         data = {"providers": {}, "platforms": {}, "models": {}, "agents": []}
-        agents, channels = load_multi_yaml(data)
+        agents, channels, vault = load_multi_yaml(data)
         assert agents == []
         assert channels == []
+        assert vault is None
 
 
 class TestLoadMultiYamlChannels:
@@ -137,7 +138,7 @@ class TestLoadMultiYamlChannels:
                 },
             ],
         }
-        _, channels = load_multi_yaml(data)
+        _agents, channels, _vault = load_multi_yaml(data)
         assert len(channels) == 1
         ch = channels[0]
         assert ch.name == "slack-main"
@@ -172,5 +173,5 @@ class TestLoadMultiYamlChannels:
                 {"name": "api", "type": "api", "platform": "local"},
             ],
         }
-        agents, channels = load_multi_yaml(data)
+        agents, channels, _vault = load_multi_yaml(data)
         assert agents[0].platform is channels[0].platform

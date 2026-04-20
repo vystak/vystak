@@ -112,7 +112,7 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
 
             if "agents" in data or "channels" in data:
                 merged = merge_configs(base_config, data) if base_config else data
-                agents, channels = load_multi_yaml(merged)
+                agents, channels, _vault = load_multi_yaml(merged)
                 defs.agents.extend(agents)
                 defs.channels.extend(channels)
             elif isinstance(data.get("model"), str) or isinstance(data.get("platform"), str):
@@ -120,7 +120,7 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
                 if "agents" not in merged:
                     merged["agents"] = []
                 merged["agents"].append(data)
-                agents, channels = load_multi_yaml(merged)
+                agents, channels, _vault = load_multi_yaml(merged)
                 defs.agents.extend(agents)
                 defs.channels.extend(channels)
             else:

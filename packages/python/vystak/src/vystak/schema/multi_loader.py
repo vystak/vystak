@@ -5,13 +5,18 @@ from vystak.schema.channel import Channel
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
+from vystak.schema.vault import Vault
 
 
-def load_multi_yaml(data: dict) -> tuple[list[Agent], list[Channel]]:
-    """Load multi-agent/multi-channel YAML with named providers, platforms, and models.
+def load_multi_yaml(
+    data: dict,
+) -> tuple[list[Agent], list[Channel], Vault | None]:
+    """Load multi-agent/multi-channel YAML with named providers, platforms, models, vault.
 
     String references in agents/channels are resolved to shared Python objects,
     so items referencing the same platform name get the same object (id).
+
+    Returns (agents, channels, vault). Vault is None when not declared.
     """
     providers: dict[str, Provider] = {}
     for name, cfg in data.get("providers", {}).items():
@@ -27,6 +32,19 @@ def load_multi_yaml(data: dict) -> tuple[list[Agent], list[Channel]]:
                 f"Defined providers: {', '.join(providers.keys())}"
             )
         platforms[name] = Platform(name=name, provider=providers[provider_ref], **cfg)
+
+    vault: Vault | None = None
+    vault_cfg = data.get("vault")
+    if vault_cfg is not None:
+        vault_cfg = dict(vault_cfg)
+        provider_ref = vault_cfg.pop("provider")
+        if provider_ref not in providers:
+            raise KeyError(
+                f"Unknown provider '{provider_ref}' in vault "
+                f"'{vault_cfg.get('name')}'. "
+                f"Defined providers: {', '.join(providers.keys())}"
+            )
+        vault = Vault(provider=providers[provider_ref], **vault_cfg)
 
     models: dict[str, Model] = {}
     for name, cfg in data.get("models", {}).items():
@@ -56,12 +74,33 @@ def load_multi_yaml(data: dict) -> tuple[list[Agent], list[Channel]]:
         if isinstance(platform_ref, str):
             if platform_ref not in platforms:
                 raise KeyError(
-                    f"Unknown platform '{platform_ref}' in agent '{agent_data.get('name')}'. "
+                    f"Unknown platform '{platform_ref}' in agent "
+                    f"'{agent_data.get('name')}'. "
                     f"Defined platforms: {', '.join(platforms.keys())}"
                 )
             agent_data["platform"] = platforms[platform_ref]
 
-        agents.append(Agent.model_validate(agent_data))
+        agent = Agent.model_validate(agent_data)
+
+        # Cross-object check: workspace secrets require Azure provider.
+        # v1 only supports workspace-scoped secrets on Azure (ACA
+        # lifecycle:None + per-container secretRef).
+        if agent.workspace and agent.workspace.secrets:
+            platform_provider_type = (
+                agent.platform.provider.type
+                if agent.platform and agent.platform.provider
+                else None
+            )
+            if platform_provider_type != "azure":
+                raise ValueError(
+                    f"Workspace '{agent.workspace.name}' on agent '{agent.name}' "
+                    f"declares secrets, but the agent's platform provider is "
+                    f"'{platform_provider_type}'. v1 only supports "
+                    f"workspace-scoped secrets on Azure (ACA lifecycle:None). "
+                    f"See follow-up spec for HashiCorp Vault."
+                )
+
+        agents.append(agent)
 
     channels: list[Channel] = []
     for channel_data in data.get("channels", []):
@@ -71,11 +110,12 @@ def load_multi_yaml(data: dict) -> tuple[list[Agent], list[Channel]]:
         if isinstance(platform_ref, str):
             if platform_ref not in platforms:
                 raise KeyError(
-                    f"Unknown platform '{platform_ref}' in channel '{channel_data.get('name')}'. "
+                    f"Unknown platform '{platform_ref}' in channel "
+                    f"'{channel_data.get('name')}'. "
                     f"Defined platforms: {', '.join(platforms.keys())}"
                 )
             channel_data["platform"] = platforms[platform_ref]
 
         channels.append(Channel.model_validate(channel_data))
 
-    return agents, channels
+    return agents, channels, vault
