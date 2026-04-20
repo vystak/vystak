@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import click
+from vystak.secrets.env_loader import load_env_file
 from vystak_adapter_langchain import LangChainAdapter
 from vystak_provider_docker.transport_wiring import (
     build_routes_json,
@@ -26,7 +27,24 @@ from vystak_cli.provider_factory import get_provider
     envvar="VYSTAK_ENV",
     help="Environment name. Applies vystak.<env>.py overlay if present.",
 )
-def apply(files, file_path, force, env):
+@click.option(
+    "--env-file",
+    "env_file",
+    default=".env",
+    show_default=True,
+    type=click.Path(),
+    help="Path to the .env file used to bootstrap vault secrets at apply time.",
+)
+@click.option(
+    "--allow-missing",
+    is_flag=True,
+    default=False,
+    help=(
+        "Allow declared vault secrets to be absent both locally (in .env) and in "
+        "the vault at apply time. Without this flag, a missing secret aborts apply."
+    ),
+)
+def apply(files, file_path, force, env, env_file, allow_missing):
     """Deploy or update agents and channels."""
     if files:
         paths = [Path(f) for f in files]
@@ -55,10 +73,49 @@ def apply(files, file_path, force, env):
     else:
         click.echo("Environment: (base)")
 
+    # Load bootstrap env values from `.env` (or --env-file). Values are only
+    # used during apply to push missing secrets into the vault; they are never
+    # persisted by vystak. When the file is absent we silently continue — the
+    # user may have pre-populated the vault by other means.
+    env_path = Path(env_file)
+    env_values = load_env_file(env_path, optional=True)
+    if env_values:
+        click.echo(f"Env file: {env_path}  ({len(env_values)} value(s))")
+    else:
+        click.echo(f"Env file: {env_path}  (not present or empty)")
+
+    _run_provider_apply(
+        agents=defs.agents,
+        channels=defs.channels,
+        vault=defs.vault,
+        env_values=env_values,
+        force=force,
+        allow_missing=allow_missing,
+        paths=paths,
+    )
+
+
+def _run_provider_apply(
+    *,
+    agents,
+    channels,
+    vault,
+    env_values: dict[str, str],
+    force: bool,
+    allow_missing: bool,
+    paths: list[Path],
+) -> None:
+    """Execute the agents- and channels- provisioning loop.
+
+    Extracted from the click command so tests can patch this single symbol
+    (`vystak_cli.commands.apply._run_provider_apply`) to assert the vault,
+    env_values, and flags are threaded through correctly without having to
+    stub out Azure / Docker clients.
+    """
     adapter = LangChainAdapter()
     deployed_agents: list[dict] = []
 
-    for agent in defs.agents:
+    for agent in agents:
         click.echo(f"\nAgent: {agent.name}")
 
         click.echo("  Validating... ", nl=False)
@@ -77,6 +134,20 @@ def apply(files, file_path, force, env):
 
         provider = get_provider(agent)
         provider.set_agent(agent)
+
+        # Thread vault + env_values + flags into the provider *before* plan/
+        # apply. DockerProvider.set_vault raises in plan() when a vault is set
+        # (v1 does not support vault-backed secrets on Docker); AzureProvider
+        # uses these to build the KV/UAMI/Grant/SecretSync subgraph.
+        if hasattr(provider, "set_vault"):
+            provider.set_vault(vault)
+        if hasattr(provider, "set_env_values"):
+            provider.set_env_values(env_values)
+        if hasattr(provider, "set_force_sync"):
+            provider.set_force_sync(force)
+        if hasattr(provider, "set_allow_missing"):
+            provider.set_allow_missing(allow_missing)
+
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
 
@@ -124,7 +195,7 @@ def apply(files, file_path, force, env):
         ):
             try:
                 plugin = get_transport_plugin(agent.platform.transport.type)
-                peer_routes = build_routes_json(list(defs.agents), plugin, agent.platform)
+                peer_routes = build_routes_json(list(agents), plugin, agent.platform)
             except (KeyError, Exception):
                 pass
 
@@ -147,7 +218,7 @@ def apply(files, file_path, force, env):
 
     deployed_channels: list[dict] = []
 
-    for channel in defs.channels:
+    for channel in channels:
         click.echo(f"\nChannel: {channel.name}")
 
         provider = get_provider(channel)

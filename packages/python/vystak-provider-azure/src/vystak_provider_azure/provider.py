@@ -539,18 +539,45 @@ class AzureProvider(PlatformProvider):
                     )
                 )
 
-            graph.add(
-                ContainerAppNode(
-                    aca_client=aca_client,
-                    docker_client=docker_client,
-                    rg_name=rg_name,
-                    agent=self._agent,
-                    generated_code=self._generated_code,
-                    plan=plan,
-                    platform_config=cfg,
-                    peer_routes_json=peer_routes or "{}",
-                )
+            # Vault subgraph: when a Vault is declared and the agent has any
+            # declared secrets, add KeyVault + UAMI(s) + SecretSync + Grant(s)
+            # before ContainerApp, and route ContainerApp through
+            # build_revision_for_vault. Callers control this via
+            # provider.set_vault(...) / set_env_values(...) /
+            # set_force_sync(...) / set_allow_missing(...).
+            vault_ctx = self._add_vault_nodes(
+                graph=graph,
+                agent=self._agent,
+                rg_name=rg_name,
+                location=location,
+                tags=tags,
+                credential=credential,
+                subscription_id=subscription_id,
+                cfg=cfg,
             )
+            vault_node, agent_identity_key, workspace_identity_key, model_secrets, ws_secrets = (
+                vault_ctx
+            )
+
+            container_app_node = ContainerAppNode(
+                aca_client=aca_client,
+                docker_client=docker_client,
+                rg_name=rg_name,
+                agent=self._agent,
+                generated_code=self._generated_code,
+                plan=plan,
+                platform_config=cfg,
+                peer_routes_json=peer_routes or "{}",
+            )
+            if vault_node is not None and agent_identity_key is not None:
+                container_app_node.set_vault_context(
+                    vault_key=vault_node.name,
+                    agent_identity_key=agent_identity_key,
+                    workspace_identity_key=workspace_identity_key,
+                    model_secrets=model_secrets,
+                    workspace_secrets=ws_secrets,
+                )
+            graph.add(container_app_node)
 
             results = graph.execute()
 
