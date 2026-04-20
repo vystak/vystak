@@ -3551,104 +3551,245 @@ the full peer_routes treatment from Task 17."
 
 ---
 
-### Task 19: Hash tree integration
+### Task 19: Hash tree integration (realigned)
+
+**Realigned scope (2026-04-19):** The `hash_agent(agent: Agent)` function in `packages/python/vystak/src/vystak/hash/tree.py` is the authoritative hash entry point — no `AgentHashTree.for_workspace` exists. The realignment reads `agent.platform.transport` directly (embedded model) and contributes a new `transport` section to the hash tree.
 
 **Files:**
-- Modify: `packages/python/vystak/src/vystak/hash/tree.py`
-- Modify: `packages/python/vystak/tests/hash/test_tree.py`
+- Modify: `packages/python/vystak/src/vystak/hash/tree.py` — add `transport` section to `AgentHashTree` + compose it in `hash_agent`
+- Create or modify: `packages/python/vystak/tests/hash/test_tree.py` (may exist already — check with `ls`)
 
-- [ ] **Step 1: Write failing tests for hash sensitivity**
-
-Add to (or create) `packages/python/vystak/tests/hash/test_tree.py`:
+**Existing hash tree structure** (for reference):
 
 ```python
-from vystak.hash.tree import AgentHashTree
+@dataclass
+class AgentHashTree:
+    brain: str
+    skills: str
+    mcp_servers: str
+    workspace: str
+    resources: str
+    secrets: str
+    sessions: str
+    memory: str
+    services: str
+    root: str   # combined
+```
+
+Add `transport: str` alongside the existing sections, contributing to `root`.
+
+---
+
+- [ ] **Step 1: Write failing tests**
+
+Check if `packages/python/vystak/tests/hash/test_tree.py` exists. If not, create it. If it exists, append to it.
+
+```python
+"""Hash-tree tests for transport integration."""
+
+from vystak.hash.tree import AgentHashTree, hash_agent
 from vystak.schema import (
-    Agent, Model, Provider, Platform, Transport, NatsConfig, Workspace,
+    Agent,
+    HttpConfig,
+    Model,
+    NatsConfig,
+    Platform,
+    Provider,
+    Transport,
+    TransportConnection,
 )
 
 
-def _ws(transport: Transport | None = None) -> Workspace:
-    agent = Agent(
+def _agent(transport: Transport | None = None) -> Agent:
+    """Build an Agent with an embedded Platform + Transport for hashing tests."""
+    platform = Platform(
+        name="main",
+        type="docker",
+        provider=Provider(name="docker", type="docker"),
+        transport=transport,  # None triggers the default-http synthesis
+    )
+    return Agent(
         name="a",
-        model=Model(name="m", provider=Provider(type="anthropic", api_key_env="K")),
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
+        ),
+        platform=platform,
     )
-    platform = Platform(name="main", provider="docker", transport=transport.name if transport else None)
-    transports = [transport] if transport else []
-    return Workspace(agents=[agent], platforms=[platform], transports=transports)
 
 
-def test_hash_changes_when_transport_type_changes():
-    ws1 = _ws(Transport(name="bus", type="http"))
-    ws2 = _ws(Transport(name="bus", type="nats", config=NatsConfig()))
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 != h2
+class TestTransportHashing:
+    def test_transport_section_present(self):
+        tree = hash_agent(_agent())
+        assert hasattr(tree, "transport")
+        assert isinstance(tree.transport, str)
+        assert len(tree.transport) == 64  # sha256 hex
 
+    def test_hash_changes_when_transport_type_changes(self):
+        t1 = Transport(name="bus", type="http")
+        t2 = Transport(name="bus", type="nats", config=NatsConfig())
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport != h2.transport
+        assert h1.root != h2.root
 
-def test_hash_unchanged_for_byo_connection():
-    ws1 = _ws(Transport(name="bus", type="nats", config=NatsConfig()))
-    # Same transport, different BYO connection — should not trigger re-deploy.
-    t2 = Transport(
-        name="bus", type="nats", config=NatsConfig(),
-        connection={"url_env": "OTHER_URL"},
-    )
-    ws2 = _ws(t2)
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 == h2
+    def test_hash_changes_when_config_changes(self):
+        t1 = Transport(name="bus", type="nats", config=NatsConfig(jetstream=True))
+        t2 = Transport(name="bus", type="nats", config=NatsConfig(jetstream=False))
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport != h2.transport
+        assert h1.root != h2.root
 
+    def test_hash_unchanged_for_byo_connection(self):
+        # Same transport type/config, different BYO connection — portable.
+        t1 = Transport(
+            name="bus", type="nats", config=NatsConfig(),
+            connection=TransportConnection(url_env="DEV_NATS_URL"),
+        )
+        t2 = Transport(
+            name="bus", type="nats", config=NatsConfig(),
+            connection=TransportConnection(url_env="PROD_NATS_URL"),
+        )
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
 
-def test_default_http_platform_without_transport_consistent():
-    # Two platforms identical but one omits transport — after synthesis,
-    # hash should match.
-    ws1 = _ws()  # no transport declared, synthesises default-http
-    ws2 = _ws(Transport(name="default-http", type="http"))
-    h1 = AgentHashTree.for_workspace(ws1).hash_for(ws1.agents[0])
-    h2 = AgentHashTree.for_workspace(ws2).hash_for(ws2.agents[0])
-    assert h1 == h2
+    def test_hash_unchanged_for_transport_name(self):
+        # The transport's `name` field is identity for references, not config.
+        # Should not affect the agent's hash.
+        t1 = Transport(name="bus-alpha", type="http")
+        t2 = Transport(name="bus-beta", type="http")
+        h1 = hash_agent(_agent(t1))
+        h2 = hash_agent(_agent(t2))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
+
+    def test_default_http_synthesis_consistent(self):
+        # An agent built with platform.transport=None gets default-http
+        # synthesised; hash should match an explicit Transport(name="default-http", type="http").
+        h1 = hash_agent(_agent(None))
+        h2 = hash_agent(_agent(Transport(name="default-http", type="http")))
+        assert h1.transport == h2.transport
+        assert h1.root == h2.root
+
+    def test_no_platform_agent_hashes_null_transport(self):
+        # Edge case: agent without a platform. Hash must be stable, not error.
+        agent = Agent(
+            name="a",
+            model=Model(
+                name="m",
+                provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
+            ),
+            platform=None,
+        )
+        tree = hash_agent(agent)
+        # Transport section still present; computed as "null" hash.
+        assert tree.transport is not None
+        assert len(tree.transport) == 64
 ```
 
-- [ ] **Step 2: Run — expect failures**
+- [ ] **Step 2: Run tests to confirm failures**
 
 ```bash
-uv run pytest packages/python/vystak/tests/hash/ -v
+uv run pytest packages/python/vystak/tests/hash/test_tree.py -v
 ```
 
-Expected: `test_hash_changes_when_transport_type_changes` FAILS because transport doesn't contribute to the hash yet.
+Expected: `AttributeError: 'AgentHashTree' object has no attribute 'transport'` — the dataclass doesn't have this field yet.
 
-- [ ] **Step 3: Extend `AgentHashTree.for_workspace`**
+- [ ] **Step 3: Extend `AgentHashTree` and `hash_agent`**
 
-Open `packages/python/vystak/src/vystak/hash/tree.py`. Find where agent hashing composes inputs. Add transport contribution:
+Edit `packages/python/vystak/src/vystak/hash/tree.py`:
+
+1. Add `transport: str` to the `AgentHashTree` dataclass (alongside existing sections, alphabetical or at the end — match existing order by placing after `services`).
+
+2. Add a helper `_hash_transport` near `_hash_str`:
 
 ```python
-# For each agent:
-platform = _platform_for_agent(workspace, agent)
-transport = next(t for t in workspace.transports if t.name == platform.transport)
-transport_hash_input = {
-    "type": transport.type,
-    "config": (transport.config.model_dump() if transport.config else None),
-    # Deliberately exclude `connection` — BYO endpoint changes are portable.
-}
+import json
+
+
+def _hash_transport(agent: Agent) -> str:
+    """Contribute transport identity (type + config) to the agent hash.
+
+    `connection` is excluded — BYO URLs/credentials are portable across
+    environments without triggering redeploy. `name` is also excluded —
+    it's an identity field for cross-resource references, not config.
+    """
+    if agent.platform is None or agent.platform.transport is None:
+        return _hash_str(None)
+    transport = agent.platform.transport
+    payload = {
+        "type": transport.type,
+        "config": transport.config.model_dump() if transport.config else None,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
 ```
 
-Merge `transport_hash_input` into the existing hash-input dict for the agent. Use `json.dumps(..., sort_keys=True)` to get deterministic ordering.
+3. In `hash_agent`, compute `transport = _hash_transport(agent)` and include it in the `sections` concat + the returned `AgentHashTree`:
 
-- [ ] **Step 4: Run tests**
+```python
+def hash_agent(agent: Agent) -> AgentHashTree:
+    brain = hash_model(agent.model)
+    skills = _hash_list(agent.skills)
+    mcp_servers = _hash_list(agent.mcp_servers)
+    workspace = _hash_optional(agent.workspace)
+    resources = _hash_list(agent.resources)
+    secrets = _hash_list(agent.secrets)
+    sessions = _hash_optional(agent.sessions)
+    memory = _hash_optional(agent.memory)
+    services = _hash_list(agent.services)
+    transport = _hash_transport(agent)
+
+    sections = "|".join(
+        [
+            brain,
+            skills,
+            mcp_servers,
+            workspace,
+            resources,
+            secrets,
+            sessions,
+            memory,
+            services,
+            transport,
+        ]
+    )
+    root = hashlib.sha256(sections.encode()).hexdigest()
+
+    return AgentHashTree(
+        brain=brain,
+        skills=skills,
+        mcp_servers=mcp_servers,
+        workspace=workspace,
+        resources=resources,
+        secrets=secrets,
+        sessions=sessions,
+        memory=memory,
+        services=services,
+        transport=transport,
+        root=root,
+    )
+```
+
+- [ ] **Step 4: Run tests — expect pass**
 
 ```bash
 uv run pytest packages/python/vystak/tests/hash/ -v
 ```
 
-Expected: PASS.
+Expected: all 7 new `TestTransportHashing` tests PASS.
 
-- [ ] **Step 5: Run full suite**
+- [ ] **Step 5: Run full gates**
 
 ```bash
 just lint-python && just test-python
 ```
 
-Expected: PASS. (Some existing hash-sensitivity tests may also be affected; update only their comparison constants, not their semantics.)
+Expected: PASS. Note: **existing hash tests will break** because the `root` hash now includes the transport section — any test that pins `root` to a specific hex string needs regeneration. If that happens, run the failing test, capture the new `root` value from the failure output, and update the expected constant. **Do not change the test's semantic assertion** — only the pinned value.
 
 - [ ] **Step 6: Commit**
 
@@ -3657,9 +3798,11 @@ git add packages/python/vystak/src/vystak/hash/tree.py \
         packages/python/vystak/tests/hash/
 git commit -m "feat(hash): include transport type/config in AgentHashTree
 
-Switching a platform's transport type or broker-specific config triggers
-re-deploy. BYO connection URL/credentials are excluded from the hash —
-same agent, different broker instance, should be portable."
+Adds a transport section to the agent hash tree, reading directly from
+agent.platform.transport (embedded Transport pattern). Changes to
+transport.type or transport.config trigger redeploy; BYO connection
+details and the transport's own name are excluded — same agent, different
+broker instance or reference name, remains portable."
 ```
 
 ---
