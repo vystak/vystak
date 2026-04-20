@@ -8,6 +8,23 @@ from vystak.schema.provider import Provider
 from vystak.schema.vault import Vault
 
 
+def _validate_vault_provider_pairing(vault: Vault) -> None:
+    """Enforce Vault.type ↔ Provider.type coupling at load time."""
+    from vystak.schema.common import VaultType
+
+    provider_type = vault.provider.type
+    if vault.type is VaultType.KEY_VAULT and provider_type != "azure":
+        raise ValueError(
+            f"Vault '{vault.name}' has type='key-vault' requires "
+            f"provider.type='azure'. Current: provider.type='{provider_type}'."
+        )
+    if vault.type is VaultType.VAULT and provider_type != "docker":
+        raise ValueError(
+            f"Vault '{vault.name}' has type='vault' requires "
+            f"provider.type='docker'. Current: provider.type='{provider_type}'."
+        )
+
+
 def load_multi_yaml(
     data: dict,
 ) -> tuple[list[Agent], list[Channel], Vault | None]:
@@ -45,6 +62,9 @@ def load_multi_yaml(
                 f"Defined providers: {', '.join(providers.keys())}"
             )
         vault = Vault(provider=providers[provider_ref], **vault_cfg)
+
+    if vault is not None:
+        _validate_vault_provider_pairing(vault)
 
     models: dict[str, Model] = {}
     for name, cfg in data.get("models", {}).items():
