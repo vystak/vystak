@@ -110,15 +110,16 @@ def apply(files, file_path, force, env):
 
         # v1: peer-route wiring is only implemented for Docker; Azure agents
         # use the manual env-var export workaround until ACA defaultDomain
-        # lookup is added. Only HTTP transports need a {short: url} map
-        # injected into agent env — NATS derives subjects deterministically
-        # from canonical names inside NatsTransport, so skip the map.
+        # lookup is added. AgentClient needs the {short: canonical} map to
+        # resolve short names in ask_agent() calls; build it for every
+        # Docker transport (HTTP carries real URLs, NATS subjects — the
+        # address field is transport-specific but the mapping itself is
+        # transport-agnostic).
         peer_routes: str | None = None
         if (
             agent.platform is not None
             and agent.platform.provider.type == "docker"
             and agent.platform.transport is not None
-            and agent.platform.transport.type == "http"
         ):
             try:
                 plugin = get_transport_plugin(agent.platform.transport.type)
