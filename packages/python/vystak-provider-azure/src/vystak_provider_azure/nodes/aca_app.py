@@ -178,6 +178,89 @@ class ContainerAppNode(Provisionable):
         self._peer_routes_json = peer_routes_json
         self._fqdn: str | None = None
 
+        # Vault-backed deploy context (set via set_vault_context). When
+        # _vault_key is None, provision() takes the env-passthrough path.
+        self._vault_key: str | None = None
+        self._agent_identity_key: str | None = None
+        self._workspace_identity_key: str | None = None
+        self._vault_model_secrets: list[str] = []
+        self._vault_workspace_secrets: list[str] = []
+        self._workspace_image: str | None = None
+
+    def set_vault_context(
+        self,
+        *,
+        vault_key: str,
+        agent_identity_key: str,
+        workspace_identity_key: str | None,
+        model_secrets: list[str],
+        workspace_secrets: list[str],
+        workspace_image: str | None = None,
+    ) -> None:
+        """Switch this node into vault-backed mode.
+
+        When set, provision() routes revision construction through
+        build_revision_for_vault (per-container secretRef + lifecycle:None
+        UAMIs). When unset, provision() uses the legacy env-passthrough path
+        that reads secret values from os.environ at apply time.
+        """
+        self._vault_key = vault_key
+        self._agent_identity_key = agent_identity_key
+        self._workspace_identity_key = workspace_identity_key
+        self._vault_model_secrets = list(model_secrets)
+        self._vault_workspace_secrets = list(workspace_secrets)
+        self._workspace_image = workspace_image
+
+    def _build_body(self, context: dict, acr_info: dict) -> dict:
+        """Build the ACA revision body when in vault-backed mode.
+
+        Returns a dict compatible with build_revision_for_vault. Callers
+        should only invoke this when _vault_key is set.
+        """
+        assert self._vault_key is not None, (
+            "_build_body called without vault context; use legacy path"
+        )
+        vault_info = context[self._vault_key].info
+        agent_id_info = context[self._agent_identity_key].info
+        ws_id_info: dict = {}
+        if self._workspace_identity_key is not None:
+            ws_id_info = context[self._workspace_identity_key].info
+
+        login_server = acr_info["login_server"]
+        agent_image = (
+            acr_info.get("image")
+            or f"{login_server}/{self._agent.name}:{self._plan.target_hash}"
+        )
+        # Derive a default workspace image when the caller declared a
+        # workspace identity but didn't pre-specify the image tag. The
+        # workspace sidecar only materializes when both the image and
+        # workspace_secrets are present in build_revision_for_vault.
+        workspace_image = self._workspace_image
+        if (
+            workspace_image is None
+            and self._workspace_identity_key is not None
+            and self._vault_workspace_secrets
+        ):
+            workspace_image = (
+                f"{login_server}/{self._agent.name}-workspace:{self._plan.target_hash}"
+            )
+
+        return build_revision_for_vault(
+            agent=self._agent,
+            vault_uri=vault_info["vault_uri"],
+            agent_identity_resource_id=agent_id_info["resource_id"],
+            agent_identity_client_id=agent_id_info.get("client_id"),
+            workspace_identity_resource_id=ws_id_info.get("resource_id"),
+            workspace_identity_client_id=ws_id_info.get("client_id"),
+            model_secrets=self._vault_model_secrets,
+            workspace_secrets=self._vault_workspace_secrets,
+            acr_login_server=login_server,
+            acr_password_secret_ref="acr-password",
+            acr_password_value=acr_info["password"],
+            agent_image=agent_image,
+            workspace_image=workspace_image,
+        )
+
     @property
     def name(self) -> str:
         return "container-app"
