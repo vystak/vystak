@@ -13,8 +13,74 @@ from vystak.providers.base import (
     GeneratedCode,
     PlatformProvider,
 )
+from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+
+
+class _LateBoundUnsealNode(Provisionable):
+    """Unseal node that reads the unseal keys from the init node's
+    ProvisionResult at run time (they're only known after init()).
+
+    Wraps ``VaultClient.unseal`` directly so we can avoid constructing the
+    ``HashiVaultUnsealNode`` with placeholder keys.
+    """
+
+    def __init__(self, *, vault_client, init_node_name: str, key_threshold: int):
+        self._vault = vault_client
+        self._init_node_name = init_node_name
+        self._threshold = key_threshold
+
+    @property
+    def name(self) -> str:
+        return "hashi-vault:unseal"
+
+    @property
+    def depends_on(self) -> list[str]:
+        return [self._init_node_name]
+
+    def provision(self, context: dict) -> ProvisionResult:
+        init_info = context[self._init_node_name].info
+        keys = init_info["unseal_keys"][: self._threshold]
+        if self._vault.is_sealed():
+            self._vault.unseal(keys)
+        return ProvisionResult(name=self.name, success=True, info={})
+
+    def health_check(self) -> bool:
+        return True
+
+    def destroy(self) -> None:
+        pass
+
+
+class _LateBoundKvSetupNode(Provisionable):
+    """Enables KV v2 + AppRole auth, after reading the root token from the
+    init node's ProvisionResult at run time."""
+
+    def __init__(self, *, vault_client, init_node_name: str):
+        self._vault = vault_client
+        self._init_node_name = init_node_name
+
+    @property
+    def name(self) -> str:
+        return "hashi-vault:kv-setup"
+
+    @property
+    def depends_on(self) -> list[str]:
+        return ["hashi-vault:unseal"]
+
+    def provision(self, context: dict) -> ProvisionResult:
+        init_info = context[self._init_node_name].info
+        self._vault.set_token(init_info["root_token"])
+        self._vault.enable_kv_v2("secret")
+        self._vault.enable_approle_auth()
+        return ProvisionResult(name=self.name, success=True, info={})
+
+    def health_check(self) -> bool:
+        return True
+
+    def destroy(self) -> None:
+        pass
 
 DOCKERFILE_TEMPLATE = """\
 FROM python:3.11-slim
@@ -36,6 +102,9 @@ class DockerProvider(PlatformProvider):
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
         self._vault = None
+        self._env_values: dict[str, str] = {}
+        self._force_sync: bool = False
+        self._allow_missing: bool = False
 
     @staticmethod
     def _create_client():
@@ -56,11 +125,31 @@ class DockerProvider(PlatformProvider):
     def set_vault(self, vault) -> None:
         """Declare the secrets backing store for this deploy.
 
-        Docker provider v1 does not support Vault-backed secrets. When a
-        vault is set, `plan()` raises ValueError to fail fast. Future work
-        may wire a HashiCorp Vault backend here.
+        Docker provider rejects Azure Key Vault deploys (use AzureProvider).
+        For HashiCorp Vault (``type='vault'``), ``apply()`` builds a Vault
+        subgraph (server → init → unseal → kv-setup → per-principal AppRole
+        + secret sync + agent sidecar) that injects short-lived secrets into
+        main containers via a shared ``/shared`` volume.
         """
         self._vault = vault
+
+    def set_env_values(self, values: dict[str, str]) -> None:
+        """Supply deployer-side secret values (typically from a .env file).
+
+        ``VaultSecretSyncNode`` pushes values from this dict into the vault
+        when the corresponding secret is absent (or when force=True). Values
+        are only used during apply; they are never written to disk by vystak
+        itself.
+        """
+        self._env_values = dict(values)
+
+    def set_force_sync(self, flag: bool) -> None:
+        """If True, ``VaultSecretSyncNode`` overwrites existing KV values."""
+        self._force_sync = bool(flag)
+
+    def set_allow_missing(self, flag: bool) -> None:
+        """If True, ``VaultSecretSyncNode`` won't abort when a secret is absent."""
+        self._allow_missing = bool(flag)
 
     def _container_name(self, agent_name: str) -> str:
         return f"vystak-{agent_name}"
@@ -97,11 +186,15 @@ class DockerProvider(PlatformProvider):
 
     def plan(self, agent: Agent, current_hash: str | None = None) -> DeployPlan:
         if getattr(self, "_vault", None):
-            raise ValueError(
-                "DockerProvider v1 does not support Vault-backed secrets. "
-                "Use env-passthrough (omit the Vault declaration), or wait for "
-                "the HashiCorp Vault backend spec."
-            )
+            from vystak.schema.common import VaultType
+
+            if self._vault.type is VaultType.KEY_VAULT:
+                raise ValueError(
+                    "DockerProvider does not support Azure Key Vault. "
+                    "Use Vault(type='vault', provider=docker) for HashiCorp "
+                    "Vault, or deploy to Azure for Key Vault support."
+                )
+            # type=VAULT is handled by the apply graph; no plan-time rejection.
         tree = hash_agent(agent)
         target_hash = tree.root
         container = self._get_container(agent.name)
@@ -132,6 +225,142 @@ class DockerProvider(PlatformProvider):
             target_hash=target_hash,
             changes={"root": (deployed_hash, target_hash)},
         )
+
+    def _add_vault_nodes(self, graph) -> dict[str, str]:
+        """Attach the HashiCorp Vault subgraph to ``graph``.
+
+        Returns ``{principal_name → secrets_volume_name}`` so the caller can
+        wire each main container's ``set_vault_context(...)`` and graph
+        dependency to the appropriate ``VaultAgentSidecarNode``.
+
+        Topological order (depends_on):
+
+            network → server → init → unseal → kv-setup
+              ├── secret-sync
+              └── per-principal: approle → approle-creds → vault-agent
+                                  (vault-agent also depends on secret-sync)
+        """
+        from vystak_provider_docker.nodes import (
+            AppRoleCredentialsNode,
+            AppRoleNode,
+            HashiVaultInitNode,
+            HashiVaultServerNode,
+            VaultAgentSidecarNode,
+            VaultSecretSyncNode,
+        )
+        from vystak_provider_docker.vault_client import VaultClient
+
+        cfg = self._vault.config or {}
+        image = cfg.get("image", "hashicorp/vault:1.17")
+        port = cfg.get("port", 8200)
+        host_port = cfg.get("host_port")
+        key_shares = cfg.get("seal_key_shares", 5)
+        key_threshold = cfg.get("seal_key_threshold", 3)
+        vault_address = f"http://vystak-vault:{port}"
+        init_path = Path(".vystak/vault/init.json")
+
+        # Server
+        server = HashiVaultServerNode(
+            client=self._client, image=image, port=port, host_port=host_port
+        )
+        graph.add(server)
+
+        # Vault HTTP client (token set by kv-setup after init)
+        # For deploy mode the server is reachable on localhost via host_port
+        # (or, failing that, we connect over the Docker network by address
+        # from inside the same network — but the init/unseal/kv ops run from
+        # the host, so we use localhost:host_port when host_port is set).
+        client_url = (
+            f"http://localhost:{host_port}" if host_port else vault_address
+        )
+        vault_client = VaultClient(client_url)
+
+        # Init — persists .vystak/vault/init.json (600)
+        init_node = HashiVaultInitNode(
+            vault_client=vault_client,
+            key_shares=key_shares,
+            key_threshold=key_threshold,
+            init_path=init_path,
+        )
+        graph.add(init_node)
+        graph.add_dependency(init_node.name, server.name)
+
+        # Unseal — reads keys from init result at run time
+        unseal_node = _LateBoundUnsealNode(
+            vault_client=vault_client,
+            init_node_name=init_node.name,
+            key_threshold=key_threshold,
+        )
+        graph.add(unseal_node)
+        graph.add_dependency(unseal_node.name, init_node.name)
+
+        # KV v2 + approle-auth enable — reads root token from init result
+        kv_setup = _LateBoundKvSetupNode(
+            vault_client=vault_client,
+            init_node_name=init_node.name,
+        )
+        graph.add(kv_setup)
+        graph.add_dependency(kv_setup.name, unseal_node.name)
+
+        # Collect principals from the agent tree
+        principals: dict[str, list[str]] = {}
+        agent = self._agent
+        if agent and agent.secrets:
+            principals[f"{agent.name}-agent"] = [s.name for s in agent.secrets]
+        if (
+            agent
+            and agent.workspace is not None
+            and agent.workspace.secrets
+        ):
+            principals[f"{agent.name}-workspace"] = [
+                s.name for s in agent.workspace.secrets
+            ]
+
+        # Secret sync — pushes declared secrets from .env if absent in KV
+        all_declared: list[str] = []
+        for names in principals.values():
+            all_declared.extend(names)
+        sync = VaultSecretSyncNode(
+            vault_client=vault_client,
+            declared_secrets=all_declared,
+            env_values=getattr(self, "_env_values", {}) or {},
+            force=bool(getattr(self, "_force_sync", False)),
+            allow_missing=bool(getattr(self, "_allow_missing", False)),
+        )
+        graph.add(sync)
+        graph.add_dependency(sync.name, kv_setup.name)
+
+        # Per-principal: approle → approle-creds → vault-agent
+        result_map: dict[str, str] = {}
+        for principal_name, secret_names in principals.items():
+            approle = AppRoleNode(
+                vault_client=vault_client,
+                principal_name=principal_name,
+                secret_names=secret_names,
+            )
+            graph.add(approle)
+            graph.add_dependency(approle.name, kv_setup.name)
+
+            creds = AppRoleCredentialsNode(
+                client=self._client, principal_name=principal_name
+            )
+            graph.add(creds)
+            graph.add_dependency(creds.name, approle.name)
+
+            sidecar = VaultAgentSidecarNode(
+                client=self._client,
+                principal_name=principal_name,
+                image=image,
+                secret_names=secret_names,
+                vault_address=vault_address,
+            )
+            graph.add(sidecar)
+            graph.add_dependency(sidecar.name, creds.name)
+            graph.add_dependency(sidecar.name, sync.name)
+
+            result_map[principal_name] = sidecar.secrets_volume_name
+
+        return result_map
 
     def apply(self, plan: DeployPlan, *, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
@@ -176,6 +405,14 @@ class DockerProvider(PlatformProvider):
                     node = DockerServiceNode(self._client, svc, SECRETS_PATH)
                     graph.add(node)
 
+            # HashiCorp Vault subgraph — only when vault.type == 'vault'
+            vault_volume_map: dict[str, str] = {}
+            if self._vault is not None:
+                from vystak.schema.common import VaultType
+
+                if self._vault.type is VaultType.VAULT:
+                    vault_volume_map = self._add_vault_nodes(graph)
+
             # Agent container
             agent_node = DockerAgentNode(
                 self._client,
@@ -185,7 +422,20 @@ class DockerProvider(PlatformProvider):
                 peer_routes_json=peer_routes if peer_routes is not None else "{}",
                 extra_env=extra_env,
             )
+            agent_principal = (
+                f"{self._agent.name}-agent" if self._agent is not None else None
+            )
+            if agent_principal and agent_principal in vault_volume_map:
+                agent_node.set_vault_context(
+                    secrets_volume_name=vault_volume_map[agent_principal]
+                )
             graph.add(agent_node)
+            # Main container depends on its sidecar being up so /shared has
+            # credentials rendered before the entrypoint shim tries to load.
+            if agent_principal and agent_principal in vault_volume_map:
+                graph.add_dependency(
+                    agent_node.name, f"vault-agent:{agent_principal}"
+                )
 
             # Execute the graph
             results = graph.execute()
