@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import nats
@@ -59,6 +59,63 @@ class NatsTransport(Transport):
         }
         return json.dumps(payload).encode()
 
+    def _build_envelope_for_method(
+        self,
+        method: str,
+        params: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> bytes:
+        """Build a JSON-RPC envelope with arbitrary params. Used by
+        Responses API methods; A2A methods use the typed _build_envelope."""
+        return json.dumps({
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params,
+            "metadata": metadata,
+        }).encode()
+
+    @staticmethod
+    def _is_a2a_terminal(chunk: dict[str, Any]) -> bool:
+        return bool(chunk.get("final"))
+
+    @staticmethod
+    def _is_responses_terminal(chunk: dict[str, Any]) -> bool:
+        return chunk.get("type") == "response.completed"
+
+    async def _stream_via_inbox(
+        self,
+        subject: str,
+        payload: bytes,
+        timeout: float,
+        *,
+        terminal: Callable[[dict[str, Any]], bool],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Shared implementation for streaming over a NATS reply inbox.
+
+        Generates a unique `_INBOX.{uuid}` subject, subscribes BEFORE
+        publishing to avoid missing early messages, iterates messages as
+        JSON dicts, and stops when `terminal(chunk)` returns True or the
+        deadline elapses.
+        """
+        nc = await self._connect()
+        inbox = f"_INBOX.{uuid.uuid4().hex}"
+        sub = await nc.subscribe(inbox)
+        try:
+            await nc.publish(subject, payload, reply=inbox)
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError(f"NATS stream from {subject} timed out")
+                msg = await asyncio.wait_for(sub.next_msg(), timeout=remaining)
+                chunk = json.loads(msg.data)
+                yield chunk
+                if terminal(chunk):
+                    return
+        finally:
+            await sub.unsubscribe()
+
     async def send_task(
         self, agent: AgentRef, message: A2AMessage, metadata: dict, *, timeout: float,
     ) -> A2AResult:
@@ -75,26 +132,76 @@ class NatsTransport(Transport):
     async def stream_task(
         self, agent: AgentRef, message: A2AMessage, metadata: dict, *, timeout: float,
     ) -> AsyncIterator[A2AEvent]:
+        subject = self.resolve_address(agent.canonical_name)
+        payload = self._build_envelope("tasks/sendSubscribe", message, metadata)
+        async for chunk in self._stream_via_inbox(
+            subject, payload, timeout, terminal=self._is_a2a_terminal,
+        ):
+            event = A2AEvent.model_validate(chunk)
+            yield event
+
+    async def create_response(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
         nc = await self._connect()
         subject = self.resolve_address(agent.canonical_name)
-        inbox = f"_INBOX.{uuid.uuid4().hex}"
-        sub = await nc.subscribe(inbox)
+        payload = self._build_envelope_for_method(
+            "responses/create", {"request": request}, metadata,
+        )
         try:
-            payload = self._build_envelope("tasks/sendSubscribe", message, metadata)
-            await nc.publish(subject, payload, reply=inbox)
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + timeout
-            while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    raise TimeoutError(f"NATS stream from {subject} timed out")
-                msg = await asyncio.wait_for(sub.next_msg(), timeout=remaining)
-                event = A2AEvent.model_validate(json.loads(msg.data))
-                yield event
-                if event.final:
-                    return
-        finally:
-            await sub.unsubscribe()
+            reply = await nc.request(subject, payload, timeout=timeout)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"NATS request to {subject} (responses/create) timed out "
+                f"after {timeout}s"
+            ) from e
+        body = json.loads(reply.data)
+        return body.get("result", {})
+
+    async def get_response(
+        self,
+        agent: AgentRef,
+        response_id: str,
+        *,
+        timeout: float,
+    ) -> dict[str, Any] | None:
+        nc = await self._connect()
+        subject = self.resolve_address(agent.canonical_name)
+        payload = self._build_envelope_for_method(
+            "responses/get", {"response_id": response_id}, {},
+        )
+        try:
+            reply = await nc.request(subject, payload, timeout=timeout)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"NATS request to {subject} (responses/get) timed out "
+                f"after {timeout}s"
+            ) from e
+        body = json.loads(reply.data)
+        result = body.get("result")
+        return result if result else None
+
+    async def create_response_stream(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        subject = self.resolve_address(agent.canonical_name)
+        payload = self._build_envelope_for_method(
+            "responses/createStream", {"request": request}, metadata,
+        )
+        async for chunk in self._stream_via_inbox(
+            subject, payload, timeout, terminal=self._is_responses_terminal,
+        ):
+            yield chunk
 
     async def serve(self, canonical_name: str, handler: A2AHandlerProtocol) -> None:
         nc = await self._connect()

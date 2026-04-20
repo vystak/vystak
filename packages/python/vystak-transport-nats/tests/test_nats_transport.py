@@ -95,6 +95,26 @@ class TestNatsTransportUnit:
             # nats.connect should only be called once
             m.assert_awaited_once()
 
+    def test_build_envelope_for_method_shape(self):
+        t = NatsTransport(url="nats://fake:4222")
+        env = t._build_envelope_for_method(
+            "responses/create", {"request": {"model": "m"}}, {"trace": "t1"}
+        )
+        body = json.loads(env)
+        assert body["method"] == "responses/create"
+        assert body["params"]["request"]["model"] == "m"
+        assert body["metadata"]["trace"] == "t1"
+
+    def test_is_responses_terminal(self):
+        assert NatsTransport._is_responses_terminal({"type": "response.completed"}) is True
+        assert NatsTransport._is_responses_terminal({"type": "response.output_text.delta"}) is False
+        assert NatsTransport._is_responses_terminal({}) is False
+
+    def test_is_a2a_terminal(self):
+        assert NatsTransport._is_a2a_terminal({"final": True}) is True
+        assert NatsTransport._is_a2a_terminal({"final": False}) is False
+        assert NatsTransport._is_a2a_terminal({}) is False
+
 
 # ---------------------------------------------------------------------------
 # Docker integration tests — opt-in with -m docker
