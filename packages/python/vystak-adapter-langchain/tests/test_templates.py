@@ -180,6 +180,48 @@ class TestGenerateServerPy:
         code = generate_server_py(anthropic_agent)
         assert "uvicorn" in code
 
+    def test_responses_handler_class_emitted(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "class ResponsesHandler:" in code
+        assert "async def create(" in code
+        assert "async def create_stream(" in code
+        assert "async def get(" in code
+
+    def test_responses_handler_instantiated(self, anthropic_agent):
+        code = generate_server_py(anthropic_agent)
+        assert "_responses_handler = ResponsesHandler(" in code
+        # FastAPI adapter route delegates to handler, not inline logic.
+        assert "_responses_handler.create_stream(" in code
+        assert "_responses_handler.create(" in code
+        assert "_responses_handler.get(" in code
+
+
+class TestGenerateResponsesHandlerCode:
+    """Direct tests for the ResponsesHandler code-gen function."""
+
+    def test_generate_responses_handler_code_contains_class(self, anthropic_agent):
+        from vystak_adapter_langchain.responses import generate_responses_handler_code
+
+        code = generate_responses_handler_code(anthropic_agent)
+        assert "class ResponsesHandler:" in code
+        assert "async def create(" in code
+        assert "async def create_stream(" in code
+        assert "async def get(" in code
+
+    def test_generate_responses_handler_code_preserves_wire_events(self, anthropic_agent):
+        """Streaming path must still emit the same ``response.*`` event types."""
+        from vystak_adapter_langchain.responses import generate_responses_handler_code
+
+        code = generate_responses_handler_code(anthropic_agent)
+        assert "response.created" in code
+        assert "response.output_item.added" in code
+        assert "response.content_part.added" in code
+        assert "response.output_text.delta" in code
+        assert "response.output_text.done" in code
+        assert "response.completed" in code
+        assert "response.function_call_arguments.delta" in code
+        assert "response.function_call_arguments.done" in code
+
 
 class TestGenerateRequirementsTxt:
     def test_anthropic_requirements(self, anthropic_agent):
