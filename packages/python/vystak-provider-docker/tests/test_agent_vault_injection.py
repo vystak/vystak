@@ -148,8 +148,22 @@ def test_channel_node_injects_shim(tmp_path, monkeypatch):
         platform=platform,
         config={"port": 8080},
     )
+    # Mirror real channel plugins (e.g. ChatChannelPlugin) that supply a
+    # Dockerfile in the generated_code files dict.
+    channel_dockerfile = (
+        "FROM python:3.11-slim\n"
+        "WORKDIR /app\n"
+        "COPY requirements.txt .\n"
+        "RUN pip install --no-cache-dir -r requirements.txt\n"
+        "COPY . .\n"
+        'CMD ["python", "server.py"]\n'
+    )
     gc = GeneratedCode(
-        files={"server.py": "print('hi')", "requirements.txt": ""},
+        files={
+            "server.py": "print('hi')",
+            "requirements.txt": "",
+            "Dockerfile": channel_dockerfile,
+        },
         entrypoint="server.py",
     )
     node = DockerChannelNode(
