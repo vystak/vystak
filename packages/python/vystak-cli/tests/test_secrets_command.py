@@ -323,5 +323,77 @@ def test_secrets_diff_marks_vault_only(tmp_path):
     assert "some-value" not in result.output
 
 
+# ---------------------------------------------------------------------------
+# HashiCorp Vault backend dispatch
+# ---------------------------------------------------------------------------
+
+VAULT_FIXTURE_YAML = """\
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker}
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+models:
+  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
+agents:
+  - name: assistant
+    model: sonnet
+    secrets: [{name: ANTHROPIC_API_KEY}]
+    platform: local
+"""
+
+
+def test_list_dispatches_to_vault_backend(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(VAULT_FIXTURE_YAML)
+    runner = CliRunner()
+    with patch(
+        "vystak_cli.commands.secrets._vault_list_names",
+        return_value=["FOO"],
+    ) as mock_list:
+        result = runner.invoke(secrets, ["list", "--file", str(config)])
+    assert result.exit_code == 0, result.output
+    mock_list.assert_called_once()
+    assert "ANTHROPIC_API_KEY" in result.output
+    assert "absent in vault" in result.output
+
+
+def test_push_dispatches_to_vault_backend(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(VAULT_FIXTURE_YAML)
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=sk-value\n")
+    runner = CliRunner()
+    with patch("vystak_cli.commands.secrets._make_vault_client") as mock_vc:
+        fake = MagicMock()
+        fake.kv_get.return_value = None
+        mock_vc.return_value = fake
+        result = runner.invoke(
+            secrets,
+            ["push", "--file", str(config), "--env-file", str(env)],
+        )
+    assert result.exit_code == 0, result.output
+    fake.kv_put.assert_called_once_with("ANTHROPIC_API_KEY", "sk-value")
+
+
+def test_list_never_prints_values_vault_backend(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(VAULT_FIXTURE_YAML)
+    runner = CliRunner()
+    with patch(
+        "vystak_cli.commands.secrets._vault_list_names",
+        return_value=["ANTHROPIC_API_KEY"],
+    ):
+        result = runner.invoke(secrets, ["list", "--file", str(config)])
+    # Value must never appear
+    assert "sk-" not in result.output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
