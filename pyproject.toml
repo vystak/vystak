@@ -25,6 +25,8 @@ dev-dependencies = [
     "vystak-channel-slack",
     "vystak-chat",
     "vystak-provider-azure",
+    "vystak-transport-http",
+    "vystak-transport-nats",
 ]
 
 [tool.uv.sources]
@@ -38,6 +40,8 @@ vystak-channel-chat = { workspace = true }
 vystak-channel-slack = { workspace = true }
 vystak-chat = { workspace = true }
 vystak-provider-azure = { workspace = true }
+vystak-transport-http = { workspace = true }
+vystak-transport-nats = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

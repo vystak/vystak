@@ -1348,6 +1348,8 @@ dev = [
     { name = "vystak-cli" },
     { name = "vystak-provider-azure" },
     { name = "vystak-provider-docker" },
+    { name = "vystak-transport-http" },
+    { name = "vystak-transport-nats" },
 ]
 
 [package.metadata]
@@ -1370,6 +1372,8 @@ dev = [
     { name = "vystak-cli", editable = "packages/python/vystak-cli" },
     { name = "vystak-provider-azure", editable = "packages/python/vystak-provider-azure" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
+    { name = "vystak-transport-http", editable = "packages/python/vystak-transport-http" },
+    { name = "vystak-transport-nats", editable = "packages/python/vystak-transport-nats" },
 ]
 
 [[package]]
