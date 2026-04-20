@@ -28,9 +28,14 @@ class HttpTransportPlugin(TransportPlugin):
     def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
         """Return the Docker-style DNS URL for an agent.
 
+        Matches the Docker provider's container naming (`vystak-{agent_name}`)
+        since that's what DockerAgentNode actually creates and what Docker's
+        network DNS resolves on the shared vystak-net. Namespace is not
+        encoded in the URL because the container name is namespace-flat today
+        — v1 deployments are single-namespace per Docker host.
+
         Azure providers override this (or use their own plugin) since the
         ingress hostname isn't derivable from the name alone.
         """
-        ns = slug(platform.namespace or "default")
         port = agent.port or 8000
-        return f"http://{slug(agent.name)}-{ns}:{port}/a2a"
+        return f"http://vystak-{slug(agent.name)}:{port}/a2a"

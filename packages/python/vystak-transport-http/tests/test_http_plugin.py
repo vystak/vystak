@@ -36,7 +36,7 @@ def test_no_listener_code():
 
 
 def test_resolve_address_for_docker_dns():
-    """resolve_address_for returns Docker-style DNS URL using platform namespace."""
+    """resolve_address_for returns the Docker container name-matched URL."""
     p = HttpTransportPlugin()
     provider = Provider(name="docker", type="docker")
     pl = Platform(name="main", type="docker", provider=provider, namespace="prod")
@@ -44,7 +44,8 @@ def test_resolve_address_for_docker_dns():
     model = Model(name="gpt-4o", model_name="gpt-4o", provider=_openai)
     agent = Agent(name="my-agent", model=model, port=9000)
     url = p.resolve_address_for(agent, pl)
-    assert url == "http://my-agent-prod:9000/a2a"
+    # Matches DockerAgentNode's container naming: `vystak-{agent_name}`.
+    assert url == "http://vystak-my-agent:9000/a2a"
 
 
 def test_resolve_address_for_default_port():
@@ -56,4 +57,4 @@ def test_resolve_address_for_default_port():
     model = Model(name="gpt-4o", model_name="gpt-4o", provider=_openai)
     agent = Agent(name="worker", model=model)
     url = p.resolve_address_for(agent, pl)
-    assert url == "http://worker-default:8000/a2a"
+    assert url == "http://vystak-worker:8000/a2a"

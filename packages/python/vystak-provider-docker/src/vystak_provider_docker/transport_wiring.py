@@ -58,7 +58,7 @@ def build_peer_routes(
         {
             "agent-a": {
                 "canonical": "agent-a.agents.default",
-                "address": "http://agent-a-default:8000/a2a",
+                "address": "http://vystak-agent-a:8000/a2a",
             },
             ...
         }

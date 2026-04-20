@@ -70,7 +70,7 @@ def test_build_peer_routes_single_agent():
 
     assert "alpha" in routes
     assert routes["alpha"]["canonical"] == "alpha.agents.default"
-    assert routes["alpha"]["address"] == "http://alpha-staging:8000/a2a"
+    assert routes["alpha"]["address"] == "http://vystak-alpha:8000/a2a"
 
 
 def test_build_peer_routes_multiple_agents():
@@ -81,8 +81,8 @@ def test_build_peer_routes_multiple_agents():
     routes = build_peer_routes(agents, plugin, pl)
 
     assert set(routes.keys()) == {"svc-a", "svc-b"}
-    assert routes["svc-a"]["address"] == "http://svc-a-prod:8000/a2a"
-    assert routes["svc-b"]["address"] == "http://svc-b-prod:9000/a2a"
+    assert routes["svc-a"]["address"] == "http://vystak-svc-a:8000/a2a"
+    assert routes["svc-b"]["address"] == "http://vystak-svc-b:9000/a2a"
 
 
 def test_build_peer_routes_empty():
@@ -105,7 +105,7 @@ def test_build_routes_json_is_valid_json():
     parsed = json.loads(raw)
 
     assert "bot" in parsed
-    assert parsed["bot"]["address"] == "http://bot-test:8000/a2a"
+    assert parsed["bot"]["address"] == "http://vystak-bot:8000/a2a"
 
 
 def test_build_routes_json_empty_agents():
