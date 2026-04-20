@@ -77,12 +77,13 @@ class DockerAgentNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
-            # Bundle unpublished vystak + vystak_transport_http source trees
-            # onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
+            # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
             import vystak
             import vystak_transport_http
+            import vystak_transport_nats
 
-            for _mod in (vystak, vystak_transport_http):
+            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():

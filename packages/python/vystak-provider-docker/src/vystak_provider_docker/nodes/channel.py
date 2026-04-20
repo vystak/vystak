@@ -61,12 +61,13 @@ class DockerChannelNode(Provisionable):
             for filename, content in self._generated_code.files.items():
                 (build_dir / filename).write_text(content)
 
-            # Bundle unpublished vystak + vystak_transport_http source trees
-            # onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
+            # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
             import vystak
             import vystak_transport_http
+            import vystak_transport_nats
 
-            for _mod in (vystak, vystak_transport_http):
+            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():

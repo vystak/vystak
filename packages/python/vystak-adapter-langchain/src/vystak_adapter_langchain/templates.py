@@ -1234,6 +1234,11 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("    if transport_type == 'http':")
     lines.append("        from vystak_transport_http import HttpTransport")
     lines.append("        return HttpTransport(routes=_http_routes)")
+    lines.append("    if transport_type == 'nats':")
+    lines.append("        from vystak_transport_nats import NatsTransport")
+    lines.append("        url = _os.environ['VYSTAK_NATS_URL']")
+    lines.append("        prefix = _os.environ.get('VYSTAK_NATS_SUBJECT_PREFIX', 'vystak')")
+    lines.append("        return NatsTransport(url=url, subject_prefix=prefix)")
     lines.append("    raise RuntimeError(f'unsupported VYSTAK_TRANSPORT_TYPE={transport_type}')")
     lines.append("")
     lines.append("_transport = _build_transport_from_env()")
@@ -1280,15 +1285,19 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     if agent.mcp_servers:
         mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
 
-    # vystak + vystak_transport_http are bundled as source by DockerAgentNode
-    # (they're on PYTHONPATH via COPY . . in the Dockerfile).
+    # vystak + vystak_transport_http + vystak_transport_nats are bundled as
+    # source by DockerAgentNode (on PYTHONPATH via COPY . . in the Dockerfile).
+    # nats-py is the runtime dependency for NatsTransport; included
+    # unconditionally so NATS-deployment containers work without a separate
+    # requirements pass.
     return dedent(f"""\
         langchain-core>=0.3
         langgraph>=0.2
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
-        sse-starlette>=2.0{checkpoint_pkg}{mcp_pkg}{tool_deps}
+        sse-starlette>=2.0
+        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{tool_deps}
     """)
 
 

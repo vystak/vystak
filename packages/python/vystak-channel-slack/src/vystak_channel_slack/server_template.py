@@ -130,6 +130,12 @@ def _build_transport_from_env():
         from vystak_transport_http import HttpTransport
 
         return HttpTransport(routes=_http_routes)
+    if transport_type == "nats":
+        from vystak_transport_nats import NatsTransport
+
+        url = os.environ["VYSTAK_NATS_URL"]
+        prefix = os.environ.get("VYSTAK_NATS_SUBJECT_PREFIX", "vystak")
+        return NatsTransport(url=url, subject_prefix=prefix)
     raise RuntimeError(
         f"unsupported VYSTAK_TRANSPORT_TYPE={transport_type}"
     )
@@ -254,4 +260,5 @@ aiohttp>=3.9
 pydantic>=2.0
 pyyaml>=6.0
 aiosqlite>=0.20
+nats-py>=2.6
 """

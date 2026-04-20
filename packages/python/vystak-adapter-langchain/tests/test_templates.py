@@ -543,3 +543,11 @@ class TestTransportBootstrap:
         assert "VYSTAK_ROUTES_JSON" in source
         assert "AGENT_CANONICAL_NAME" in source
         assert "_transport.serve(" in source
+
+    def test_generated_server_bootstrap_has_nats_branch(self):
+        """Emitted server source must contain the NATS branch so
+        NATS-deployment containers can boot without regeneration."""
+        source = generate_server_py(_basic_agent())
+        assert "VYSTAK_NATS_URL" in source
+        assert "VYSTAK_NATS_SUBJECT_PREFIX" in source
+        assert "NatsTransport" in source
