@@ -46,7 +46,8 @@ class AgentProtocol(StrEnum):
 
 
 class VaultType(StrEnum):
-    KEY_VAULT = "key-vault"  # Azure Key Vault — only v1-supported backend
+    KEY_VAULT = "key-vault"
+    VAULT = "vault"
 
 
 class VaultMode(StrEnum):
