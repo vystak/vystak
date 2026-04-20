@@ -20,23 +20,35 @@ if TYPE_CHECKING:
     from vystak.schema.platform import Platform
 
 
+def _build_transport_plugin_registry() -> dict[str, type]:
+    """Build the transport-type → plugin-class registry.
+
+    Imports are done lazily inside the function so the docker provider package
+    doesn't hard-import every optional transport package at module load time.
+    """
+    from vystak_transport_http import HttpTransportPlugin
+    from vystak_transport_nats import NatsTransportPlugin
+
+    return {
+        "http": HttpTransportPlugin,
+        "nats": NatsTransportPlugin,
+    }
+
+
+_TRANSPORT_PLUGINS: dict[str, type] = _build_transport_plugin_registry()
+
+
 def get_transport_plugin(transport_type: str) -> TransportPlugin:
     """Return an instantiated ``TransportPlugin`` for *transport_type*.
 
-    Currently only ``"http"`` is registered.  Plan B will add ``"nats"`` here.
+    Supported types: ``"http"``, ``"nats"``.
 
     Raises ``KeyError`` for unknown transport types.
     """
-    from vystak_transport_http import HttpTransportPlugin
-
-    _REGISTRY: dict[str, type] = {
-        "http": HttpTransportPlugin,
-    }
-
     try:
-        cls = _REGISTRY[transport_type]
+        cls = _TRANSPORT_PLUGINS[transport_type]
     except KeyError:
-        known = ", ".join(sorted(_REGISTRY))
+        known = ", ".join(sorted(_TRANSPORT_PLUGINS))
         raise KeyError(
             f"Unknown transport type {transport_type!r}. Known types: {known}"
         ) from None

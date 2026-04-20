@@ -22,12 +22,14 @@ class DockerAgentNode(Provisionable):
         plan: DeployPlan,
         *,
         peer_routes_json: str = "{}",
+        extra_env: dict[str, str] | None = None,
     ):
         self._client = client
         self._agent = agent
         self._generated_code = generated_code
         self._plan = plan
         self._peer_routes_json = peer_routes_json
+        self._extra_env = extra_env or {}
 
     @property
     def name(self) -> str:
@@ -143,6 +145,10 @@ class DockerAgentNode(Provisionable):
                 dep_result = context.get(self._agent.memory.name)
                 if dep_result and dep_result.info.get("connection_string"):
                     env["MEMORY_STORE_URL"] = dep_result.info["connection_string"]
+
+            # Caller-supplied overrides (e.g. transport-plugin env contract)
+            # take precedence over the defaults above.
+            env.update(self._extra_env)
 
             # Build volumes
             volumes = {}

@@ -22,6 +22,8 @@ class DockerChannelNode(Provisionable):
         target_hash: str,
         host_port: int = 8080,
         container_port: int = 8080,
+        *,
+        extra_env: dict[str, str] | None = None,
     ):
         self._client = client
         self._channel = channel
@@ -29,6 +31,7 @@ class DockerChannelNode(Provisionable):
         self._target_hash = target_hash
         self._host_port = host_port
         self._container_port = container_port
+        self._extra_env = extra_env or {}
 
     @property
     def name(self) -> str:
@@ -80,6 +83,10 @@ class DockerChannelNode(Provisionable):
                 value = os.environ.get(secret.name)
                 if value:
                     env[secret.name] = value
+
+            # Caller-supplied overrides (e.g. transport-plugin env contract)
+            # take precedence over the defaults above.
+            env.update(self._extra_env)
 
             self._client.containers.run(
                 image_tag,

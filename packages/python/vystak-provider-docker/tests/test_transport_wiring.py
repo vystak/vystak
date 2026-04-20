@@ -16,6 +16,7 @@ from vystak_provider_docker.transport_wiring import (
     get_transport_plugin,
 )
 from vystak_transport_http import HttpTransportPlugin
+from vystak_transport_nats import NatsTransportPlugin
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -51,9 +52,15 @@ def test_get_transport_plugin_http():
     assert plugin.type == "http"
 
 
+def test_get_transport_plugin_nats():
+    plugin = get_transport_plugin("nats")
+    assert isinstance(plugin, NatsTransportPlugin)
+    assert plugin.type == "nats"
+
+
 def test_get_transport_plugin_unknown():
     with pytest.raises(KeyError, match="Unknown transport type"):
-        get_transport_plugin("nats")
+        get_transport_plugin("kafka")
 
 
 # ---------------------------------------------------------------------------
