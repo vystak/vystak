@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -18,6 +20,8 @@ from vystak.transport import (
 )
 from vystak.transport.base import ServerDispatcherProtocol
 from vystak.transport.naming import parse_canonical_name, slug
+
+logger = logging.getLogger("vystak.transport.nats")
 
 
 class NatsTransport(Transport):
@@ -40,7 +44,9 @@ class NatsTransport(Transport):
     async def _connect(self) -> NATSClient:
         async with self._lock:
             if self._nc is None or self._nc.is_closed:
+                logger.info("nats.connect url=%s", self._url)
                 self._nc = await nats.connect(self._url)
+                logger.info("nats.connected url=%s", self._url)
             return self._nc
 
     def resolve_address(self, canonical_name: str) -> str:
@@ -131,11 +137,25 @@ class NatsTransport(Transport):
         nc = await self._connect()
         subject = self.resolve_address(agent.canonical_name)
         payload = self._build_envelope("tasks/send", message, metadata)
+        t0 = time.monotonic()
+        logger.info(
+            "tx tasks/send subject=%s cid=%s",
+            subject, message.correlation_id,
+        )
         try:
             reply = await nc.request(subject, payload, timeout=timeout)
         except TimeoutError as e:
+            logger.warning(
+                "tx tasks/send TIMEOUT subject=%s cid=%s after=%.2fs",
+                subject, message.correlation_id, timeout,
+            )
             raise TimeoutError(f"NATS request to {subject} timed out after {timeout}s") from e
         body = json.loads(reply.data)
+        latency_ms = (time.monotonic() - t0) * 1000
+        logger.info(
+            "rx tasks/send subject=%s cid=%s latency_ms=%.0f bytes=%d",
+            subject, message.correlation_id, latency_ms, len(reply.data),
+        )
         return self._parse_result(body, message.correlation_id)
 
     async def stream_task(
@@ -159,17 +179,29 @@ class NatsTransport(Transport):
     ) -> dict[str, Any]:
         nc = await self._connect()
         subject = self.resolve_address(agent.canonical_name)
+        cid = metadata.get("correlation_id") or str(uuid.uuid4())
         payload = self._build_envelope_for_method(
             "responses/create", {"request": request}, metadata,
         )
+        t0 = time.monotonic()
+        logger.info("tx responses/create subject=%s cid=%s", subject, cid)
         try:
             reply = await nc.request(subject, payload, timeout=timeout)
         except TimeoutError as e:
+            logger.warning(
+                "tx responses/create TIMEOUT subject=%s cid=%s after=%.2fs",
+                subject, cid, timeout,
+            )
             raise TimeoutError(
                 f"NATS request to {subject} (responses/create) timed out "
                 f"after {timeout}s"
             ) from e
         body = json.loads(reply.data)
+        latency_ms = (time.monotonic() - t0) * 1000
+        logger.info(
+            "rx responses/create subject=%s cid=%s latency_ms=%.0f bytes=%d",
+            subject, cid, latency_ms, len(reply.data),
+        )
         return body.get("result", {})
 
     async def get_response(
@@ -204,13 +236,23 @@ class NatsTransport(Transport):
         timeout: float,
     ) -> AsyncIterator[dict[str, Any]]:
         subject = self.resolve_address(agent.canonical_name)
+        cid = metadata.get("correlation_id") or str(uuid.uuid4())
         payload = self._build_envelope_for_method(
             "responses/createStream", {"request": request}, metadata,
         )
+        t0 = time.monotonic()
+        logger.info("tx responses/createStream subject=%s cid=%s", subject, cid)
+        chunks = 0
         async for chunk in self._stream_via_inbox(
             subject, payload, timeout, terminal=self._is_responses_terminal,
         ):
+            chunks += 1
             yield chunk
+        latency_ms = (time.monotonic() - t0) * 1000
+        logger.info(
+            "rx responses/createStream subject=%s cid=%s chunks=%d latency_ms=%.0f",
+            subject, cid, chunks, latency_ms,
+        )
 
     async def _handle_inbound(
         self,
@@ -224,9 +266,16 @@ class NatsTransport(Transport):
         Extracted from ``serve`` so the routing logic is directly unit-testable
         without a live NATS connection.
         """
+        t0 = time.monotonic()
         try:
             method = body.get("method", "tasks/send")
             params = body.get("params", {})
+            cid = params.get("id") or body.get("id") or "?"
+            _data = getattr(msg, "data", b"")
+            logger.info(
+                "inbound method=%s subject=%s cid=%s bytes=%d",
+                method, getattr(msg, "subject", "?"), cid, len(_data),
+            )
 
             if method in ("tasks/send", "tasks/sendSubscribe"):
                 m = A2AMessage(
@@ -288,7 +337,17 @@ class NatsTransport(Transport):
                         },
                     }
                     await nc.publish(msg.reply, json.dumps(err).encode())
+            latency_ms = (time.monotonic() - t0) * 1000
+            logger.info(
+                "outbound method=%s cid=%s latency_ms=%.0f",
+                method, cid, latency_ms,
+            )
         except Exception as e:
+            latency_ms = (time.monotonic() - t0) * 1000
+            logger.exception(
+                "inbound-error method=%s cid=%s latency_ms=%.0f error=%s",
+                body.get("method", "?"), body.get("id", "?"), latency_ms, e,
+            )
             if msg.reply:
                 err = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
                 await nc.publish(msg.reply, json.dumps(err).encode())
