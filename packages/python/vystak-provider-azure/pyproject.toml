@@ -14,6 +14,7 @@ dependencies = [
     "azure-mgmt-rdbms>=10.1.1",
     "azure-mgmt-keyvault>=10.0.0",
     "azure-mgmt-msi>=7.0.0",
+    "azure-mgmt-authorization>=4.0.0",
     "azure-core>=1.30.0",
     "docker>=7.0",
 ]
