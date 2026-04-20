@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import nats
+import nats.errors as _nats_errors
 from nats.aio.client import Client as NATSClient
 from vystak.transport import (
     A2AEvent,
@@ -108,7 +109,15 @@ class NatsTransport(Transport):
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise TimeoutError(f"NATS stream from {subject} timed out")
-                msg = await asyncio.wait_for(sub.next_msg(), timeout=remaining)
+                # nats-py's next_msg default timeout is 1s. Pass the full
+                # remaining budget so slow LLM-streaming replies don't trip
+                # it between chunks.
+                try:
+                    msg = await sub.next_msg(timeout=remaining)
+                except _nats_errors.TimeoutError as e:
+                    raise TimeoutError(
+                        f"NATS stream from {subject} timed out mid-stream"
+                    ) from e
                 chunk = json.loads(msg.data)
                 yield chunk
                 if terminal(chunk):
