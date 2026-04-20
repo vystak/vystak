@@ -3807,7 +3807,371 @@ broker instance or reference name, remains portable."
 
 ---
 
-### Task 20: `WorkspaceOverride` schema
+### Tasks 20–22 (realigned, consolidated): `EnvironmentOverride` + CLI `--env` flag
+
+**Realigned scope (2026-04-19):** The original Task 20 used a `Workspace` bundle that doesn't exist. Tasks 20, 21, 22 are consolidated into one focused deliverable that targets the **main use case**: "dev uses HTTP locally, prod uses NATS in production."
+
+**Simplified v1 scope:**
+- Python-only overlays (`vystak.<env>.py`). YAML support deferred — it's trivially addable later since the `EnvironmentOverride.apply()` function is shape-agnostic.
+- `EnvironmentOverride` has one field: `transports: dict[str, Transport]` mapping **platform name → replacement Transport**. Every agent whose `platform.name` matches gets its `platform.transport` replaced.
+- CLI `--env` flag on `apply` command only. `plan`, `destroy`, `status`, `logs` integration deferred.
+- No `platforms: dict[str, PlatformOverride]` abstraction; transport swap is the only thing overridable in v1.
+
+**Files:**
+- Create: `packages/python/vystak/src/vystak/schema/overrides.py` — `EnvironmentOverride` with `apply(definitions) -> definitions`
+- Modify: `packages/python/vystak/src/vystak/schema/__init__.py` — export `EnvironmentOverride`
+- Create: `packages/python/vystak/tests/schema/test_overrides.py` — 5 tests
+- Modify: `packages/python/vystak-cli/src/vystak_cli/loader.py` — overlay lookup + apply
+- Modify: `packages/python/vystak-cli/src/vystak_cli/commands/apply.py` — `--env` click option + plumb through
+- Create: `packages/python/vystak-cli/tests/test_env_overlay.py` — end-to-end CLI test
+
+---
+
+- [ ] **Step 1: Write failing tests for `EnvironmentOverride`**
+
+Create `packages/python/vystak/tests/schema/test_overrides.py`:
+
+```python
+"""Tests for EnvironmentOverride — per-environment config swaps."""
+
+from __future__ import annotations
+
+import pytest
+
+from vystak.schema import (
+    Agent, HttpConfig, Model, NatsConfig, Platform, Provider, Transport,
+)
+from vystak.schema.overrides import EnvironmentOverride
+
+
+def _agent(agent_name: str, platform_name: str, transport_type: str = "http") -> Agent:
+    platform = Platform(
+        name=platform_name,
+        type="docker",
+        provider=Provider(name="docker", type="docker"),
+        transport=Transport(name="t", type=transport_type),
+    )
+    return Agent(
+        name=agent_name,
+        model=Model(name="m", provider=Provider(name="anthropic", type="anthropic", api_key_env="K")),
+        platform=platform,
+    )
+
+
+class TestEnvironmentOverride:
+    def test_empty_override_is_noop(self):
+        agents = [_agent("a", "main")]
+        merged = EnvironmentOverride().apply(agents)
+        assert merged[0].platform.transport.type == "http"
+
+    def test_override_replaces_transport_on_matching_platform(self):
+        agents = [_agent("a", "main"), _agent("b", "main")]
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply(agents)
+        assert merged[0].platform.transport.type == "nats"
+        assert merged[1].platform.transport.type == "nats"
+
+    def test_override_affects_only_matching_platform(self):
+        a_main = _agent("a", "main")
+        b_aca = _agent("b", "aca")
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply([a_main, b_aca])
+        assert merged[0].platform.transport.type == "nats"
+        assert merged[1].platform.transport.type == "http"
+
+    def test_override_unknown_platform_raises(self):
+        agents = [_agent("a", "main")]
+        override = EnvironmentOverride(
+            transports={"nonexistent": Transport(name="bus", type="nats")}
+        )
+        with pytest.raises(ValueError, match="nonexistent"):
+            override.apply(agents)
+
+    def test_apply_does_not_mutate_base(self):
+        agents = [_agent("a", "main")]
+        override = EnvironmentOverride(
+            transports={"main": Transport(name="bus", type="nats", config=NatsConfig())}
+        )
+        merged = override.apply(agents)
+        # Base agent still has the original http transport.
+        assert agents[0].platform.transport.type == "http"
+        # Merged list has the nats transport.
+        assert merged[0].platform.transport.type == "nats"
+```
+
+- [ ] **Step 2: Run — expect ImportError**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py -v
+```
+
+- [ ] **Step 3: Implement `EnvironmentOverride`**
+
+Create `packages/python/vystak/src/vystak/schema/overrides.py`:
+
+```python
+"""EnvironmentOverride — per-environment configuration swap.
+
+Applied to a list of agents loaded from vystak.py; typically used to swap
+the transport on a named platform for a specific environment (dev/prod).
+
+Future expansion: more fields (e.g., model overrides, channel overrides)
+can be added to EnvironmentOverride without breaking the apply() contract.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+
+from pydantic import BaseModel, Field
+
+from vystak.schema.agent import Agent
+from vystak.schema.transport import Transport
+
+
+class EnvironmentOverride(BaseModel):
+    """Overlay applied to a list of agents at load time.
+
+    Attributes:
+        transports: Maps platform name -> replacement Transport. Every
+            agent whose platform.name matches has its transport swapped
+            for the override.
+    """
+
+    transports: dict[str, Transport] = Field(default_factory=dict)
+
+    def apply(self, agents: list[Agent]) -> list[Agent]:
+        """Return a new list of agents with overrides applied.
+
+        The input `agents` list and its elements are not mutated.
+        Raises ValueError if any override key references a platform name
+        not present in the agents' platforms.
+        """
+        if not self.transports:
+            return list(agents)
+
+        known_platform_names = {
+            a.platform.name for a in agents if a.platform is not None
+        }
+        unknown = set(self.transports) - known_platform_names
+        if unknown:
+            raise ValueError(
+                f"EnvironmentOverride references unknown platform(s): "
+                f"{sorted(unknown)}; known: {sorted(known_platform_names)}"
+            )
+
+        merged = deepcopy(agents)
+        for agent in merged:
+            if agent.platform is None:
+                continue
+            if agent.platform.name in self.transports:
+                agent.platform.transport = self.transports[agent.platform.name]
+        return merged
+```
+
+Note: setting `agent.platform.transport = ...` requires `validate_assignment=True` on `Platform` **or** on its `NamedModel` base. Check whether the schema has `validate_assignment=True` by inspecting `common.py`. If not, a cleaner approach is reconstructing the platform:
+
+```python
+# Alternative, if validate_assignment is off:
+platform_dump = agent.platform.model_dump()
+platform_dump["transport"] = self.transports[agent.platform.name].model_dump()
+agent.platform = Platform.model_validate(platform_dump)
+```
+
+Try the direct assignment first (simplest); if tests fail on assignment validation, fall back to the reconstruction path.
+
+- [ ] **Step 4: Export from `schema/__init__.py`**
+
+```python
+from vystak.schema.overrides import EnvironmentOverride
+# And add "EnvironmentOverride" to __all__ alphabetically.
+```
+
+- [ ] **Step 5: Run tests — should pass**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py -v
+```
+
+Expected: 5/5 passing.
+
+- [ ] **Step 6: Extend the CLI loader for overlays**
+
+Open `packages/python/vystak-cli/src/vystak_cli/loader.py`. Add a new function `load_environment_override(base_path: Path, env: str) -> EnvironmentOverride`:
+
+```python
+def load_environment_override(base_path: Path, env: str) -> "EnvironmentOverride":
+    """Look for vystak.<env>.py next to base_path; return its `override`.
+
+    Raises FileNotFoundError if no overlay file exists and `env` is set.
+    """
+    from vystak.schema.overrides import EnvironmentOverride
+
+    overlay_path = base_path.parent / f"vystak.{env}.py"
+    if not overlay_path.exists():
+        raise FileNotFoundError(
+            f"env={env!r} requested but no {overlay_path.name} next to {base_path}"
+        )
+    module = _exec_python_file(overlay_path)
+    override = getattr(module, "override", None)
+    if not isinstance(override, EnvironmentOverride):
+        raise ValueError(
+            f"{overlay_path} must define `override: EnvironmentOverride`; "
+            f"got {type(override).__name__ if override else 'None'}"
+        )
+    return override
+```
+
+(The helper `_exec_python_file` already exists in `loader.py` — reuse it.)
+
+- [ ] **Step 7: Add `--env` to the `apply` command**
+
+In `packages/python/vystak-cli/src/vystak_cli/commands/apply.py`:
+
+1. Add a new click option on the `apply` function:
+
+```python
+@click.option(
+    "--env", "-e",
+    default=None,
+    envvar="VYSTAK_ENV",
+    help="Environment name. Applies vystak.<env>.py overlay if present.",
+)
+```
+
+2. After loading definitions but before the agent deploy loop, apply the overlay if `env` is set:
+
+```python
+if env:
+    from vystak_cli.loader import load_environment_override
+    from pathlib import Path
+
+    base_path = Path(file_path) if file_path else find_agent_file()
+    override = load_environment_override(base_path, env)
+    defs.agents = override.apply(defs.agents)
+    click.echo(f"Environment: {env}")
+else:
+    click.echo("Environment: (base)")
+```
+
+(Adjust the `base_path` line to match how `file_path` is resolved elsewhere in the file — grep for `find_agent_file` or similar.)
+
+- [ ] **Step 8: Write a CLI-level test**
+
+Create `packages/python/vystak-cli/tests/test_env_overlay.py`:
+
+```python
+"""End-to-end test for --env overlay flag."""
+
+from __future__ import annotations
+
+import textwrap
+from pathlib import Path
+
+import pytest
+
+
+def _write(dir_: Path, filename: str, content: str) -> Path:
+    p = dir_ / filename
+    p.write_text(textwrap.dedent(content).lstrip())
+    return p
+
+
+def test_load_environment_override(tmp_path):
+    """Loader resolves vystak.<env>.py overlay and returns the override."""
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", """
+        from vystak.schema import Agent, Model, Platform, Provider
+        agent = Agent(
+            name="a",
+            model=Model(name="m", provider=Provider(name="p", type="anthropic", api_key_env="K")),
+            platform=Platform(name="main", type="docker", provider=Provider(name="docker", type="docker")),
+        )
+    """)
+
+    _write(tmp_path, "vystak.prod.py", """
+        from vystak.schema import EnvironmentOverride, NatsConfig, Transport
+        override = EnvironmentOverride(
+            transports={
+                "main": Transport(name="prod-bus", type="nats", config=NatsConfig()),
+            },
+        )
+    """)
+
+    override = load_environment_override(tmp_path / "vystak.py", env="prod")
+    assert "main" in override.transports
+    assert override.transports["main"].type == "nats"
+
+
+def test_missing_overlay_file_raises(tmp_path):
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", "# empty")
+    with pytest.raises(FileNotFoundError, match="vystak.nonexistent.py"):
+        load_environment_override(tmp_path / "vystak.py", env="nonexistent")
+
+
+def test_overlay_without_override_raises(tmp_path):
+    from vystak_cli.loader import load_environment_override
+
+    _write(tmp_path, "vystak.py", "# empty")
+    _write(tmp_path, "vystak.bad.py", """
+        # No `override` variable defined.
+        x = 42
+    """)
+
+    with pytest.raises(ValueError, match="must define `override`"):
+        load_environment_override(tmp_path / "vystak.py", env="bad")
+```
+
+- [ ] **Step 9: Run CLI + schema tests**
+
+```bash
+uv run pytest packages/python/vystak/tests/schema/test_overrides.py \
+              packages/python/vystak-cli/tests/test_env_overlay.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 10: Run full gates**
+
+```bash
+just lint-python && just test-python
+```
+
+Expected: green.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add packages/python/vystak/src/vystak/schema/overrides.py \
+        packages/python/vystak/src/vystak/schema/__init__.py \
+        packages/python/vystak/tests/schema/test_overrides.py \
+        packages/python/vystak-cli/src/vystak_cli/loader.py \
+        packages/python/vystak-cli/src/vystak_cli/commands/apply.py \
+        packages/python/vystak-cli/tests/test_env_overlay.py
+git commit -m "feat(schema,cli): EnvironmentOverride + vystak apply --env flag
+
+Adds per-environment config swap for transports. User writes
+vystak.<env>.py declaring an 'override: EnvironmentOverride' variable
+mapping platform name to replacement Transport. Running
+'vystak apply --env prod' loads the overlay and swaps transports on
+matching platforms before deploy.
+
+v1 scope: transport swap only, Python overlays only, apply command only.
+YAML support, other fields, and other commands are follow-ups."
+```
+
+---
+
+### Task 20: `WorkspaceOverride` schema (original — superseded by the consolidated Tasks 20–22 above)
+
+**Superseded:** The text below was the original plan before realignment. Skip it. The consolidated "Tasks 20–22 (realigned)" section above is the canonical task.
 
 **Files:**
 - Create: `packages/python/vystak/src/vystak/schema/overrides.py`
