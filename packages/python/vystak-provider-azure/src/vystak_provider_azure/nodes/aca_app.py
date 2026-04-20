@@ -21,6 +21,139 @@ from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 
 
+def _kv_secret_name(raw: str) -> str:
+    """Normalize a declared secret name to ACA's `[a-z0-9][a-z0-9-]*` shape."""
+    return raw.lower().replace("_", "-")
+
+
+def build_revision_for_vault(
+    *,
+    agent,
+    vault_uri: str,
+    agent_identity_resource_id: str,
+    agent_identity_client_id: str | None,
+    workspace_identity_resource_id: str | None,
+    workspace_identity_client_id: str | None,
+    model_secrets: list[str],
+    workspace_secrets: list[str],
+    acr_login_server: str,
+    acr_password_secret_ref: str,
+    acr_password_value: str,
+    agent_image: str,
+    workspace_image: str | None,
+    extra_env: list[dict] | None = None,
+) -> dict:
+    """Build the ACA revision body for a vault-backed agent (optional workspace sidecar).
+
+    Uses per-container env[].secretRef and identitySettings[].lifecycle: None
+    so neither container can acquire a token for any UAMI from its own
+    process. Workspace secrets are wired into the workspace container's env
+    only; model secrets into the agent container's env only.
+    """
+    # Collect user-assigned identity resource IDs
+    user_assigned_identities: dict = {
+        agent_identity_resource_id: {},
+    }
+    if workspace_identity_resource_id:
+        user_assigned_identities[workspace_identity_resource_id] = {}
+
+    # Build KV-backed secrets list: one entry per secret, referencing the
+    # owning UAMI. ACA secret names must match [a-z0-9][a-z0-9-]*.
+    kv_secrets_block: list[dict] = []
+    for s in model_secrets:
+        kv_secrets_block.append(
+            {
+                "name": _kv_secret_name(s),
+                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "identity": agent_identity_resource_id,
+            }
+        )
+    for s in workspace_secrets:
+        kv_secrets_block.append(
+            {
+                "name": _kv_secret_name(s),
+                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "identity": workspace_identity_resource_id,
+            }
+        )
+    kv_secrets_block.append(
+        {"name": acr_password_secret_ref, "value": acr_password_value}
+    )
+
+    # Identity settings — all UAMIs are lifecycle: None (unreachable from code)
+    identity_settings: list[dict] = [
+        {"identity": agent_identity_resource_id, "lifecycle": "None"},
+    ]
+    if workspace_identity_resource_id:
+        identity_settings.append(
+            {"identity": workspace_identity_resource_id, "lifecycle": "None"}
+        )
+
+    # Agent container: env wired for model secrets only
+    agent_env: list[dict] = [
+        {"name": s, "secretRef": _kv_secret_name(s)} for s in model_secrets
+    ]
+    if workspace_identity_resource_id:
+        agent_env.append(
+            {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
+        )
+    if extra_env:
+        agent_env.extend(extra_env)
+
+    containers: list[dict] = [
+        {
+            "name": "agent",
+            "image": agent_image,
+            "env": agent_env,
+        }
+    ]
+
+    if workspace_image and workspace_secrets:
+        ws_env: list[dict] = [
+            {"name": s, "secretRef": _kv_secret_name(s)} for s in workspace_secrets
+        ]
+        ws_env.append({"name": "VYSTAK_WORKSPACE_RPC_PORT", "value": "50051"})
+        containers.append(
+            {
+                "name": "workspace",
+                "image": workspace_image,
+                "env": ws_env,
+                "resources": {"cpu": 0.5, "memory": "1Gi"},
+            }
+        )
+
+    revision: dict = {
+        "location": None,  # Caller fills from platform config
+        "identity": {
+            "type": "UserAssigned",
+            "userAssignedIdentities": user_assigned_identities,
+        },
+        "properties": {
+            "configuration": {
+                "identitySettings": identity_settings,
+                "secrets": kv_secrets_block,
+                "registries": [
+                    {
+                        "server": acr_login_server,
+                        "username": acr_login_server.split(".")[0],
+                        "passwordSecretRef": acr_password_secret_ref,
+                    }
+                ],
+                "ingress": {
+                    "external": True,
+                    "targetPort": 8000,
+                    "transport": "auto",
+                },
+            },
+            "template": {
+                "containers": containers,
+                "scale": {"minReplicas": 1, "maxReplicas": 10},
+            },
+        },
+    }
+    return revision
+
+
 class ContainerAppNode(Provisionable):
     """Builds a Docker image, pushes to ACR, and creates an Azure Container App."""
 
