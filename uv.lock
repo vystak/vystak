@@ -129,6 +129,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-mgmt-keyvault"
+version = "14.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/dd/e74f82797ee3ff7001832427a218f3079e6174b9fa8b354b84434172d89d/azure_mgmt_keyvault-14.0.1.tar.gz", hash = "sha256:d141a8084ae4c7c5bd1cafeca49a8f3fbebc58dc5bc5290f322ea73d8b307ef7", size = 105496, upload-time = "2026-03-27T08:02:15.282Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/c3/29238b1ef3784c31722b900c9c187d7c23dd0d7e724e970f3a7c104ed7aa/azure_mgmt_keyvault-14.0.1-py3-none-any.whl", hash = "sha256:7710873c5b667e19d86109caf2898dddb902e5ed21013e01d7d85ebb496928d7", size = 104380, upload-time = "2026-03-27T08:02:16.726Z" },
+]
+
+[[package]]
 name = "azure-mgmt-loganalytics"
 version = "13.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1148,9 +1162,11 @@ name = "vystak-provider-azure"
 version = "0.1.0"
 source = { editable = "packages/python/vystak-provider-azure" }
 dependencies = [
+    { name = "azure-core" },
     { name = "azure-identity" },
     { name = "azure-mgmt-appcontainers" },
     { name = "azure-mgmt-containerregistry" },
+    { name = "azure-mgmt-keyvault" },
     { name = "azure-mgmt-loganalytics" },
     { name = "azure-mgmt-rdbms" },
     { name = "azure-mgmt-resource" },
@@ -1160,9 +1176,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "azure-core", specifier = ">=1.30.0" },
     { name = "azure-identity", specifier = ">=1.15" },
     { name = "azure-mgmt-appcontainers", specifier = ">=3.0" },
     { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
+    { name = "azure-mgmt-keyvault", specifier = ">=10.0.0" },
     { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
     { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
     { name = "azure-mgmt-resource", specifier = ">=23.0" },
