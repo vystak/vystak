@@ -160,6 +160,23 @@ Features: streaming responses, tool call visibility, tab completion, persistent 
 - **YAML + Python** — define agents in YAML for simplicity or Python for power
 - **CLI** — `init`, `plan`, `apply`, `destroy`, `status`, `logs`
 
+### Secret Management (Azure Key Vault)
+
+Declare a top-level `Vault` and vault-backed secrets are materialized into
+per-container env via ACA `secretRef` + `lifecycle: None` UAMIs. Workspace
+secrets are isolated from the agent container so the LLM cannot exfiltrate
+them. See `examples/azure-vault/` and `examples/azure-workspace-vault/`.
+
+```yaml
+vault:
+  name: vystak-vault
+  provider: azure
+  mode: deploy
+  config: {vault_name: my-vault}
+```
+
+CLI: `vystak secrets list | push | set | diff`.
+
 ## Multi-Agent (A2A Protocol)
 
 Vystak agents implement Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Agents discover each other via Agent Cards and communicate via JSON-RPC 2.0 over HTTP.
