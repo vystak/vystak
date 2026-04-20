@@ -1,13 +1,24 @@
 """Content-addressable hash engine for stateless change detection."""
 
 from vystak.hash.hasher import hash_dict, hash_model
-from vystak.hash.tree import AgentHashTree, ChannelHashTree, hash_agent, hash_channel
+from vystak.hash.tree import (
+    AgentHashTree,
+    ChannelHashTree,
+    WorkspaceHashTree,
+    compute_grants_hash,
+    hash_agent,
+    hash_channel,
+    hash_workspace,
+)
 
 __all__ = [
     "AgentHashTree",
     "ChannelHashTree",
+    "WorkspaceHashTree",
+    "compute_grants_hash",
     "hash_agent",
     "hash_channel",
     "hash_dict",
     "hash_model",
+    "hash_workspace",
 ]
