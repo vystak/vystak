@@ -477,6 +477,8 @@ CMD ["python", "server.py"]
 REQUIREMENTS = """\
 fastapi>=0.115
 uvicorn>=0.34
+httpx>=0.27
+sse-starlette>=2.0
 pydantic>=2.0
 pyyaml>=6.0
 aiosqlite>=0.20
