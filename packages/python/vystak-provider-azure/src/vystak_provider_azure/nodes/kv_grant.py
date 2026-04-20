@@ -30,13 +30,40 @@ class KvGrantNode(Provisionable):
         self._principal_id = principal_id
         self._subscription_id = subscription_id
         self._retry_seconds = retry_seconds
+        # Deferred principal resolution — set via set_principal_from_context.
+        # When non-None, provision() reads the principal_id out of the upstream
+        # identity node's ProvisionResult.info at apply time. This lets the
+        # graph wire a grant to an identity whose principal isn't known until
+        # the identity node runs (newly created UAMIs).
+        self._principal_context_key: str | None = None
+        self._principal_context_field: str = "principal_id"
+
+    def set_principal_from_context(
+        self,
+        *,
+        key: str,
+        field: str = "principal_id",
+    ) -> None:
+        """Resolve the grant's principal from another node's result at apply time.
+
+        `key` is the upstream Provisionable's `name`; `field` is the key to
+        read from its ProvisionResult.info (defaults to 'principal_id').
+        """
+        self._principal_context_key = key
+        self._principal_context_field = field
 
     @property
     def name(self) -> str:
         tail = self._scope.rsplit("/", 1)[-1]
-        return f"kv-grant:{tail}:{self._principal_id or 'skipped'}"
+        suffix = self._principal_id or self._principal_context_key or "skipped"
+        return f"kv-grant:{tail}:{suffix}"
 
     def provision(self, context: dict) -> ProvisionResult:
+        # Deferred principal resolution: pull from upstream identity result
+        if self._principal_context_key and self._principal_id is None:
+            upstream = context.get(self._principal_context_key)
+            if upstream is not None:
+                self._principal_id = upstream.info.get(self._principal_context_field)
         if self._principal_id is None:
             return ProvisionResult(name=self.name, success=True, info={"skipped": True})
 

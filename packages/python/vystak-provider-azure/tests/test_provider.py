@@ -3,6 +3,14 @@
 from unittest.mock import MagicMock, patch
 
 from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.schema.agent import Agent
+from vystak.schema.common import VaultMode, WorkspaceType
+from vystak.schema.model import Model
+from vystak.schema.platform import Platform
+from vystak.schema.provider import Provider
+from vystak.schema.secret import Secret
+from vystak.schema.vault import Vault
+from vystak.schema.workspace import Workspace
 from vystak_provider_azure.provider import AzureProvider
 
 
@@ -391,3 +399,69 @@ class TestAzureChannelAppNaming:
         channel = _make_channel("my-chat")
         channel.platform.provider.config = {"resource_group": "shared-rg"}
         assert provider._channel_rg_name(channel) == "shared-rg"
+
+
+class TestAzureProviderVaultGraph:
+    @patch("vystak_provider_azure.provider.ContainerAppsAPIClient")
+    @patch("vystak_provider_azure.provider.SecretClient")
+    @patch("vystak_provider_azure.provider.AuthorizationManagementClient")
+    @patch("vystak_provider_azure.provider.ManagedServiceIdentityClient")
+    @patch("vystak_provider_azure.provider.KeyVaultManagementClient")
+    @patch("vystak_provider_azure.provider.ResourceManagementClient")
+    @patch("vystak_provider_azure.provider.get_credential")
+    @patch("vystak_provider_azure.provider.get_subscription_id")
+    @patch("vystak_provider_azure.provider.get_location")
+    def test_apply_with_vault_builds_correct_graph(
+        self,
+        mock_location,
+        mock_sub,
+        mock_cred,
+        _mock_rm,
+        _mock_kvm,
+        _mock_msi,
+        _mock_auth,
+        _mock_secret_client,
+        _mock_aca,
+    ):
+        """Smoke test: when provider is configured with a Vault, the
+        provisioning graph contains KeyVault + UAMI + SecretSync + per-secret
+        Grant nodes with correct dependency order."""
+        mock_location.return_value = "eastus2"
+        mock_sub.return_value = "sub-123"
+        mock_cred.return_value = MagicMock()
+
+        provider = AzureProvider()
+        azure = Provider(name="azure", type="azure", config={"location": "eastus2"})
+        platform = Platform(name="aca", type="container-apps", provider=azure)
+        anthropic = Provider(name="anthropic", type="anthropic")
+        agent = Agent(
+            name="assistant",
+            model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
+            secrets=[Secret(name="ANTHROPIC_API_KEY")],
+            workspace=Workspace(
+                name="w",
+                type=WorkspaceType.PERSISTENT,
+                secrets=[Secret(name="STRIPE_API_KEY")],
+            ),
+            platform=platform,
+        )
+        vault = Vault(
+            name="vystak-vault",
+            provider=azure,
+            mode=VaultMode.DEPLOY,
+            config={"vault_name": "vystak-vault"},
+        )
+        provider.set_agent(agent)
+        provider.set_vault(vault)
+        provider.set_env_values(
+            {"ANTHROPIC_API_KEY": "sk-x", "STRIPE_API_KEY": "sk_y"}
+        )
+
+        graph = provider._build_graph_for_tests(agent)
+
+        node_names = [n.name for n in graph.nodes()]
+        assert any("keyvault:" in n for n in node_names)
+        assert sum(1 for n in node_names if n.startswith("uami:")) == 2
+        assert any("secret-sync" in n for n in node_names)
+        grant_nodes = [n for n in node_names if n.startswith("kv-grant:")]
+        assert len(grant_nodes) == 2  # one per secret
