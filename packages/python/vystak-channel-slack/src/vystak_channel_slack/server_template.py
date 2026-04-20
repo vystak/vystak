@@ -243,6 +243,8 @@ CMD ["python", "server.py"]
 
 # vystak + vystak_transport_http are bundled as source by DockerChannelNode
 # (they're on PYTHONPATH via COPY . . in the Dockerfile).
+# pyyaml + aiosqlite are vystak's own runtime deps — needed because
+# vystak/__init__.py eagerly imports schema.loader (yaml) and stores (aiosqlite).
 REQUIREMENTS = """\
 fastapi>=0.115
 uvicorn>=0.34
@@ -250,4 +252,6 @@ httpx>=0.28
 slack-bolt>=1.21
 aiohttp>=3.9
 pydantic>=2.0
+pyyaml>=6.0
+aiosqlite>=0.20
 """
