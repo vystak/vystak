@@ -98,6 +98,73 @@ class HttpTransport(Transport):
         # FastAPI's /a2a route already handles inbound HTTP; nothing to do.
         return None
 
+    def _agent_base_url(self, agent: AgentRef) -> str:
+        """Derive the agent's base URL from its A2A wire address.
+
+        Plan A's URL format is consistent: the A2A endpoint lives at `{base}/a2a`,
+        so stripping the suffix gives the base. For future transports that use
+        different paths, revisit.
+        """
+        a2a_url = self.resolve_address(agent.canonical_name)
+        return a2a_url.removesuffix("/a2a")
+
+    async def create_response(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        base = self._agent_base_url(agent)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(f"{base}/v1/responses", json=request)
+            response.raise_for_status()
+            return response.json()
+
+    async def create_response_stream(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        base = self._agent_base_url(agent)
+        # Force stream=true even if caller didn't set it — this method's
+        # contract is that we yield chunks.
+        body = {**request, "stream": True}
+        async with (
+            httpx.AsyncClient(timeout=timeout) as client,
+            client.stream("POST", f"{base}/v1/responses", json=body) as response,
+        ):
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        yield json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+    async def get_response(
+        self,
+        agent: AgentRef,
+        response_id: str,
+        *,
+        timeout: float,
+    ) -> dict[str, Any] | None:
+        base = self._agent_base_url(agent)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{base}/v1/responses/{response_id}")
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+
     def _build_payload(
         self, method: str, message: A2AMessage, metadata: dict[str, Any]
     ) -> dict[str, Any]:

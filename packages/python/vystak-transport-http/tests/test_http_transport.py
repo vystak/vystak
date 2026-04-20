@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from vystak.transport import (
     A2AHandler,
     A2AMessage,
+    AgentRef,
 )
 from vystak.transport.contract import TransportContract
 from vystak_transport_http import HttpTransport
@@ -114,3 +115,61 @@ class TestHttpTransportBasics:
         # serve() returns immediately; the actual /a2a route is served by
         # the generated agent's FastAPI app.
         await t.serve("x.agents.default", handler=None)
+
+    @pytest.mark.asyncio
+    async def test_create_response_posts_to_agent(self, unused_tcp_port):
+        """create_response POSTs the request body to the agent's /v1/responses."""
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+
+        received: dict = {}
+        app = FastAPI()
+
+        @app.post("/v1/responses")
+        async def handler(request: Request):  # Request imported at module level
+            received["body"] = await request.json()
+            return JSONResponse({
+                "id": "resp-1",
+                "object": "response",
+                "created_at": 1,
+                "model": "vystak/test",
+                "output": [{"type": "message", "content": "hi"}],
+                "status": "completed",
+            })
+
+        async with _serve(app, unused_tcp_port):
+            routes = {"test.agents.default": f"http://127.0.0.1:{unused_tcp_port}/a2a"}
+            t = HttpTransport(routes=routes)
+            ref = AgentRef(canonical_name="test.agents.default")
+            result = await t.create_response(
+                ref, {"model": "vystak/test", "input": "hello"}, {}, timeout=5
+            )
+            assert result["id"] == "resp-1"
+            assert received["body"]["input"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_get_response_returns_none_on_404(self, unused_tcp_port):
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+
+        app = FastAPI()
+
+        @app.get("/v1/responses/{response_id}")
+        async def handler(response_id: str):
+            if response_id == "missing":
+                return JSONResponse({"error": "not found"}, status_code=404)
+            return JSONResponse({"id": response_id, "object": "response"})
+
+        async with _serve(app, unused_tcp_port):
+            routes = {"test.agents.default": f"http://127.0.0.1:{unused_tcp_port}/a2a"}
+            t = HttpTransport(routes=routes)
+            ref = AgentRef(canonical_name="test.agents.default")
+            assert await t.get_response(ref, "missing", timeout=5) is None
+            got = await t.get_response(ref, "resp-1", timeout=5)
+            assert got["id"] == "resp-1"
+
+    def test_agent_base_url_strips_a2a(self):
+        routes = {"x.agents.default": "http://vystak-x:8000/a2a"}
+        t = HttpTransport(routes=routes)
+        ref = AgentRef(canonical_name="x.agents.default")
+        assert t._agent_base_url(ref) == "http://vystak-x:8000"
