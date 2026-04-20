@@ -1,6 +1,7 @@
 """Hash tree composition for agent and channel definitions."""
 
 import hashlib
+import json
 from dataclasses import dataclass
 
 from vystak.hash.hasher import hash_model
@@ -21,6 +22,7 @@ class AgentHashTree:
     sessions: str
     memory: str
     services: str
+    transport: str
     root: str
 
 
@@ -55,6 +57,25 @@ def _hash_str(value: str | None) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _hash_transport(agent: Agent) -> str:
+    """Contribute transport identity (type + config) to the agent hash.
+
+    `connection` is excluded — BYO URLs/credentials are portable across
+    environments without triggering redeploy. `name` is also excluded —
+    it's an identity field for cross-resource references, not config.
+    """
+    if agent.platform is None or agent.platform.transport is None:
+        return _hash_str(None)
+    transport = agent.platform.transport
+    payload = {
+        "type": transport.type,
+        "config": transport.config.model_dump() if transport.config else None,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+
+
 def hash_agent(agent: Agent) -> AgentHashTree:
     """Compute the full hash tree for an agent definition."""
     brain = hash_model(agent.model)
@@ -66,6 +87,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
     sessions = _hash_optional(agent.sessions)
     memory = _hash_optional(agent.memory)
     services = _hash_list(agent.services)
+    transport = _hash_transport(agent)
 
     sections = "|".join(
         [
@@ -78,6 +100,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
             sessions,
             memory,
             services,
+            transport,
         ]
     )
     root = hashlib.sha256(sections.encode()).hexdigest()
@@ -92,6 +115,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         sessions=sessions,
         memory=memory,
         services=services,
+        transport=transport,
         root=root,
     )
 
