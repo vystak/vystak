@@ -49,9 +49,7 @@ def get_transport_plugin(transport_type: str) -> TransportPlugin:
         cls = _TRANSPORT_PLUGINS[transport_type]
     except KeyError:
         known = ", ".join(sorted(_TRANSPORT_PLUGINS))
-        raise KeyError(
-            f"Unknown transport type {transport_type!r}. Known types: {known}"
-        ) from None
+        raise KeyError(f"Unknown transport type {transport_type!r}. Known types: {known}") from None
 
     return cls()
 

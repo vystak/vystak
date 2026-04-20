@@ -92,9 +92,7 @@ class HttpTransport(Transport):
                 # A2AEvent model_validate tolerates missing optional fields.
                 yield A2AEvent.model_validate(parsed)
 
-    async def serve(
-        self, canonical_name: str, handler: ServerDispatcherProtocol
-    ) -> None:
+    async def serve(self, canonical_name: str, handler: ServerDispatcherProtocol) -> None:
         # FastAPI's /a2a route already handles inbound HTTP; nothing to do.
         return None
 
@@ -140,15 +138,15 @@ class HttpTransport(Transport):
         ):
             response.raise_for_status()
             async for line in response.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line.removeprefix("data:").strip()
-                    if not data or data == "[DONE]":
-                        continue
-                    try:
-                        yield json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    yield json.loads(data)
+                except json.JSONDecodeError:
+                    continue
 
     async def get_response(
         self,
@@ -182,15 +180,9 @@ class HttpTransport(Transport):
             },
         }
 
-    def _parse_result(
-        self, body: dict[str, Any], fallback_correlation: str
-    ) -> A2AResult:
+    def _parse_result(self, body: dict[str, Any], fallback_correlation: str) -> A2AResult:
         result = body.get("result", {}) or {}
-        parts = (
-            result.get("status", {})
-            .get("message", {})
-            .get("parts", [])
-        )
+        parts = result.get("status", {}).get("message", {}).get("parts", [])
         text = ""
         for part in parts:
             if isinstance(part, dict) and "text" in part:

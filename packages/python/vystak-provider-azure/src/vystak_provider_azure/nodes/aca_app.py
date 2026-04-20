@@ -185,9 +185,7 @@ class ContainerAppNode(Provisionable):
             env_vars.append(
                 {"name": "VYSTAK_TRANSPORT_TYPE", "value": self._agent.platform.transport.type}
             )
-            env_vars.append(
-                {"name": "VYSTAK_ROUTES_JSON", "value": self._peer_routes_json}
-            )
+            env_vars.append({"name": "VYSTAK_ROUTES_JSON", "value": self._peer_routes_json})
 
             # Inject database connection strings from upstream Postgres nodes
             if hasattr(self._agent, "sessions") and self._agent.sessions:

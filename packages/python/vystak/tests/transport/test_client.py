@@ -27,18 +27,14 @@ class FakeTransport(Transport):
     def resolve_address(self, canonical_name: str) -> str:
         return f"fake://{canonical_name}"
 
-    async def send_task(
-        self, agent, message, metadata, *, timeout
-    ) -> A2AResult:
+    async def send_task(self, agent, message, metadata, *, timeout) -> A2AResult:
         self.sent.append(agent)
         return A2AResult(
             text=f"reply:{message.parts[0]['text']}",
             correlation_id=message.correlation_id,
         )
 
-    async def stream_task(
-        self, agent, message, metadata, *, timeout
-    ) -> AsyncIterator[A2AEvent]:
+    async def stream_task(self, agent, message, metadata, *, timeout) -> AsyncIterator[A2AEvent]:
         for ch in message.parts[0]["text"]:
             yield A2AEvent(type="token", text=ch)
         yield A2AEvent(type="final", text=f"done:{message.parts[0]['text']}", final=True)
@@ -127,9 +123,7 @@ class TestAgentClientResponses:
             transport=t,
             routes={"x": "x.agents.default"},
         )
-        chunks = [
-            chunk async for chunk in c.create_response_stream("x", {"input": "hi"})
-        ]
+        chunks = [chunk async for chunk in c.create_response_stream("x", {"input": "hi"})]
         assert len(chunks) == 3
         assert chunks[0]["type"] == "response.created"
         assert chunks[-1]["type"] == "response.completed"

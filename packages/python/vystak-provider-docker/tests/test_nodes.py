@@ -293,9 +293,7 @@ class TestNatsServerNode:
         network = MagicMock()
         network.name = "vystak-net"
         context = {
-            "network": ProvisionResult(
-                name="network", success=True, info={"network": network}
-            )
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
         }
         node = NatsServerNode(client)
         result = node.provision(context=context)
@@ -320,9 +318,7 @@ class TestNatsServerNode:
         network = MagicMock()
         network.name = "vystak-net"
         context = {
-            "network": ProvisionResult(
-                name="network", success=True, info={"network": network}
-            )
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
         }
         node = NatsServerNode(client)
         result = node.provision(context=context)
@@ -340,9 +336,7 @@ class TestNatsServerNode:
         network = MagicMock()
         network.name = "vystak-net"
         context = {
-            "network": ProvisionResult(
-                name="network", success=True, info={"network": network}
-            )
+            "network": ProvisionResult(name="network", success=True, info={"network": network})
         }
         node = NatsServerNode(client)
         result = node.provision(context=context)

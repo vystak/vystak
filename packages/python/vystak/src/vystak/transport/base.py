@@ -61,9 +61,7 @@ class ServerDispatcherProtocol(Protocol):
     to the appropriate method.
     """
 
-    async def dispatch_a2a(
-        self, message: A2AMessage, metadata: dict[str, Any]
-    ) -> A2AResult: ...
+    async def dispatch_a2a(self, message: A2AMessage, metadata: dict[str, Any]) -> A2AResult: ...
 
     async def dispatch_a2a_stream(
         self, message: A2AMessage, metadata: dict[str, Any]
@@ -77,9 +75,7 @@ class ServerDispatcherProtocol(Protocol):
         self, request: dict[str, Any], metadata: dict[str, Any]
     ) -> AsyncIterator[dict[str, Any]]: ...
 
-    async def dispatch_responses_get(
-        self, response_id: str
-    ) -> dict[str, Any] | None: ...
+    async def dispatch_responses_get(self, response_id: str) -> dict[str, Any] | None: ...
 
 
 class Transport(ABC):
@@ -147,9 +143,7 @@ class Transport(ABC):
         Transports with native Responses API support must override this.
         Default raises NotImplementedError.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement create_response"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not implement create_response")
 
     async def create_response_stream(
         self,
@@ -178,6 +172,4 @@ class Transport(ABC):
         Transports with native Responses API support must override this.
         Default raises NotImplementedError.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement get_response"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_response")

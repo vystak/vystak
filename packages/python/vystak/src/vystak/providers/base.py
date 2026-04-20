@@ -160,9 +160,7 @@ class TransportPlugin(ABC):
         platform. Returns an empty list for http or for BYO connections."""
 
     @abstractmethod
-    def generate_env_contract(
-        self, transport: "Transport", context: dict
-    ) -> dict[str, str]:
+    def generate_env_contract(self, transport: "Transport", context: dict) -> dict[str, str]:
         """Env vars the provider should inject into every agent/channel
         container so they can construct the matching Transport at runtime.
 
@@ -171,9 +169,7 @@ class TransportPlugin(ABC):
         """
 
     @abstractmethod
-    def generate_listener_code(
-        self, transport: "Transport"
-    ) -> "GeneratedCode | None":
+    def generate_listener_code(self, transport: "Transport") -> "GeneratedCode | None":
         """Return a Python source snippet to append to the generated agent
         server.py that starts the transport listener. Return None if the
         transport does not need a listener (HTTP — FastAPI already serves)."""

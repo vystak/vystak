@@ -74,13 +74,15 @@ class NatsTransport(Transport):
     ) -> bytes:
         """Build a JSON-RPC envelope with arbitrary params. Used by
         Responses API methods; A2A methods use the typed _build_envelope."""
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-            "params": params,
-            "metadata": metadata,
-        }).encode()
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": method,
+                "params": params,
+                "metadata": metadata,
+            }
+        ).encode()
 
     @staticmethod
     def _is_a2a_terminal(chunk: dict[str, Any]) -> bool:
@@ -121,9 +123,7 @@ class NatsTransport(Transport):
                 try:
                     msg = await sub.next_msg(timeout=remaining)
                 except _nats_errors.TimeoutError as e:
-                    raise TimeoutError(
-                        f"NATS stream from {subject} timed out mid-stream"
-                    ) from e
+                    raise TimeoutError(f"NATS stream from {subject} timed out mid-stream") from e
                 chunk = json.loads(msg.data)
                 yield chunk
                 if terminal(chunk):
@@ -132,7 +132,12 @@ class NatsTransport(Transport):
             await sub.unsubscribe()
 
     async def send_task(
-        self, agent: AgentRef, message: A2AMessage, metadata: dict, *, timeout: float,
+        self,
+        agent: AgentRef,
+        message: A2AMessage,
+        metadata: dict,
+        *,
+        timeout: float,
     ) -> A2AResult:
         nc = await self._connect()
         subject = self.resolve_address(agent.canonical_name)
@@ -140,31 +145,45 @@ class NatsTransport(Transport):
         t0 = time.monotonic()
         logger.info(
             "tx tasks/send subject=%s cid=%s",
-            subject, message.correlation_id,
+            subject,
+            message.correlation_id,
         )
         try:
             reply = await nc.request(subject, payload, timeout=timeout)
         except TimeoutError as e:
             logger.warning(
                 "tx tasks/send TIMEOUT subject=%s cid=%s after=%.2fs",
-                subject, message.correlation_id, timeout,
+                subject,
+                message.correlation_id,
+                timeout,
             )
             raise TimeoutError(f"NATS request to {subject} timed out after {timeout}s") from e
         body = json.loads(reply.data)
         latency_ms = (time.monotonic() - t0) * 1000
         logger.info(
             "rx tasks/send subject=%s cid=%s latency_ms=%.0f bytes=%d",
-            subject, message.correlation_id, latency_ms, len(reply.data),
+            subject,
+            message.correlation_id,
+            latency_ms,
+            len(reply.data),
         )
         return self._parse_result(body, message.correlation_id)
 
     async def stream_task(
-        self, agent: AgentRef, message: A2AMessage, metadata: dict, *, timeout: float,
+        self,
+        agent: AgentRef,
+        message: A2AMessage,
+        metadata: dict,
+        *,
+        timeout: float,
     ) -> AsyncIterator[A2AEvent]:
         subject = self.resolve_address(agent.canonical_name)
         payload = self._build_envelope("tasks/sendSubscribe", message, metadata)
         async for chunk in self._stream_via_inbox(
-            subject, payload, timeout, terminal=self._is_a2a_terminal,
+            subject,
+            payload,
+            timeout,
+            terminal=self._is_a2a_terminal,
         ):
             event = A2AEvent.model_validate(chunk)
             yield event
@@ -181,7 +200,9 @@ class NatsTransport(Transport):
         subject = self.resolve_address(agent.canonical_name)
         cid = metadata.get("correlation_id") or str(uuid.uuid4())
         payload = self._build_envelope_for_method(
-            "responses/create", {"request": request}, metadata,
+            "responses/create",
+            {"request": request},
+            metadata,
         )
         t0 = time.monotonic()
         logger.info("tx responses/create subject=%s cid=%s", subject, cid)
@@ -190,17 +211,21 @@ class NatsTransport(Transport):
         except TimeoutError as e:
             logger.warning(
                 "tx responses/create TIMEOUT subject=%s cid=%s after=%.2fs",
-                subject, cid, timeout,
+                subject,
+                cid,
+                timeout,
             )
             raise TimeoutError(
-                f"NATS request to {subject} (responses/create) timed out "
-                f"after {timeout}s"
+                f"NATS request to {subject} (responses/create) timed out after {timeout}s"
             ) from e
         body = json.loads(reply.data)
         latency_ms = (time.monotonic() - t0) * 1000
         logger.info(
             "rx responses/create subject=%s cid=%s latency_ms=%.0f bytes=%d",
-            subject, cid, latency_ms, len(reply.data),
+            subject,
+            cid,
+            latency_ms,
+            len(reply.data),
         )
         return body.get("result", {})
 
@@ -214,14 +239,15 @@ class NatsTransport(Transport):
         nc = await self._connect()
         subject = self.resolve_address(agent.canonical_name)
         payload = self._build_envelope_for_method(
-            "responses/get", {"response_id": response_id}, {},
+            "responses/get",
+            {"response_id": response_id},
+            {},
         )
         try:
             reply = await nc.request(subject, payload, timeout=timeout)
         except TimeoutError as e:
             raise TimeoutError(
-                f"NATS request to {subject} (responses/get) timed out "
-                f"after {timeout}s"
+                f"NATS request to {subject} (responses/get) timed out after {timeout}s"
             ) from e
         body = json.loads(reply.data)
         result = body.get("result")
@@ -238,20 +264,28 @@ class NatsTransport(Transport):
         subject = self.resolve_address(agent.canonical_name)
         cid = metadata.get("correlation_id") or str(uuid.uuid4())
         payload = self._build_envelope_for_method(
-            "responses/createStream", {"request": request}, metadata,
+            "responses/createStream",
+            {"request": request},
+            metadata,
         )
         t0 = time.monotonic()
         logger.info("tx responses/createStream subject=%s cid=%s", subject, cid)
         chunks = 0
         async for chunk in self._stream_via_inbox(
-            subject, payload, timeout, terminal=self._is_responses_terminal,
+            subject,
+            payload,
+            timeout,
+            terminal=self._is_responses_terminal,
         ):
             chunks += 1
             yield chunk
         latency_ms = (time.monotonic() - t0) * 1000
         logger.info(
             "rx responses/createStream subject=%s cid=%s chunks=%d latency_ms=%.0f",
-            subject, cid, chunks, latency_ms,
+            subject,
+            cid,
+            chunks,
+            latency_ms,
         )
 
     async def _handle_inbound(
@@ -274,7 +308,10 @@ class NatsTransport(Transport):
             _data = getattr(msg, "data", b"")
             logger.info(
                 "inbound method=%s subject=%s cid=%s bytes=%d",
-                method, getattr(msg, "subject", "?"), cid, len(_data),
+                method,
+                getattr(msg, "subject", "?"),
+                cid,
+                len(_data),
             )
 
             if method in ("tasks/send", "tasks/sendSubscribe"):
@@ -313,9 +350,7 @@ class NatsTransport(Transport):
             elif method == "responses/createStream":
                 request = params.get("request", {})
                 metadata_r = body.get("metadata", {})
-                async for chunk in handler.dispatch_responses_create_stream(
-                    request, metadata_r
-                ):
+                async for chunk in handler.dispatch_responses_create_stream(request, metadata_r):
                     await nc.publish(msg.reply, json.dumps(chunk).encode())
             elif method == "responses/get":
                 response_id = params.get("response_id", "")
@@ -340,21 +375,24 @@ class NatsTransport(Transport):
             latency_ms = (time.monotonic() - t0) * 1000
             logger.info(
                 "outbound method=%s cid=%s latency_ms=%.0f",
-                method, cid, latency_ms,
+                method,
+                cid,
+                latency_ms,
             )
         except Exception as e:
             latency_ms = (time.monotonic() - t0) * 1000
             logger.exception(
                 "inbound-error method=%s cid=%s latency_ms=%.0f error=%s",
-                body.get("method", "?"), body.get("id", "?"), latency_ms, e,
+                body.get("method", "?"),
+                body.get("id", "?"),
+                latency_ms,
+                e,
             )
             if msg.reply:
                 err = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
                 await nc.publish(msg.reply, json.dumps(err).encode())
 
-    async def serve(
-        self, canonical_name: str, handler: ServerDispatcherProtocol
-    ) -> None:
+    async def serve(self, canonical_name: str, handler: ServerDispatcherProtocol) -> None:
         nc = await self._connect()
         subject = self.resolve_address(canonical_name)
         name, _, _ = parse_canonical_name(canonical_name)

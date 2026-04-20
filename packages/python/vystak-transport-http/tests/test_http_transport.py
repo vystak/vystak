@@ -39,6 +39,7 @@ def _build_app(handler) -> FastAPI:
         )
 
         if body.get("method") == "tasks/sendSubscribe":
+
             async def gen():
                 async for ev in handler.dispatch_a2a_stream(message, metadata):
                     yield {"data": ev.model_dump_json()}
@@ -50,11 +51,7 @@ def _build_app(handler) -> FastAPI:
             "jsonrpc": "2.0",
             "id": body.get("id"),
             "result": {
-                "status": {
-                    "message": {
-                        "parts": [{"text": result.text}]
-                    }
-                },
+                "status": {"message": {"parts": [{"text": result.text}]}},
                 "correlation_id": result.correlation_id,
             },
         }
@@ -89,11 +86,10 @@ class TestHttpTransport(TransportContract):
             app = _build_app(handler)
             async with _serve(app, unused_tcp_port):
                 client = HttpTransport(
-                    routes={
-                        canonical_name: f"http://127.0.0.1:{unused_tcp_port}/a2a"
-                    }
+                    routes={canonical_name: f"http://127.0.0.1:{unused_tcp_port}/a2a"}
                 )
                 yield client
+
         return _ctx
 
 
@@ -131,14 +127,16 @@ class TestHttpTransportBasics:
         @app.post("/v1/responses")
         async def handler(request: Request):  # Request imported at module level
             received["body"] = await request.json()
-            return JSONResponse({
-                "id": "resp-1",
-                "object": "response",
-                "created_at": 1,
-                "model": "vystak/test",
-                "output": [{"type": "message", "content": "hi"}],
-                "status": "completed",
-            })
+            return JSONResponse(
+                {
+                    "id": "resp-1",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "vystak/test",
+                    "output": [{"type": "message", "content": "hi"}],
+                    "status": "completed",
+                }
+            )
 
         async with _serve(app, unused_tcp_port):
             routes = {"test.agents.default": f"http://127.0.0.1:{unused_tcp_port}/a2a"}

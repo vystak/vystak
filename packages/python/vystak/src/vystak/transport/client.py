@@ -49,13 +49,9 @@ class AgentClient:
     ) -> str:
         ref = self._resolve(agent)
         message = (
-            text
-            if isinstance(text, A2AMessage)
-            else A2AMessage.from_text(text, metadata=metadata)
+            text if isinstance(text, A2AMessage) else A2AMessage.from_text(text, metadata=metadata)
         )
-        result = await self._transport.send_task(
-            ref, message, metadata or {}, timeout=timeout
-        )
+        result = await self._transport.send_task(ref, message, metadata or {}, timeout=timeout)
         return result.text
 
     async def stream_task(
@@ -68,9 +64,7 @@ class AgentClient:
     ) -> AsyncIterator[A2AEvent]:
         ref = self._resolve(agent)
         message = (
-            text
-            if isinstance(text, A2AMessage)
-            else A2AMessage.from_text(text, metadata=metadata)
+            text if isinstance(text, A2AMessage) else A2AMessage.from_text(text, metadata=metadata)
         )
         async for event in self._transport.stream_task(
             ref, message, metadata or {}, timeout=timeout
@@ -87,7 +81,10 @@ class AgentClient:
     ) -> dict[str, Any]:
         ref = self._resolve(agent)
         return await self._transport.create_response(
-            ref, request, metadata or {}, timeout=timeout,
+            ref,
+            request,
+            metadata or {},
+            timeout=timeout,
         )
 
     async def create_response_stream(
@@ -100,7 +97,10 @@ class AgentClient:
     ) -> AsyncIterator[dict[str, Any]]:
         ref = self._resolve(agent)
         async for chunk in self._transport.create_response_stream(
-            ref, request, metadata or {}, timeout=timeout,
+            ref,
+            request,
+            metadata or {},
+            timeout=timeout,
         ):
             yield chunk
 
@@ -113,16 +113,16 @@ class AgentClient:
     ) -> dict[str, Any] | None:
         ref = self._resolve(agent)
         return await self._transport.get_response(
-            ref, response_id, timeout=timeout,
+            ref,
+            response_id,
+            timeout=timeout,
         )
 
     def _resolve(self, short_name: str) -> AgentRef:
         try:
             canonical = self._routes[short_name]
         except KeyError:
-            raise KeyError(
-                f"unknown agent {short_name!r}; known: {sorted(self._routes)}"
-            ) from None
+            raise KeyError(f"unknown agent {short_name!r}; known: {sorted(self._routes)}") from None
         return AgentRef(canonical_name=canonical)
 
 
@@ -162,6 +162,4 @@ async def ask_agent(
         reply = await ask_agent("time-agent", "what time is it?")
     """
     c = client or _default_client()
-    return await c.send_task(
-        agent, question, metadata=metadata, timeout=timeout
-    )
+    return await c.send_task(agent, question, metadata=metadata, timeout=timeout)

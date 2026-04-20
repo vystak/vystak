@@ -57,11 +57,15 @@ class TestTransportHashing:
     def test_hash_unchanged_for_byo_connection(self):
         # Same transport type/config, different BYO connection — portable.
         t1 = Transport(
-            name="bus", type="nats", config=NatsConfig(),
+            name="bus",
+            type="nats",
+            config=NatsConfig(),
             connection=TransportConnection(url_env="DEV_NATS_URL"),
         )
         t2 = Transport(
-            name="bus", type="nats", config=NatsConfig(),
+            name="bus",
+            type="nats",
+            config=NatsConfig(),
             connection=TransportConnection(url_env="PROD_NATS_URL"),
         )
         h1 = hash_agent(_agent(t1))

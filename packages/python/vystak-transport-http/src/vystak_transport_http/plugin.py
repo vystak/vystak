@@ -17,9 +17,7 @@ class HttpTransportPlugin(TransportPlugin):
     def build_provision_nodes(self, transport: Transport, platform: Platform):
         return []
 
-    def generate_env_contract(
-        self, transport: Transport, context: dict
-    ) -> dict[str, str]:
+    def generate_env_contract(self, transport: Transport, context: dict) -> dict[str, str]:
         return {"VYSTAK_TRANSPORT_TYPE": "http"}
 
     def generate_listener_code(self, transport: Transport) -> GeneratedCode | None:

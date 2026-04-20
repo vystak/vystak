@@ -296,7 +296,7 @@ def generate_responses_handler_code(agent: Agent) -> str:
     lines.append('        """Async-iterator over Responses API SSE event dicts.')
     lines.append("")
     lines.append("        Each yielded value is the chunk payload (already-structured dict or")
-    lines.append("        the sentinel string ``\"[DONE]\"``). The caller frames it for the")
+    lines.append('        the sentinel string ``"[DONE]"``). The caller frames it for the')
     lines.append("        wire (``EventSourceResponse`` wraps with ``data: json.dumps(chunk)``).")
     lines.append('        """')
     lines.append("        user_id = body.get('user_id')")
@@ -453,9 +453,7 @@ def generate_responses_handler_code(agent: Agent) -> str:
     lines.append('                elif msg.type == "tool":')
     lines.append("                    # Close pending tool call")
     lines.append("                    tool_call_id = getattr(msg, 'tool_call_id', None)")
-    lines.append(
-        "                    if tool_call_id and str(tool_call_id) in pending_tool_calls:"
-    )
+    lines.append("                    if tool_call_id and str(tool_call_id) in pending_tool_calls:")
     lines.append("                        tc_info = pending_tool_calls.pop(str(tool_call_id))")
     lines.append("                        yield {")
     lines.append('                            "type": "response.function_call_arguments.done",')

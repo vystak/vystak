@@ -809,7 +809,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
     lines.append(generate_responses_handler_code(agent))
     lines.append("")
-    lines.append(f"_responses_handler = ResponsesHandler(graph={agent_ref}, response_store=_responses)")
+    lines.append(
+        f"_responses_handler = ResponsesHandler(graph={agent_ref}, response_store=_responses)"
+    )
     lines.append("")
     lines.append("")
 
@@ -896,7 +898,6 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("")
     lines.append("")
 
-
     # A2A Protocol (unchanged)
     lines.append(generate_task_manager_code())
     lines.append(generate_agent_card_code(agent))
@@ -946,7 +947,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("async def _start_transport_listener():")
     lines.append("    if _transport.type != 'http':")
     lines.append("        _asyncio.create_task(")
-    lines.append("            _transport.serve(canonical_name=AGENT_CANONICAL_NAME, handler=_server_dispatcher)")
+    lines.append(
+        "            _transport.serve(canonical_name=AGENT_CANONICAL_NAME, handler=_server_dispatcher)"
+    )
     lines.append("        )")
 
     lines.append('if __name__ == "__main__":')

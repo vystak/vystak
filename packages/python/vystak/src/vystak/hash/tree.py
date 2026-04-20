@@ -71,9 +71,7 @@ def _hash_transport(agent: Agent) -> str:
         "type": transport.type,
         "config": transport.config.model_dump() if transport.config else None,
     }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def hash_agent(agent: Agent) -> AgentHashTree:

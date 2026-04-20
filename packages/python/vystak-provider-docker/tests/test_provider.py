@@ -185,9 +185,7 @@ class TestApply:
         assert result.success is False
         assert "set_generated_code" in result.message
 
-    def test_nats_transport_adds_nats_server_node(
-        self, provider, mock_docker_client, sample_code
-    ):
+    def test_nats_transport_adds_nats_server_node(self, provider, mock_docker_client, sample_code):
         """When platform.transport.type == 'nats', apply() adds a
         NatsServerNode to the graph and injects the env contract onto the
         DockerAgentNode."""
@@ -226,9 +224,7 @@ class TestApply:
             changes={},
         )
         mock_results = {
-            "network": ProvisionResult(
-                name="network", success=True, info={"network": MagicMock()}
-            ),
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
             "nats-server": ProvisionResult(
                 name="nats-server",
                 success=True,

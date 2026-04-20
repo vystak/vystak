@@ -122,10 +122,12 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('    """Invoke the agent one-shot and return the final text.')
     lines.append("")
     lines.append("    Uses ``message.correlation_id`` as the A2A task id; reads/writes task state")
-    lines.append("    via the module-level ``_task_manager`` so interrupt/resume flow is preserved.")
+    lines.append(
+        "    via the module-level ``_task_manager`` so interrupt/resume flow is preserved."
+    )
     lines.append('    """')
     lines.append("    task_id = message.correlation_id or str(uuid.uuid4())")
-    lines.append("    session_id = metadata.get(\"sessionId\") or task_id")
+    lines.append('    session_id = metadata.get("sessionId") or task_id')
     lines.append("")
     lines.append("    # Extract context from metadata (propagated from caller agent)")
     lines.append('    trace_id = metadata.get("trace_id") or str(uuid.uuid4())')
@@ -176,24 +178,18 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append(
         '            interrupt_text = str(interrupt_value[0].value) if interrupt_value else "Input required"'
     )
-    lines.append(
-        '            _task_manager.update_task(task_id, "input_required", interrupt_text)'
-    )
+    lines.append('            _task_manager.update_task(task_id, "input_required", interrupt_text)')
     lines.append("            return interrupt_text")
     lines.append("")
     lines.append('        content = result["messages"][-1].content')
     lines.append("        if isinstance(content, list):")
     lines.append('            response_text = "".join(')
-    lines.append(
-        '                block.get("text", "") if isinstance(block, dict) else str(block)'
-    )
+    lines.append('                block.get("text", "") if isinstance(block, dict) else str(block)')
     lines.append("                for block in content")
     lines.append("            )")
     lines.append("        else:")
     lines.append("            response_text = str(content)")
-    lines.append(
-        '        _task_manager.update_task(task_id, "completed", response_text)'
-    )
+    lines.append('        _task_manager.update_task(task_id, "completed", response_text)')
     lines.append("        return response_text")
     lines.append("    except Exception as exc:")
     lines.append('        _task_manager.update_task(task_id, "failed", str(exc))')
@@ -207,12 +203,14 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("")
     lines.append("    Emits:")
     lines.append('      * ``A2AEvent(type="token", text=...)`` per streamed chunk')
-    lines.append('      * ``A2AEvent(type="status", data={"state": "input_required", ...}, final=True)``')
+    lines.append(
+        '      * ``A2AEvent(type="status", data={"state": "input_required", ...}, final=True)``'
+    )
     lines.append("        on interrupt")
     lines.append('      * ``A2AEvent(type="final", text=response_text, final=True)`` on completion')
     lines.append('    """')
     lines.append("    task_id = message.correlation_id or str(uuid.uuid4())")
-    lines.append("    session_id = metadata.get(\"sessionId\") or task_id")
+    lines.append('    session_id = metadata.get("sessionId") or task_id')
     lines.append("")
     lines.append("    # Extract context from metadata")
     lines.append('    trace_id = metadata.get("trace_id") or str(uuid.uuid4())')
@@ -412,7 +410,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("")
     lines.append("    async def event_generator():")
     lines.append("        try:")
-    lines.append("            async for ev in _a2a_handler.dispatch_stream(a2a_message, dispatch_metadata):")
+    lines.append(
+        "            async for ev in _a2a_handler.dispatch_stream(a2a_message, dispatch_metadata):"
+    )
     lines.append('                if ev.type == "token":')
     lines.append("                    chunk_event = {")
     lines.append('                        "jsonrpc": "2.0",')
@@ -436,7 +436,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('                            "id": task_id,')
     lines.append('                            "status": {')
     lines.append('                                "state": state,')
-    lines.append('                                "message": {"role": "agent", "parts": [{"text": ev.text or ""}]},')
+    lines.append(
+        '                                "message": {"role": "agent", "parts": [{"text": ev.text or ""}]},'
+    )
     lines.append("                            },")
     lines.append('                            "final": ev.final,')
     lines.append("                        },")

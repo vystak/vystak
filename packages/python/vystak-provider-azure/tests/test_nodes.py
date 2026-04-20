@@ -310,7 +310,8 @@ class TestContainerAppNode:
         assert "VYSTAK_ROUTES_JSON" in env_names
         # Verify VYSTAK_ROUTES_JSON defaults to "{}" when peer_routes_json not specified
         routes_entry = next(
-            e for e in env_list
+            e
+            for e in env_list
             if (e["name"] if isinstance(e, dict) else e.name) == "VYSTAK_ROUTES_JSON"
         )
         routes_value = (

@@ -38,9 +38,7 @@ class EnvironmentOverride(BaseModel):
         if not self.transports:
             return list(agents)
 
-        known_platform_names = {
-            a.platform.name for a in agents if a.platform is not None
-        }
+        known_platform_names = {a.platform.name for a in agents if a.platform is not None}
         unknown = set(self.transports) - known_platform_names
         if unknown:
             raise ValueError(

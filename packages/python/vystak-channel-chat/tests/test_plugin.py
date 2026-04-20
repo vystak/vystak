@@ -38,8 +38,14 @@ class TestChatChannelPlugin:
     def test_generate_code_emits_expected_files(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
-            "time-agent": {"canonical": "time-agent.agents.default", "address": "http://vystak-time-agent:8000"},
+            "weather-agent": {
+                "canonical": "weather-agent.agents.default",
+                "address": "http://vystak-weather-agent:8000",
+            },
+            "time-agent": {
+                "canonical": "time-agent.agents.default",
+                "address": "http://vystak-time-agent:8000",
+            },
         }
         code = plugin.generate_code(_channel(), resolved)
 
@@ -54,7 +60,10 @@ class TestChatChannelPlugin:
     def test_routes_baked_into_routes_json(self):
         plugin = ChatChannelPlugin()
         resolved = {
-            "weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://vystak-weather-agent:8000"},
+            "weather-agent": {
+                "canonical": "weather-agent.agents.default",
+                "address": "http://vystak-weather-agent:8000",
+            },
         }
         code = plugin.generate_code(_channel(), resolved)
         routes = json.loads(code.files["routes.json"])
@@ -135,7 +144,12 @@ class TestGeneratedServer:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"weather-agent": {"canonical": "weather-agent.agents.default", "address": "http://example.test"}},
+            {
+                "weather-agent": {
+                    "canonical": "weather-agent.agents.default",
+                    "address": "http://example.test",
+                }
+            },
         )
         client = TestClient(app)
         resp = client.get("/health")
@@ -165,7 +179,12 @@ class TestGeneratedServer:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
         )
         client = TestClient(app)
         resp = client.post(
@@ -184,7 +203,12 @@ class TestGeneratedServer:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
         )
         client = TestClient(app)
         resp = client.post(
@@ -365,7 +389,12 @@ class TestGeneratedResponsesApi:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
         )
         client = TestClient(app)
         resp = client.post(
@@ -380,7 +409,12 @@ class TestGeneratedResponsesApi:
 
         app = self._boot_generated_app(
             tmp_path,
-            {"known-agent": {"canonical": "known-agent.agents.default", "address": "http://known.test"}},
+            {
+                "known-agent": {
+                    "canonical": "known-agent.agents.default",
+                    "address": "http://known.test",
+                }
+            },
         )
         client = TestClient(app)
         resp = client.get("/v1/responses/resp-never-created")

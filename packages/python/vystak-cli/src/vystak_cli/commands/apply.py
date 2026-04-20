@@ -20,7 +20,8 @@ from vystak_cli.provider_factory import get_provider
     "--force", is_flag=True, default=False, help="Force redeploy even if no changes detected"
 )
 @click.option(
-    "--env", "-e",
+    "--env",
+    "-e",
     default=None,
     envvar="VYSTAK_ENV",
     help="Environment name. Applies vystak.<env>.py overlay if present.",

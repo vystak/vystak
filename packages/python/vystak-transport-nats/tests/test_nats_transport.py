@@ -148,9 +148,7 @@ class _FakeDispatcher:
 
         return _gen()
 
-    async def dispatch_responses_create(
-        self, request: dict, metadata: dict
-    ) -> dict:
+    async def dispatch_responses_create(self, request: dict, metadata: dict) -> dict:
         self.responses_create_calls.append((request, metadata))
         return {"id": "resp-1", "status": "completed"}
 
