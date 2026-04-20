@@ -290,10 +290,16 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append("")
     lines.append("")
 
-    # --- A2AHandler instance ---
+    # --- A2AHandler instance (with opt-in idempotency cache) ---
+    lines.append("from vystak.transport import A2AResult as _A2AResult")
+    lines.append("from vystak.transport import IdempotencyCache as _IdempotencyCache")
+    lines.append("import os as _idemp_os")
+    lines.append("_idemp_ttl = float(_idemp_os.environ.get('VYSTAK_IDEMPOTENCY_TTL', '60'))")
+    lines.append("_a2a_idempotency_cache = _IdempotencyCache[_A2AResult](ttl_seconds=_idemp_ttl)")
     lines.append("_a2a_handler = A2AHandler(")
     lines.append("    one_shot=_a2a_one_shot,")
     lines.append("    streaming=_a2a_streaming,")
+    lines.append("    idempotency_cache=_a2a_idempotency_cache,")
     lines.append(")")
     lines.append("")
     lines.append("")
