@@ -6,9 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
-
 from vystak_cli.commands.destroy import destroy as destroy_cmd
-
 
 HASHI_YAML = """\
 providers:

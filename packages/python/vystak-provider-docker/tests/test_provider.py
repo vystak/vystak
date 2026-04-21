@@ -353,8 +353,8 @@ class TestVaultSubgraph:
         per-principal approle / approle-creds / vault-agent nodes, and the
         agent node gains a dependency on its sidecar."""
         from vystak.schema.common import VaultMode, VaultType
-        from vystak.schema.vault import Vault
         from vystak.schema.secret import Secret
+        from vystak.schema.vault import Vault
 
         # Replace the sample agent with one that declares a secret — the
         # principal map is empty otherwise.
@@ -403,11 +403,10 @@ class TestVaultSubgraph:
             mock_graph.execute.return_value = mock_results
             MockGraph.return_value = mock_graph
             # Patch VaultClient so we don't try to open a real HTTP conn.
-            with patch("vystak_provider_docker.provider.Path"):
-                with patch(
-                    "vystak_provider_docker.vault_client.hvac.Client"
-                ):
-                    provider.apply(plan)
+            with patch("vystak_provider_docker.provider.Path"), patch(
+                "vystak_provider_docker.vault_client.hvac.Client"
+            ):
+                provider.apply(plan)
 
         node_names = [n.name for n in added_nodes]
         # Core vault subgraph nodes

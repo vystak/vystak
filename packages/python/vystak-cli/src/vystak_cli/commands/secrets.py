@@ -413,9 +413,8 @@ def diff_cmd(file: str, env_file: str):
     if vault is None:
         for name in declared:
             in_env = name in env_values
-            click.echo(
-                f"  {name}  {'env-only (vault missing)' if in_env else 'missing (absent in env and vault)'}"
-            )
+            status = "env-only (vault missing)" if in_env else "missing (absent in env and vault)"
+            click.echo(f"  {name}  {status}")
         return
 
     if vault.type is VaultType.VAULT:

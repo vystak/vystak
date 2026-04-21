@@ -408,9 +408,11 @@ def test_rotate_approle_single_principal(tmp_path):
         fake = MagicMock()
         fake.upsert_approle.return_value = ("role-new", "secret-new")
         mock_vc.return_value = fake
-        with patch("vystak_cli.commands.secrets._write_approle_volume"):
-            with patch("vystak_cli.commands.secrets._restart_sidecar"):
-                result = runner.invoke(
+        with (
+            patch("vystak_cli.commands.secrets._write_approle_volume"),
+            patch("vystak_cli.commands.secrets._restart_sidecar"),
+        ):
+            result = runner.invoke(
                     secrets,
                     [
                         "rotate-approle",

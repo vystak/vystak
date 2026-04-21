@@ -110,7 +110,11 @@ def test_destroy_success(mock_provider_cls):
     assert result.exit_code == 0
     assert "Destroyed" in result.output
     mock_provider.destroy.assert_called_once_with(
-        "test-bot", include_resources=False, no_wait=False
+        "test-bot",
+        include_resources=False,
+        no_wait=False,
+        delete_vault=False,
+        keep_sidecars=False,
     )
 
 
