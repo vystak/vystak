@@ -46,9 +46,6 @@ class _LateBoundUnsealNode(Provisionable):
             self._vault.unseal(keys)
         return ProvisionResult(name=self.name, success=True, info={})
 
-    def health_check(self) -> bool:
-        return True
-
     def destroy(self) -> None:
         pass
 
@@ -75,9 +72,6 @@ class _LateBoundKvSetupNode(Provisionable):
         self._vault.enable_kv_v2("secret")
         self._vault.enable_approle_auth()
         return ProvisionResult(name=self.name, success=True, info={})
-
-    def health_check(self) -> bool:
-        return True
 
     def destroy(self) -> None:
         pass

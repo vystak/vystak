@@ -153,13 +153,18 @@ def test_vault_deploy_end_to_end(tmp_path):
         ).json()
         assert status["sealed"] is False
 
-        # Agent container sees ANTHROPIC_API_KEY in env, NOT STRIPE_API_KEY
+        # Agent container sees ANTHROPIC_API_KEY in env, NOT STRIPE_API_KEY.
+        # exec_run with a list form avoids needing a shell for the pipeline.
         exec_result = client.containers.get(f"vystak-{AGENT_NAME}").exec_run(
-            "env | grep -E '^(ANTHROPIC|STRIPE)' | sort"
+            ["sh", "-c", "env | grep -E '^(ANTHROPIC|STRIPE)' | sort || true"]
         )
         out = exec_result.output.decode()
-        assert "ANTHROPIC_API_KEY=sk-ant-fake" in out
-        assert "STRIPE_API_KEY" not in out  # isolation holds
+        assert "ANTHROPIC_API_KEY=sk-ant-fake" in out, (
+            f"expected ANTHROPIC_API_KEY in agent env, got: {out!r}"
+        )
+        assert "STRIPE_API_KEY" not in out, (
+            f"isolation breach: workspace secret leaked into agent env: {out!r}"
+        )
 
     finally:
         _cleanup()
