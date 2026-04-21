@@ -62,3 +62,18 @@ def test_azure_workspace_vault_example_loads():
     assert agent.secrets[0].name == "ANTHROPIC_API_KEY"
     assert agent.workspace is not None
     assert agent.workspace.secrets[0].name == "STRIPE_API_KEY"
+
+
+def test_docker_workspace_vault_example_loads():
+    from pathlib import Path
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    p = Path(__file__).parent.parent.parent.parent.parent / "examples/docker-workspace-vault/vystak.yaml"
+    data = yaml.safe_load(p.read_text())
+    agents, channels, vault = load_multi_yaml(data)
+    assert vault is not None
+    assert vault.type.value == "vault"
+    assert vault.provider.type == "docker"
+    assert agents[0].workspace is not None
+    assert agents[0].workspace.secrets[0].name == "STRIPE_API_KEY"

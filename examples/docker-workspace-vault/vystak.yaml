@@ -1,0 +1,35 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+agents:
+  - name: assistant
+    instructions: Use charge_card for Stripe charges.
+    model: sonnet
+    secrets:
+      - name: ANTHROPIC_API_KEY
+    workspace:
+      name: tools
+      type: persistent
+      secrets:
+        - name: STRIPE_API_KEY
+      filesystem: true
+    skills:
+      - name: payments
+        tools: [charge_card]
+    platform: local
