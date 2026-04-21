@@ -467,10 +467,20 @@ class DockerProvider(PlatformProvider):
             )
 
     def destroy(self, agent_name: str, include_resources: bool = False, **kwargs) -> None:
+        delete_vault = bool(kwargs.get("delete_vault", False))
+        keep_sidecars = bool(kwargs.get("keep_sidecars", False))
+
         container = self._get_container(agent_name)
         if container is not None:
             container.stop()
             container.remove()
+
+        if self._vault and self._vault.type.value == "vault":
+            self._destroy_vault_resources(
+                agent_name=agent_name,
+                delete_vault=delete_vault,
+                keep_sidecars=keep_sidecars,
+            )
 
         if include_resources and self._agent:
             from vystak_provider_docker.nodes.service import DockerServiceNode
@@ -478,6 +488,59 @@ class DockerProvider(PlatformProvider):
             for svc in self._all_services():
                 node = DockerServiceNode(self._client, svc, SECRETS_PATH)
                 node.destroy()
+
+    def _destroy_vault_resources(
+        self, *, agent_name: str, delete_vault: bool, keep_sidecars: bool
+    ) -> None:
+        """Tear down Hashi Vault-specific Docker resources.
+
+        Default: remove per-principal Vault Agent sidecars and their
+        secrets/approle volumes. The Vault server container, its data
+        volume, and the host-side init.json are preserved so subsequent
+        applies can auto-unseal — unless ``delete_vault`` is set.
+        """
+        principals = [f"{agent_name}-agent"]
+        if (
+            self._agent
+            and self._agent.workspace is not None
+            and self._agent.workspace.secrets
+        ):
+            principals.append(f"{agent_name}-workspace")
+
+        if not keep_sidecars:
+            for p in principals:
+                for cname in (f"vystak-{p}-vault-agent",):
+                    try:
+                        c = self._client.containers.get(cname)
+                        c.stop()
+                        c.remove()
+                    except docker.errors.NotFound:
+                        pass
+                for vol_name in (
+                    f"vystak-{p}-secrets",
+                    f"vystak-{p}-approle",
+                ):
+                    try:
+                        v = self._client.volumes.get(vol_name)
+                        v.remove()
+                    except docker.errors.NotFound:
+                        pass
+
+        if delete_vault:
+            try:
+                c = self._client.containers.get("vystak-vault")
+                c.stop()
+                c.remove()
+            except docker.errors.NotFound:
+                pass
+            try:
+                v = self._client.volumes.get("vystak-vault-data")
+                v.remove()
+            except docker.errors.NotFound:
+                pass
+            init_path = Path(".vystak/vault/init.json")
+            if init_path.exists():
+                init_path.unlink()
 
     def status(self, agent_name: str) -> AgentStatus:
         container = self._get_container(agent_name)
