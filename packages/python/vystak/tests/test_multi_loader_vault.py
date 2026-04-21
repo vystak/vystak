@@ -53,8 +53,11 @@ def test_vault_references_unknown_provider_raises():
         load_multi_yaml(data)
 
 
-def test_workspace_with_secrets_on_non_azure_platform_raises():
+def test_workspace_with_secrets_on_docker_without_vault_raises():
+    """Docker platform + workspace secrets requires a HashiCorp Vault
+    declaration. Without one, there is no isolation mechanism."""
     data = copy.deepcopy(AZURE_ONE_AGENT_WITH_VAULT)
+    data.pop("vault", None)  # strip Azure KV entirely
     data["providers"]["docker"] = {"type": "docker"}
     data["platforms"]["docker"] = {"type": "docker", "provider": "docker"}
     data["agents"][0]["platform"] = "docker"
@@ -63,10 +66,31 @@ def test_workspace_with_secrets_on_non_azure_platform_raises():
         "type": "persistent",
         "secrets": [{"name": "STRIPE_API_KEY"}],
     }
-    with pytest.raises(
-        ValueError, match="only supports workspace-scoped secrets on Azure"
-    ):
+    with pytest.raises(ValueError, match="no HashiCorp Vault is declared"):
         load_multi_yaml(data)
+
+
+def test_workspace_with_secrets_on_docker_with_hashi_vault_loads():
+    """Docker platform + workspace secrets + HashiCorp Vault = valid."""
+    data = copy.deepcopy(AZURE_ONE_AGENT_WITH_VAULT)
+    data["providers"]["docker"] = {"type": "docker"}
+    data["platforms"]["docker"] = {"type": "docker", "provider": "docker"}
+    data["vault"] = {
+        "name": "vystak-vault",
+        "provider": "docker",
+        "type": "vault",
+        "mode": "deploy",
+        "config": {},
+    }
+    data["agents"][0]["platform"] = "docker"
+    data["agents"][0]["workspace"] = {
+        "name": "ws",
+        "type": "persistent",
+        "secrets": [{"name": "STRIPE_API_KEY"}],
+    }
+    agents, _channels, vault = load_multi_yaml(data)
+    assert vault is not None and vault.type.value == "vault"
+    assert agents[0].workspace.secrets[0].name == "STRIPE_API_KEY"
 
 
 def test_vault_type_vault_requires_docker_provider():

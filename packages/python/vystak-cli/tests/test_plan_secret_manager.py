@@ -137,5 +137,73 @@ def test_plan_vault_output_never_leaks_secret_values(tmp_path):
     assert "fake-value" not in out
 
 
+HASHI_VAULT_YAML = """\
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker}
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+models:
+  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
+agents:
+  - name: assistant
+    model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    workspace:
+      name: tools
+      type: persistent
+      secrets:
+        - {name: STRIPE_API_KEY}
+"""
+
+
+def test_plan_hashi_vault_sections(tmp_path):
+    """Hashi Vault configs emit AppRoles + Policies (not Identities + Grants)."""
+    config = tmp_path / "vystak.yaml"
+    config.write_text(HASHI_VAULT_YAML)
+
+    runner = CliRunner()
+    with patch(
+        "vystak_cli.commands.plan.get_provider",
+        return_value=_stub_provider_for_plan(),
+    ):
+        result = runner.invoke(plan_cmd, ["--file", str(config)])
+
+    assert result.exit_code == 0, result.output
+    # Hashi-specific section headers
+    assert "Vault:" in result.output
+    assert "AppRoles:" in result.output
+    assert "Policies:" in result.output
+    # KV-specific headers must NOT appear
+    assert "Identities:" not in result.output
+    assert "Grants:" not in result.output
+
+    # Vault row shows type=vault, mode=deploy, provider=docker
+    assert "vystak-vault" in result.output
+    assert "vault, deploy, docker" in result.output
+    assert "will start" in result.output  # hashi mode=deploy uses "start"
+
+    # Both principals appear
+    assert "assistant-agent" in result.output
+    assert "assistant-workspace" in result.output
+
+    # Policy rows mention the scoped secrets
+    assert "ANTHROPIC_API_KEY" in result.output
+    assert "STRIPE_API_KEY" in result.output
+    assert "(read)" in result.output  # policy capability
+
+    # Values never printed
+    assert "sk-" not in result.output
+    assert "fake-value" not in result.output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

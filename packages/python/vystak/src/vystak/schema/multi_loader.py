@@ -102,22 +102,37 @@ def load_multi_yaml(
 
         agent = Agent.model_validate(agent_data)
 
-        # Cross-object check: workspace secrets require Azure provider.
-        # v1 only supports workspace-scoped secrets on Azure (ACA
-        # lifecycle:None + per-container secretRef).
+        # Cross-object check: workspace secrets need a compatible backend.
+        # - Azure provider: Azure Key Vault via ACA lifecycle:None + secretRef.
+        # - Docker provider: HashiCorp Vault via per-principal AppRole +
+        #   Vault Agent sidecar + per-container secrets volume.
+        # A Docker-platform agent without a declared Hashi Vault has no
+        # mechanism to isolate workspace secrets from the agent container
+        # and is therefore rejected.
         if agent.workspace and agent.workspace.secrets:
             platform_provider_type = (
                 agent.platform.provider.type
                 if agent.platform and agent.platform.provider
                 else None
             )
-            if platform_provider_type != "azure":
+            if platform_provider_type == "docker":
+                from vystak.schema.common import VaultType
+
+                if vault is None or vault.type is not VaultType.VAULT:
+                    raise ValueError(
+                        f"Workspace '{agent.workspace.name}' on agent "
+                        f"'{agent.name}' declares secrets on a Docker platform, "
+                        f"but no HashiCorp Vault is declared. Add a "
+                        f"'vault: {{type: vault, provider: docker, ...}}' "
+                        f"section to isolate workspace secrets from the agent "
+                        f"container."
+                    )
+            elif platform_provider_type != "azure":
                 raise ValueError(
                     f"Workspace '{agent.workspace.name}' on agent '{agent.name}' "
                     f"declares secrets, but the agent's platform provider is "
-                    f"'{platform_provider_type}'. v1 only supports "
-                    f"workspace-scoped secrets on Azure (ACA lifecycle:None). "
-                    f"See follow-up spec for HashiCorp Vault."
+                    f"'{platform_provider_type}'. Supported: Azure (Key Vault) "
+                    f"or Docker (HashiCorp Vault)."
                 )
 
         agents.append(agent)

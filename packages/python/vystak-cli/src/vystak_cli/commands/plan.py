@@ -94,17 +94,31 @@ def plan(files, file_path):
 
 
 def _emit_vault_plan(defs) -> None:
-    """Emit Vault / Identities / Secrets / Grants sections when a vault is
-    declared in the loaded config.
+    """Emit Vault-related plan sections when a vault is declared.
+
+    Dispatches by ``vault.type`` — Azure Key Vault (v1) emits Identities /
+    Grants, while HashiCorp Vault emits AppRoles / Policies. The shared
+    Vault header + Secrets name-list sit in each helper so callers don't
+    need to know the branch structure.
 
     Kept offline: the real push/skip decision happens at `apply` time inside
-    ``SecretSyncNode`` — plan only surfaces *what will be attempted*. No secret
-    VALUES are ever printed here at any verbosity.
+    the relevant SecretSync node — plan only surfaces *what will be
+    attempted*. No secret VALUES are ever printed here at any verbosity.
     """
     vault = getattr(defs, "vault", None)
     if vault is None:
         return
 
+    from vystak.schema.common import VaultType
+
+    if vault.type is VaultType.VAULT:
+        _print_vault_sections_hashi(vault, defs.agents, defs.channels)
+    else:  # KEY_VAULT
+        _print_vault_sections_kv(vault, defs.agents, defs.channels)
+
+
+def _print_vault_sections_kv(vault, agents, channels) -> None:
+    """v1 Azure Key Vault output: Vault / Identities / Secrets / Grants."""
     # --- Vault
     create_or_link = "create" if vault.mode.value == "deploy" else "link"
     click.echo("Vault:")
@@ -117,7 +131,7 @@ def _emit_vault_plan(defs) -> None:
 
     # --- Identities (one UAMI per agent-side and workspace-side secret set)
     click.echo("Identities:")
-    for agent in defs.agents:
+    for agent in agents:
         if agent.secrets:
             click.echo(f"  {agent.name}-agent      will create (UAMI, lifecycle: None)")
         if agent.workspace is not None and agent.workspace.secrets:
@@ -127,7 +141,7 @@ def _emit_vault_plan(defs) -> None:
     # --- Secrets — declared-name list only, status deferred to apply time
     click.echo("Secrets:")
     seen: set[str] = set()
-    for agent in defs.agents:
+    for agent in agents:
         for s in agent.secrets:
             if s.name in seen:
                 continue
@@ -145,7 +159,7 @@ def _emit_vault_plan(defs) -> None:
                     f"  {s.name}  will push  "
                     f"(presence depends on .env and vault state)"
                 )
-    for channel in defs.channels:
+    for channel in channels:
         for s in channel.secrets:
             if s.name in seen:
                 continue
@@ -158,7 +172,7 @@ def _emit_vault_plan(defs) -> None:
 
     # --- Grants — agent UAMI / workspace UAMI gets read on each declared secret
     click.echo("Grants:")
-    for agent in defs.agents:
+    for agent in agents:
         for s in agent.secrets:
             click.echo(f"  {agent.name}-agent      \u2192 {s.name}  will assign")
         if agent.workspace is not None:
@@ -166,4 +180,81 @@ def _emit_vault_plan(defs) -> None:
                 click.echo(
                     f"  {agent.name}-workspace  \u2192 {s.name}  will assign"
                 )
+    click.echo()
+
+
+def _print_vault_sections_hashi(vault, agents, channels) -> None:
+    """HashiCorp Vault output: Vault / AppRoles / Secrets / Policies.
+
+    - AppRoles stand in for KV's UAMI identities (one per principal that
+      needs to read secrets).
+    - Policies stand in for KV's Grants (each principal's AppRole is
+      bound to an HCL policy granting read on its secret paths).
+    """
+    start_or_link = "start" if vault.mode.value == "deploy" else "link"
+    click.echo("Vault:")
+    click.echo(
+        f"  {vault.name} "
+        f"({vault.type.value}, {vault.mode.value}, {vault.provider.name})"
+        f"  will {start_or_link}"
+    )
+    click.echo()
+
+    # --- AppRoles (one per principal that needs secrets)
+    click.echo("AppRoles:")
+    for a in agents:
+        if a.secrets:
+            count = len(a.secrets)
+            plural = "s" if count != 1 else ""
+            click.echo(
+                f"  {a.name}-agent      will create (policy: {count} secret{plural})"
+            )
+        if a.workspace is not None and a.workspace.secrets:
+            count = len(a.workspace.secrets)
+            plural = "s" if count != 1 else ""
+            click.echo(
+                f"  {a.name}-workspace  will create (policy: {count} secret{plural})"
+            )
+    click.echo()
+
+    # --- Secrets — declared-name list only, values never printed
+    click.echo("Secrets:")
+    seen: set[str] = set()
+    for a in agents:
+        for s in a.secrets:
+            if s.name in seen:
+                continue
+            seen.add(s.name)
+            click.echo(
+                f"  {s.name}    will push  "
+                f"(presence depends on .env and vault state)"
+            )
+        if a.workspace is not None:
+            for s in a.workspace.secrets:
+                if s.name in seen:
+                    continue
+                seen.add(s.name)
+                click.echo(
+                    f"  {s.name}    will push  "
+                    f"(presence depends on .env and vault state)"
+                )
+    for channel in channels:
+        for s in channel.secrets:
+            if s.name in seen:
+                continue
+            seen.add(s.name)
+            click.echo(
+                f"  {s.name}    will push  "
+                f"(presence depends on .env and vault state)"
+            )
+    click.echo()
+
+    # --- Policies — AppRole-per-principal gets read on each declared path
+    click.echo("Policies:")
+    for a in agents:
+        for s in a.secrets:
+            click.echo(f"  {a.name}-agent      \u2192 {s.name}  (read)")
+        if a.workspace is not None:
+            for s in a.workspace.secrets:
+                click.echo(f"  {a.name}-workspace  \u2192 {s.name}  (read)")
     click.echo()
