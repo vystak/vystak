@@ -173,3 +173,52 @@ def test_apply_without_vault_passes_none(tmp_path):
     assert result.exit_code == 0, result.output
     kwargs = mock_apply.call_args.kwargs
     assert kwargs["vault"] is None
+
+
+FIXTURE_YAML_WITH_HASHI_VAULT = """\
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker}
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+models:
+  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
+agents:
+  - name: assistant
+    model: sonnet
+    secrets: [{name: ANTHROPIC_API_KEY}]
+    platform: local
+"""
+
+
+def test_apply_threads_vault_into_docker_provider(tmp_path):
+    """Hashi Vault declarations flow through apply into DockerProvider the
+    same way Azure KV declarations do for AzureProvider — vault object and
+    env_values both threaded through _run_provider_apply."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+        td_path = Path(td)
+        config = td_path / "vystak.yaml"
+        config.write_text(FIXTURE_YAML_WITH_HASHI_VAULT)
+        env = td_path / ".env"
+        env.write_text("ANTHROPIC_API_KEY=v\n")
+
+        with patch("vystak_cli.commands.apply._run_provider_apply") as mock_apply:
+            result = runner.invoke(
+                cli,
+                ["apply", "--file", str(config), "--env-file", str(env)],
+                catch_exceptions=False,
+            )
+
+    assert result.exit_code == 0, result.output
+    kwargs = mock_apply.call_args.kwargs
+    assert kwargs["vault"] is not None
+    assert kwargs["vault"].type.value == "vault"
+    assert kwargs["vault"].provider.type == "docker"
+    assert kwargs["env_values"]["ANTHROPIC_API_KEY"] == "v"

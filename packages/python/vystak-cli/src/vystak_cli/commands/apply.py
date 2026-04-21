@@ -136,9 +136,10 @@ def _run_provider_apply(
         provider.set_agent(agent)
 
         # Thread vault + env_values + flags into the provider *before* plan/
-        # apply. DockerProvider.set_vault raises in plan() when a vault is set
-        # (v1 does not support vault-backed secrets on Docker); AzureProvider
-        # uses these to build the KV/UAMI/Grant/SecretSync subgraph.
+        # apply. AzureProvider uses these to build the KV/UAMI/Grant/SecretSync
+        # subgraph (v1 secret-manager). DockerProvider uses them to build the
+        # HashiCorp Vault subgraph (Server/Init/Unseal/AppRole/Sidecar) and
+        # rejects Vault(type='key-vault') at plan time.
         if hasattr(provider, "set_vault"):
             provider.set_vault(vault)
         if hasattr(provider, "set_env_values"):
