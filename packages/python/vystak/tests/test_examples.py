@@ -65,12 +65,10 @@ def test_azure_workspace_vault_example_loads():
 
 
 def test_docker_workspace_vault_example_loads():
-    from pathlib import Path
-    import yaml
-    from vystak.schema.multi_loader import load_multi_yaml
+    path = _examples_dir() / "docker-workspace-vault" / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
 
-    p = Path(__file__).parent.parent.parent.parent.parent / "examples/docker-workspace-vault/vystak.yaml"
-    data = yaml.safe_load(p.read_text())
+    data = yaml.safe_load(path.read_text())
     agents, channels, vault = load_multi_yaml(data)
     assert vault is not None
     assert vault.type.value == "vault"
