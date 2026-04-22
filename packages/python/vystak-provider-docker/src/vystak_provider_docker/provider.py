@@ -590,11 +590,19 @@ class DockerProvider(PlatformProvider):
     def destroy(self, agent_name: str, include_resources: bool = False, **kwargs) -> None:
         delete_vault = bool(kwargs.get("delete_vault", False))
         keep_sidecars = bool(kwargs.get("keep_sidecars", False))
+        delete_workspace_data = bool(kwargs.get("delete_workspace_data", False))
+        keep_workspace = bool(kwargs.get("keep_workspace", False))
 
         container = self._get_container(agent_name)
         if container is not None:
             container.stop()
             container.remove()
+
+        if not keep_workspace:
+            self._destroy_workspace_resources(
+                agent_name=agent_name,
+                delete_workspace_data=delete_workspace_data,
+            )
 
         if self._vault and self._vault.type.value == "vault":
             self._destroy_vault_resources(
@@ -609,6 +617,32 @@ class DockerProvider(PlatformProvider):
             for svc in self._all_services():
                 node = DockerServiceNode(self._client, svc, SECRETS_PATH)
                 node.destroy()
+
+    def _destroy_workspace_resources(
+        self, *, agent_name: str, delete_workspace_data: bool
+    ) -> None:
+        """Stop and remove the per-agent workspace container.
+
+        Default: stops + removes the ``vystak-<agent>-workspace`` container
+        but preserves ``vystak-<agent>-workspace-data`` so the workspace
+        can be recreated without losing artifacts. Pass
+        ``delete_workspace_data=True`` to wipe the volume too.
+        """
+        try:
+            ws = self._client.containers.get(f"vystak-{agent_name}-workspace")
+            ws.stop()
+            ws.remove()
+        except docker.errors.NotFound:
+            pass
+
+        if delete_workspace_data:
+            try:
+                vol = self._client.volumes.get(
+                    f"vystak-{agent_name}-workspace-data"
+                )
+                vol.remove()
+            except docker.errors.NotFound:
+                pass
 
     def _destroy_vault_resources(
         self, *, agent_name: str, delete_vault: bool, keep_sidecars: bool

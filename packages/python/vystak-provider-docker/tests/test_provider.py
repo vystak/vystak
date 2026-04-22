@@ -260,30 +260,44 @@ class TestApply:
 
 
 class TestDestroy:
-    def test_removes_container(self, provider, mock_docker_client):
+    def test_removes_container(self, provider, mock_docker_client, not_found_error):
         client, _ = mock_docker_client
-        container = MagicMock()
-        client.containers.get.return_value = container
+        agent_container = MagicMock()
+
+        def _get(name):
+            if name == "vystak-test-bot":
+                return agent_container
+            raise not_found_error("not found")
+
+        client.containers.get.side_effect = _get
         provider.destroy("test-bot")
-        container.stop.assert_called_once()
-        container.remove.assert_called_once()
+        agent_container.stop.assert_called_once()
+        agent_container.remove.assert_called_once()
 
     def test_not_found(self, provider, mock_docker_client, not_found_error):
         client, _ = mock_docker_client
         client.containers.get.side_effect = not_found_error("not found")
         provider.destroy("test-bot")  # should not raise
 
-    def test_include_resources(self, provider, mock_docker_client, sample_agent):
+    def test_include_resources(
+        self, provider, mock_docker_client, sample_agent, not_found_error
+    ):
         """destroy with include_resources uses DockerServiceNode.destroy()."""
         client, _ = mock_docker_client
-        container = MagicMock()
-        client.containers.get.return_value = container
+        agent_container = MagicMock()
+
+        def _get(name):
+            if name == "vystak-test-bot":
+                return agent_container
+            raise not_found_error("not found")
+
+        client.containers.get.side_effect = _get
         # Empty containers list for service destroy
         client.containers.list.return_value = []
         provider.set_agent(sample_agent)
         provider.destroy("test-bot", include_resources=True)
-        container.stop.assert_called_once()
-        container.remove.assert_called_once()
+        agent_container.stop.assert_called_once()
+        agent_container.remove.assert_called_once()
 
 
 class TestVaultRejection:

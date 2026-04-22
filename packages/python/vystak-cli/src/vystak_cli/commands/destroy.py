@@ -40,7 +40,35 @@ from vystak_cli.provider_factory import get_provider
         "secrets/approle volumes in place. Useful during iteration."
     ),
 )
-def destroy(files, file_path, agent_name, include_resources, no_wait, delete_vault, keep_sidecars):
+@click.option(
+    "--delete-workspace-data",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also remove the vystak-<agent>-workspace-data volume, wiping "
+        "every file the workspace has written. Unrecoverable."
+    ),
+)
+@click.option(
+    "--keep-workspace",
+    is_flag=True,
+    default=False,
+    help=(
+        "Leave the vystak-<agent>-workspace container running. Useful "
+        "during iteration when only the agent container needs recycling."
+    ),
+)
+def destroy(
+    files,
+    file_path,
+    agent_name,
+    include_resources,
+    no_wait,
+    delete_vault,
+    keep_sidecars,
+    delete_workspace_data,
+    keep_workspace,
+):
     """Stop and remove deployed agents and channels."""
     if agent_name and not files and not file_path:
         from vystak_provider_docker import DockerProvider
@@ -53,6 +81,8 @@ def destroy(files, file_path, agent_name, include_resources, no_wait, delete_vau
             no_wait=no_wait,
             delete_vault=delete_vault,
             keep_sidecars=keep_sidecars,
+            delete_workspace_data=delete_workspace_data,
+            keep_workspace=keep_workspace,
         )
         click.echo(f"Destroyed: {agent_name}")
         return
@@ -112,6 +142,8 @@ def destroy(files, file_path, agent_name, include_resources, no_wait, delete_vau
                 no_wait=no_wait,
                 delete_vault=delete_vault,
                 keep_sidecars=keep_sidecars,
+                delete_workspace_data=delete_workspace_data,
+                keep_workspace=keep_workspace,
             )
             click.echo("  OK" if not no_wait else "  OK (delete in progress)")
         except Exception as e:
