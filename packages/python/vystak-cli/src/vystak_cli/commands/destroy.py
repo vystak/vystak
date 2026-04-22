@@ -92,6 +92,11 @@ def destroy(files, file_path, agent_name, include_resources, no_wait, delete_vau
         click.echo(f"Destroying agent: {agent.name}")
         provider = get_provider(agent)
         provider.set_agent(agent)
+        # Thread vault declaration so the provider knows to tear down
+        # Vault-specific resources (sidecars, approle volumes, secret
+        # volumes) via its _destroy_vault_resources branch.
+        if hasattr(provider, "set_vault") and getattr(defs, "vault", None):
+            provider.set_vault(defs.vault)
 
         if include_resources and hasattr(provider, "list_resources"):
             resources = provider.list_resources(agent.name)

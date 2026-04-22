@@ -53,11 +53,26 @@ class VaultAgentSidecarNode(Provisionable):
             "volume_name"
         ]
 
-        # Ensure the secrets volume exists (main container will mount it too)
+        # Ensure the secrets volume exists (main container will mount it too).
+        # Newly-created named volumes are owned root:root. The Vault Agent
+        # container runs as the 'vault' user (UID 100) and writes
+        # secrets.env using atomic-rename semantics (write tmpfile, rename) —
+        # which requires write access to the directory itself, not just to
+        # the file perms set by `template.perms`. Pre-chown to UID 100 via
+        # a throwaway alpine container so subsequent sidecar writes succeed.
+        vol_existed = True
         try:
             self._client.volumes.get(self.secrets_volume_name)
         except docker.errors.NotFound:
             self._client.volumes.create(name=self.secrets_volume_name)
+            vol_existed = False
+        if not vol_existed:
+            self._client.containers.run(
+                image="alpine:3.19",
+                command=["sh", "-c", "chown 100:100 /shared && chmod 755 /shared"],
+                volumes={self.secrets_volume_name: {"bind": "/shared", "mode": "rw"}},
+                remove=True,
+            )
 
         # Write the agent config to a bind-mounted dir so Vault Agent can read it
         config_dir = Path(".vystak") / "vault-agents" / self._principal_name

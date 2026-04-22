@@ -43,13 +43,16 @@ class AppRoleCredentialsNode(Provisionable):
             self._client.volumes.create(name=self.volume_name)
 
         # Write the two credential files via a throwaway container. Use
-        # printf to avoid quoting issues with arbitrary credential content;
-        # chmod 400 after write.
+        # printf to avoid quoting issues with arbitrary credential content.
+        # chmod 444 (world-readable): the files are written by root (alpine
+        # default) but the Vault Agent sidecar runs as UID 100 ('vault' user)
+        # and needs to read them. Volume isolation — the mount only exists
+        # in the one sidecar container — is the security boundary.
         script = (
             f"printf %s {shlex.quote(role_id)} > /target/role_id && "
-            f"chmod 400 /target/role_id && "
+            f"chmod 444 /target/role_id && "
             f"printf %s {shlex.quote(secret_id)} > /target/secret_id && "
-            f"chmod 400 /target/secret_id"
+            f"chmod 444 /target/secret_id"
         )
         self._client.containers.run(
             image="alpine:3.19",

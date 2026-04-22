@@ -247,7 +247,12 @@ class DockerProvider(PlatformProvider):
         cfg = self._vault.config or {}
         image = cfg.get("image", "hashicorp/vault:1.17")
         port = cfg.get("port", 8200)
-        host_port = cfg.get("host_port")
+        # Host-side `vystak apply` runs init/unseal/kv ops via HTTP to the Vault
+        # container. DNS name `vystak-vault` only resolves inside the Docker
+        # network, so the host needs a bound port. Default to the same port
+        # the server listens on internally; user can override with config.host_port
+        # to avoid collisions (e.g., two vystak projects on one host).
+        host_port = cfg.get("host_port", port)
         key_shares = cfg.get("seal_key_shares", 5)
         key_threshold = cfg.get("seal_key_threshold", 3)
         vault_address = f"http://vystak-vault:{port}"
