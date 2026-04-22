@@ -46,27 +46,37 @@ def generate_workspace_dockerfile(
 
     # --- Vystak appendix ---
     lines.append("# --- Vystak appendix (do not edit) ---")
+    # Claim UIDs 100 (vystak-agent) and 101 (vystak-dev) BEFORE installing
+    # openssh-server. Debian slim bases create `sshd` at UID 100 during
+    # openssh-server postinst if that UID is free, which would then collide
+    # with our useradd. Some bases (e.g. cimg/*) also pre-populate these
+    # UIDs — so defensively remove any conflicting user first.
+    lines.append(
+        "RUN (getent passwd 100 >/dev/null && "
+        "userdel -f \"$(getent passwd 100 | cut -d: -f1)\" || true) && "
+        "(getent passwd 101 >/dev/null && "
+        "userdel -f \"$(getent passwd 101 | cut -d: -f1)\" || true) && "
+        "useradd -m -u 100 vystak-agent && "
+        "useradd -m -u 101 vystak-dev"
+    )
     # openssh-server + vystak-workspace-rpc (installed via pip from bundled source)
+    # sshd's own user lands on the next free UID since 100 is now ours.
     lines.append(
         "RUN apt-get update && apt-get install -y --no-install-recommends "
         "openssh-server git ca-certificates python3 python3-pip && "
         "rm -rf /var/lib/apt/lists/* && "
-        "mkdir -p /var/run/sshd /vystak/ssh /shared"
-    )
-    # Users
-    lines.append(
-        "RUN useradd -m -u 100 vystak-agent && "
-        "useradd -m -u 101 vystak-dev && "
+        "mkdir -p /var/run/sshd /vystak/ssh /shared && "
         "chown -R vystak-agent /workspace"
     )
     # sshd config
     lines.append("COPY vystak-sshd.conf /etc/ssh/sshd_config.d/50-vystak.conf")
-    # vystak-workspace-rpc source
-    lines.append("COPY vystak_workspace_rpc /opt/vystak_workspace_rpc")
+    # vystak-workspace-rpc: ship setup.py + package dir into one pip-installable tree
+    lines.append("COPY setup.py /opt/vystak_workspace_rpc_pkg/setup.py")
     lines.append(
-        "RUN pip3 install --break-system-packages /opt/vystak_workspace_rpc && "
-        "ln -s $(which vystak-workspace-rpc 2>/dev/null || "
-        "echo /usr/local/bin/python3) /usr/local/bin/vystak-workspace-rpc && "
+        "COPY vystak_workspace_rpc /opt/vystak_workspace_rpc_pkg/vystak_workspace_rpc"
+    )
+    lines.append(
+        "RUN pip3 install --break-system-packages /opt/vystak_workspace_rpc_pkg && "
         "printf '#!/bin/sh\\nexec python3 -m vystak_workspace_rpc \"$@\"\\n' "
         "> /usr/local/bin/vystak-workspace-rpc && "
         "chmod +x /usr/local/bin/vystak-workspace-rpc"
