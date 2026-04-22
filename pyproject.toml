@@ -61,6 +61,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/templates.py" = ["E501"]
 "packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py" = ["E501"]
 "packages/python/vystak-channel-slack/src/vystak_channel_slack/server_template.py" = ["E501"]
+"packages/python/vystak-provider-docker/src/vystak_provider_docker/templates.py" = ["E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"

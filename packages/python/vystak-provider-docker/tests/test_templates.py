@@ -81,3 +81,42 @@ def test_entrypoint_shim_has_wait_loop():
     shim = generate_entrypoint_shim()
     assert "seq 1 30" in shim  # 30-second wait
     assert "sleep 1" in shim
+
+
+def test_agent_hcl_includes_workspace_ssh_templates():
+    from vystak_provider_docker.templates import generate_agent_hcl_with_workspace_ssh
+
+    hcl = generate_agent_hcl_with_workspace_ssh(
+        vault_address="http://vystak-vault:8200",
+        secret_names=["ANTHROPIC_API_KEY"],
+        agent_name="assistant",
+        role="agent",  # client side — renders id_ed25519 + known_hosts
+    )
+    # Normal secrets.env template still present
+    assert "/shared/secrets.env" in hcl
+    # Agent-side SSH files
+    assert "/vystak/ssh/id_ed25519" in hcl
+    assert "/vystak/ssh/known_hosts" in hcl
+    assert '0400' in hcl  # private key perms
+    # Private-key template reads client-key
+    assert "_vystak/workspace-ssh/assistant/client-key" in hcl
+    # known_hosts reads host-key-pub
+    assert "_vystak/workspace-ssh/assistant/host-key-pub" in hcl
+    # Format: "vystak-assistant-workspace ssh-ed25519 ..."
+    assert "vystak-assistant-workspace" in hcl
+
+
+def test_workspace_hcl_includes_workspace_ssh_templates():
+    from vystak_provider_docker.templates import generate_agent_hcl_with_workspace_ssh
+
+    hcl = generate_agent_hcl_with_workspace_ssh(
+        vault_address="http://vystak-vault:8200",
+        secret_names=["STRIPE_API_KEY"],
+        agent_name="assistant",
+        role="workspace",  # server side — renders host key + authorized_keys
+    )
+    assert "/shared/ssh_host_ed25519_key" in hcl
+    assert "/shared/authorized_keys_vystak-agent" in hcl
+    assert '0600' in hcl  # host private key perms
+    assert "_vystak/workspace-ssh/assistant/host-key" in hcl
+    assert "_vystak/workspace-ssh/assistant/client-key-pub" in hcl
