@@ -205,5 +205,43 @@ def test_plan_hashi_vault_sections(tmp_path):
     assert "fake-value" not in result.output
 
 
+WORKSPACE_YAML = """\
+providers: {docker: {type: docker}, anthropic: {type: anthropic}}
+platforms: {local: {type: docker, provider: docker}}
+vault: {name: v, provider: docker, type: vault, mode: deploy, config: {}}
+models: {sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}}
+agents:
+  - name: coder
+    model: sonnet
+    platform: local
+    workspace:
+      name: dev
+      image: python:3.12-slim
+      provision: ["pip install ruff"]
+      persistence: volume
+"""
+
+
+def test_plan_workspace_section_shown_when_declared(tmp_path):
+    config = tmp_path / "vystak.yaml"
+    config.write_text(WORKSPACE_YAML)
+
+    runner = CliRunner()
+    with patch(
+        "vystak_cli.commands.plan.get_provider",
+        return_value=_stub_provider_for_plan(),
+    ):
+        result = runner.invoke(plan_cmd, ["--file", str(config)])
+
+    assert result.exit_code == 0, result.output
+    # Workspace section header appears
+    assert "Workspaces:" in result.output
+    # Image and persistence surfaced
+    assert "python:3.12-slim" in result.output
+    assert "persistence" in result.output.lower()
+    # Provision step count is shown
+    assert "provision steps: 1" in result.output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

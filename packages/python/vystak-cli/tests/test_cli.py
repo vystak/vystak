@@ -115,6 +115,8 @@ def test_destroy_success(mock_provider_cls):
         no_wait=False,
         delete_vault=False,
         keep_sidecars=False,
+        delete_workspace_data=False,
+        keep_workspace=False,
     )
 
 

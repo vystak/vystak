@@ -91,6 +91,40 @@ def plan(files, file_path):
         click.echo()
 
     _emit_vault_plan(defs)
+    _print_workspace_section(defs.agents)
+
+
+def _print_workspace_section(agents) -> None:
+    """Emit a ``Workspaces:`` section for every agent that declares one.
+
+    One line per workspace-bearing agent names the image (or Dockerfile)
+    and persistence mode; optional follow-on indented lines surface the
+    provision-step count and whether human SSH is enabled. Offline —
+    does not contact any provider.
+    """
+    ws_agents = [a for a in agents if a.workspace is not None]
+    if not ws_agents:
+        return
+
+    click.echo("Workspaces:")
+    for a in ws_agents:
+        ws = a.workspace
+        img = (
+            f"from Dockerfile {ws.dockerfile}"
+            if ws.dockerfile
+            else ws.image or "<no image>"
+        )
+        click.echo(
+            f"  {a.name}-workspace  image={img}  persistence={ws.persistence}"
+        )
+        if ws.provision:
+            click.echo(f"    provision steps: {len(ws.provision)}")
+        if ws.ssh:
+            click.echo(
+                f"    human SSH enabled (authorized_keys: "
+                f"{len(ws.ssh_authorized_keys)})"
+            )
+    click.echo()
 
 
 def _emit_vault_plan(defs) -> None:
