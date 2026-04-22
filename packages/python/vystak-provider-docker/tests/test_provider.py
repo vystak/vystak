@@ -421,6 +421,80 @@ class TestVaultSubgraph:
         # Agent node depends on its sidecar
         assert ("agent:test-bot", "vault-agent:test-bot-agent") in added_deps
 
+    def test_docker_provider_adds_workspace_node_when_workspace_declared(
+        self, provider, mock_docker_client, sample_agent, sample_code
+    ):
+        """When agent has a workspace AND vault is declared, apply()'s graph
+        contains the ssh-keygen node + the workspace node with the correct
+        dependency chain."""
+        from vystak.schema.common import VaultMode, VaultType
+        from vystak.schema.secret import Secret
+        from vystak.schema.vault import Vault
+        from vystak.schema.workspace import Workspace
+
+        sample_agent.secrets = [Secret(name="ANTHROPIC_API_KEY")]
+        sample_agent.workspace = Workspace(
+            name="dev", image="python:3.12-slim"
+        )
+
+        provider.set_generated_code(sample_code)
+        provider.set_agent(sample_agent)
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="docker", type="docker"),
+                type=VaultType.VAULT,
+                mode=VaultMode.DEPLOY,
+                config={},
+            )
+        )
+        provider.set_env_values({"ANTHROPIC_API_KEY": "k"})
+
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="h",
+            changes={},
+        )
+
+        added_nodes: list = []
+        added_deps: list[tuple[str, str]] = []
+
+        mock_results = {
+            "agent:test-bot": ProvisionResult(
+                name="agent:test-bot",
+                success=True,
+                info={"url": "http://localhost:8080"},
+            )
+        }
+
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.add.side_effect = lambda n: added_nodes.append(n)
+            mock_graph.add_dependency.side_effect = (
+                lambda a, b: added_deps.append((a, b))
+            )
+            mock_graph.execute.return_value = mock_results
+            MockGraph.return_value = mock_graph
+            with patch("vystak_provider_docker.provider.Path"), patch(
+                "vystak_provider_docker.vault_client.hvac.Client"
+            ):
+                provider.apply(plan)
+
+        node_names = [n.name for n in added_nodes]
+        assert "workspace-ssh-keygen:test-bot" in node_names
+        assert "workspace:test-bot" in node_names
+        # Dependency chain: keygen depends on kv-setup; workspace depends on
+        # keygen AND the workspace-principal vault-agent sidecar.
+        assert (
+            "workspace-ssh-keygen:test-bot",
+            "hashi-vault:kv-setup",
+        ) in added_deps
+        assert ("workspace:test-bot", "workspace-ssh-keygen:test-bot") in added_deps
+        # Agent node depends on workspace (so agent starts after workspace is up)
+        assert ("agent:test-bot", "workspace:test-bot") in added_deps
+
 
 class TestStatus:
     def test_running(self, provider, mock_docker_client):

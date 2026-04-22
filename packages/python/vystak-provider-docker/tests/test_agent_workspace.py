@@ -55,6 +55,11 @@ def test_set_workspace_context_populates_env(tmp_path, monkeypatch):
             changes={},
         ),
     )
+    # Real deployments always set both contexts (Spec 1: workspace requires
+    # vault). The /shared mount is added by set_vault_context; SSH keys for
+    # the agent are rendered into that same volume via vault-agent file
+    # templates. Test the combined path.
+    node.set_vault_context(secrets_volume_name="vystak-assistant-agent-secrets")
     node.set_workspace_context(workspace_host="vystak-assistant-workspace")
     with patch("vystak_provider_docker.nodes.agent.shutil.copytree"), patch(
         "vystak_provider_docker.nodes.agent.shutil.rmtree"
@@ -66,10 +71,6 @@ def test_set_workspace_context_populates_env(tmp_path, monkeypatch):
     run_kwargs = client.containers.run.call_args.kwargs
     env = run_kwargs.get("environment", {})
     assert env.get("VYSTAK_WORKSPACE_HOST") == "vystak-assistant-workspace"
-    # SSH volume mount for agent-side keys (written by agent's vault-agent sidecar).
-    # Harmonized path: the same `vystak-<agent>-agent-secrets` volume is mounted
-    # at /shared (for secrets.env delivery); the agent Dockerfile symlinks
-    # /vystak/ssh → /shared/ssh. The test only validates the run-call binding.
     volumes = run_kwargs.get("volumes", {})
     assert any(
         v.get("bind") == "/shared" and v.get("mode") == "ro"

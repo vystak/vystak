@@ -359,7 +359,117 @@ class DockerProvider(PlatformProvider):
 
             result_map[principal_name] = sidecar.secrets_volume_name
 
+        # Expose the vault_client so _add_workspace_nodes can reuse it
+        # (shared token state once the late-bound kv-setup node runs).
+        self._vault_client_for_workspace = vault_client
         return result_map
+
+    def _add_workspace_nodes(
+        self, graph, *, tools_dir: Path | None = None
+    ) -> str | None:
+        """Attach workspace + SSH-keygen nodes when Agent.workspace is declared.
+
+        Returns the workspace container DNS name for the agent-side set_
+        workspace_context wiring, or None when no workspace is declared.
+
+        Topological order:
+            hashi-vault:kv-setup → workspace-ssh-keygen:<agent>
+            vault-agent:<agent>-workspace + workspace-ssh-keygen → workspace:<agent>
+        """
+        agent = self._agent
+        if agent is None or agent.workspace is None:
+            return None
+
+        from vystak_provider_docker.nodes import (
+            DockerWorkspaceNode,
+            WorkspaceSshKeygenNode,
+        )
+
+        vault_client = getattr(self, "_vault_client_for_workspace", None)
+        if vault_client is None:
+            # Should never happen: vault is required for workspace.
+            raise RuntimeError(
+                "workspace declared but no vault_client available; "
+                "_add_vault_nodes must run before _add_workspace_nodes"
+            )
+
+        # SSH keygen — pushes keys to Vault under _vystak/workspace-ssh/<agent>/*
+        keygen = WorkspaceSshKeygenNode(
+            vault_client=vault_client,
+            docker_client=self._client,
+            agent_name=agent.name,
+        )
+        graph.add(keygen)
+        graph.add_dependency(keygen.name, "hashi-vault:kv-setup")
+
+        # Workspace container — depends on keygen + the workspace-principal
+        # vault-agent sidecar so /shared has the rendered SSH key files.
+        tools_path = tools_dir or (Path.cwd() / "tools")
+        ws_node = DockerWorkspaceNode(
+            client=self._client,
+            agent_name=agent.name,
+            workspace=agent.workspace,
+            tools_dir=tools_path,
+        )
+        graph.add(ws_node)
+        graph.add_dependency(ws_node.name, keygen.name)
+        graph.add_dependency(
+            ws_node.name, f"vault-agent:{agent.name}-workspace"
+        )
+
+        return ws_node.container_name
+
+    def _build_graph_for_tests(self, agent, *, tools_dir: Path | None = None):
+        """Test hook — builds the provisioning graph for the given agent
+        without executing it. Mirrors the public apply() flow: network,
+        vault subgraph (if declared), workspace subgraph (if declared),
+        agent node. Does not run the containers."""
+        from vystak.provisioning import ProvisionGraph
+
+        from vystak_provider_docker.nodes import (
+            DockerAgentNode,
+            DockerNetworkNode,
+        )
+
+        prev_agent = self._agent
+        self._agent = agent
+        try:
+            graph = ProvisionGraph()
+            graph.add(DockerNetworkNode(self._client))
+
+            vault_volume_map: dict[str, str] = {}
+            workspace_host: str | None = None
+            if self._vault is not None:
+                from vystak.schema.common import VaultType
+
+                if self._vault.type is VaultType.VAULT:
+                    vault_volume_map = self._add_vault_nodes(graph)
+                    workspace_host = self._add_workspace_nodes(
+                        graph, tools_dir=tools_dir
+                    )
+
+            agent_node = DockerAgentNode(
+                self._client,
+                agent,
+                self._generated_code
+                or type("_GC", (), {"files": {}, "entrypoint": "server.py"})(),
+                type("_Plan", (), {"target_hash": "test"})(),
+            )
+            agent_principal = f"{agent.name}-agent"
+            if agent_principal in vault_volume_map:
+                agent_node.set_vault_context(
+                    secrets_volume_name=vault_volume_map[agent_principal]
+                )
+            if workspace_host:
+                agent_node.set_workspace_context(workspace_host=workspace_host)
+            graph.add(agent_node)
+            if workspace_host:
+                graph.add_dependency(
+                    agent_node.name, f"workspace:{agent.name}"
+                )
+            return graph
+        finally:
+            self._agent = prev_agent
 
     def apply(self, plan: DeployPlan, *, peer_routes: str | None = None) -> DeployResult:
         if not self._generated_code:
@@ -406,11 +516,17 @@ class DockerProvider(PlatformProvider):
 
             # HashiCorp Vault subgraph — only when vault.type == 'vault'
             vault_volume_map: dict[str, str] = {}
+            workspace_host: str | None = None
             if self._vault is not None:
                 from vystak.schema.common import VaultType
 
                 if self._vault.type is VaultType.VAULT:
                     vault_volume_map = self._add_vault_nodes(graph)
+                    # Workspace subgraph rides on the vault — the ssh-keygen
+                    # node pushes keys to Vault, vault-agent sidecars render
+                    # them into per-principal volumes, workspace container
+                    # reads from /shared.
+                    workspace_host = self._add_workspace_nodes(graph)
 
             # Agent container
             agent_node = DockerAgentNode(
@@ -428,12 +544,18 @@ class DockerProvider(PlatformProvider):
                 agent_node.set_vault_context(
                     secrets_volume_name=vault_volume_map[agent_principal]
                 )
+            if workspace_host:
+                agent_node.set_workspace_context(workspace_host=workspace_host)
             graph.add(agent_node)
             # Main container depends on its sidecar being up so /shared has
             # credentials rendered before the entrypoint shim tries to load.
             if agent_principal and agent_principal in vault_volume_map:
                 graph.add_dependency(
                     agent_node.name, f"vault-agent:{agent_principal}"
+                )
+            if workspace_host:
+                graph.add_dependency(
+                    agent_node.name, f"workspace:{self._agent.name}"
                 )
 
             # Execute the graph

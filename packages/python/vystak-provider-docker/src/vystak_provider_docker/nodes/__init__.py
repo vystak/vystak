@@ -15,6 +15,8 @@ from vystak_provider_docker.nodes.service import DockerServiceNode
 from vystak_provider_docker.nodes.vault_agent import VaultAgentSidecarNode
 from vystak_provider_docker.nodes.vault_kv_setup import VaultKvSetupNode
 from vystak_provider_docker.nodes.vault_secret_sync import VaultSecretSyncNode
+from vystak_provider_docker.nodes.workspace import DockerWorkspaceNode
+from vystak_provider_docker.nodes.workspace_ssh_keygen import WorkspaceSshKeygenNode
 
 __all__ = [
     "AppRoleCredentialsNode",
@@ -23,6 +25,7 @@ __all__ = [
     "DockerChannelNode",
     "DockerNetworkNode",
     "DockerServiceNode",
+    "DockerWorkspaceNode",
     "HashiVaultInitNode",
     "HashiVaultServerNode",
     "HashiVaultUnsealNode",
@@ -30,4 +33,5 @@ __all__ = [
     "VaultAgentSidecarNode",
     "VaultKvSetupNode",
     "VaultSecretSyncNode",
+    "WorkspaceSshKeygenNode",
 ]
