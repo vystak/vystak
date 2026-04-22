@@ -1,0 +1,44 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+agents:
+  - name: coder
+    instructions: |
+      You are a coding assistant. Use fs.readFile to read, fs.edit to change,
+      exec.run to test, git.status / git.diff to review changes.
+    model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    skills:
+      - name: editing
+        tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]
+      - name: shell
+        tools: [exec.run, exec.shell]
+      - name: vcs
+        tools: [git.status, git.diff, git.commit]
+      - name: search
+        tools: [search_project]
+    workspace:
+      name: dev
+      image: python:3.12-slim
+      provision:
+        - apt-get update && apt-get install -y git ripgrep
+        - pip install ruff pytest
+      persistence: volume

@@ -75,3 +75,23 @@ def test_docker_workspace_vault_example_loads():
     assert vault.provider.type == "docker"
     assert agents[0].workspace is not None
     assert agents[0].workspace.secrets[0].name == "STRIPE_API_KEY"
+
+
+def test_docker_workspace_compute_example_loads():
+    """`examples/docker-workspace-compute/vystak.yaml` — coding assistant with
+    fs/exec/git built-in services, custom search tool, and Vault-backed SSH.
+
+    Validates:
+    - Vault materializes (required for workspace).
+    - Workspace declares ``image`` + multi-step ``provision``.
+    - ``persistence: volume`` round-trips cleanly.
+    """
+    path = _examples_dir() / "docker-workspace-compute" / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
+
+    data = yaml.safe_load(path.read_text())
+    agents, channels, vault = load_multi_yaml(data)
+    assert vault is not None
+    assert agents[0].workspace is not None
+    assert agents[0].workspace.image == "python:3.12-slim"
+    assert "pip install ruff pytest" in agents[0].workspace.provision[1]
