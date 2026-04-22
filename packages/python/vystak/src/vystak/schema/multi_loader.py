@@ -135,6 +135,25 @@ def load_multi_yaml(
                     f"or Docker (HashiCorp Vault)."
                 )
 
+        # Spec 1: workspace requires a Vault declaration for SSH key delivery
+        if agent.workspace is not None and vault is None:
+            raise ValueError(
+                f"Agent '{agent.name}' declares a workspace but no Vault "
+                f"is declared in this deployment. Spec 1 workspaces require "
+                f"a Vault for SSH key storage and workspace-secret delivery.\n"
+                f"\n"
+                f"Add to your config:\n"
+                f"  vault:\n"
+                f"    name: vystak-vault\n"
+                f"    provider: {agent.platform.provider.name if agent.platform else 'docker'}\n"
+                f"    type: vault\n"
+                f"    mode: deploy\n"
+                f"    config: {{}}\n"
+                f"\n"
+                f"See docs/superpowers/specs/2026-04-19-secret-manager-design.md "
+                f"for the Vault schema."
+            )
+
         agents.append(agent)
 
     channels: list[Channel] = []
