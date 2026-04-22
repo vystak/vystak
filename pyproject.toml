@@ -16,6 +16,7 @@ dev-dependencies = [
     "httpx>=0.28",
     "fastapi>=0.115",
     "uvicorn>=0.34",
+    "asyncssh>=2.14",
     "vystak",
     "vystak-cli",
     "vystak-adapter-mastra",
