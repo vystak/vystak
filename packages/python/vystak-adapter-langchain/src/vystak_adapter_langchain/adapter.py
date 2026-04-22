@@ -22,28 +22,10 @@ from vystak_adapter_langchain.tools import (
     scaffold_missing_tools,
 )
 
-_WORKSPACE_BOOTSTRAP = (
-    "\n\n"
-    "# --- Workspace bootstrap (Spec 1) ---\n"
-    "import os\n"
-    "from vystak_adapter_langchain.workspace_client import WorkspaceRpcClient\n"
-    "from vystak_adapter_langchain import builtin_tools as _bt\n"
-    "\n"
-    "_ws_host = os.environ.get('VYSTAK_WORKSPACE_HOST')\n"
-    "if _ws_host:\n"
-    "    _bt.workspace_client = WorkspaceRpcClient(\n"
-    "        host=_ws_host,\n"
-    "        port=22,\n"
-    "        username='vystak-agent',\n"
-    "        client_keys=['/vystak/ssh/id_ed25519'],\n"
-    "        known_hosts='/vystak/ssh/known_hosts',\n"
-    "    )\n"
-    "    # connect() is lazy — WorkspaceRpcClient.invoke() calls it on first\n"
-    "    # RPC. This avoids running an event loop at module import time\n"
-    "    # (asyncio.get_event_loop() is deprecated on Python 3.12+ and removed\n"
-    "    # on 3.14 when there is no running loop).\n"
-    "# --- end Workspace bootstrap ---\n"
-)
+# Workspace bootstrap now lives inside the generated builtin_tools.py so
+# it's executed during agent.py's import chain — not appended after
+# uvicorn.run in server.py where it would never run when server.py is
+# executed as __main__.
 
 
 class LangChainAdapter(FrameworkAdapter):
@@ -108,14 +90,13 @@ class LangChainAdapter(FrameworkAdapter):
         if session_store and session_store.engine == "sqlite":
             files["store.py"] = generate_store_py()
 
-        # Workspace: emit built-in tool wrappers and inject bootstrap into server.py.
+        # Workspace: emit built-in tool wrappers (self-initializing).
         if has_workspace:
             all_skill_tools: list[str] = []
             for skill in agent.skills:
                 all_skill_tools.extend(skill.tools)
             builtin_files = generate_builtin_tools(skill_tool_names=all_skill_tools)
             files.update(builtin_files)
-            files["server.py"] = files["server.py"] + _WORKSPACE_BOOTSTRAP
 
         return GeneratedCode(files=files, entrypoint="server.py")
 

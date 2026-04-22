@@ -127,12 +127,26 @@ def test_workspace_declared_generates_builtin_tools_and_bootstrap():
         code = LangChainAdapter().generate(agent, base_dir=Path(td))
 
     files = code.files
-    # Built-in tools file generated
+    # Built-in tools file generated with each skill's tools
     assert "builtin_tools.py" in files
     assert "read_file" in files["builtin_tools.py"]
-    # Bootstrap code initializes workspace client
-    assert "WorkspaceRpcClient" in files.get("server.py", "")
-    assert "VYSTAK_WORKSPACE_HOST" in files.get("server.py", "")
+    # Workspace client bundled as a sibling file (not package import) so the
+    # agent container doesn't need vystak_adapter_langchain installed.
+    assert "workspace_client.py" in files
+    # builtin_tools.py self-initializes WorkspaceRpcClient from VYSTAK_WORKSPACE_HOST
+    bt = files["builtin_tools.py"]
+    assert "WorkspaceRpcClient" in bt
+    assert "VYSTAK_WORKSPACE_HOST" in bt
+    # Each generated tool traps exceptions and returns the error text so the
+    # LLM sees a ToolMessage instead of the graph crashing.
+    assert "except Exception as e:" in bt
+    assert "Error calling" in bt
+    # ALL_TOOLS list is emitted so agent.py can import it in one shot
+    assert "ALL_TOOLS" in bt
+    # agent.py actually wires the built-ins into create_react_agent
+    ap = files["agent.py"]
+    assert "from builtin_tools import ALL_TOOLS" in ap
+    assert "*_builtin_tools" in ap
 
 
 def test_no_workspace_no_builtin_tools():
