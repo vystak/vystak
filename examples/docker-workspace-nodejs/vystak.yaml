@@ -1,0 +1,45 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+vault:
+  name: vystak-vault
+  provider: docker
+  type: vault
+  mode: deploy
+  config: {}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+agents:
+  - name: node-coder
+    instructions: |
+      You are a JavaScript/TypeScript coding assistant. The workspace has
+      node 20, npm, typescript, prettier, eslint, git, and ripgrep.
+      Use fs.* to read/edit source, exec.run for npm/tsc/node, git.* to
+      track changes.
+    model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+    skills:
+      - name: editing
+        tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]
+      - name: shell
+        tools: [exec.run, exec.shell]
+      - name: vcs
+        tools: [git.status, git.diff, git.commit]
+    workspace:
+      name: dev
+      image: node:20-slim
+      provision:
+        - apt-get update && apt-get install -y --no-install-recommends git ripgrep
+        - npm install -g typescript prettier eslint
+      persistence: volume
