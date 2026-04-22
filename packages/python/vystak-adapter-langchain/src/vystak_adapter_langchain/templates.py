@@ -981,6 +981,10 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     if agent.mcp_servers:
         mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
 
+    # asyncssh is the transport for the agent → workspace JSON-RPC channel
+    # (used by builtin_tools when agent.workspace is declared).
+    workspace_pkg = "\nasyncssh>=2.18" if agent.workspace is not None else ""
+
     # vystak + vystak_transport_http + vystak_transport_nats are bundled as
     # source by DockerAgentNode (on PYTHONPATH via COPY . . in the Dockerfile).
     # nats-py is the runtime dependency for NatsTransport; included
@@ -993,7 +997,7 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
         fastapi>=0.115
         uvicorn>=0.34
         sse-starlette>=2.0
-        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{tool_deps}
+        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{workspace_pkg}{tool_deps}
     """)
 
 

@@ -45,66 +45,73 @@ class WorkspaceRpcClient:
             await self._conn.wait_closed()
             self._conn = None
 
-    async def _open_channel(self):
-        """Open one SSH channel to the vystak-rpc subsystem."""
+    async def _open_process(self):
+        """Open one SSH process (line-oriented I/O) to the vystak-rpc subsystem."""
         assert self._conn is not None, "connect() first"
-        # asyncssh: use create_session for subsystem access
-        chan, _session = await self._conn.create_session(
-            asyncssh.SSHClientSession,
-            subsystem="vystak-rpc",
-        )
-        return chan
+        return await self._conn.create_process(subsystem="vystak-rpc")
 
     async def invoke(self, method: str, **params) -> object:
         """Single-shot call. Returns result or raises on error."""
         await self.connect()
-        chan = await self._open_channel()
+        proc = await self._open_process()
         req = {
             "jsonrpc": "2.0",
             "id": uuid.uuid4().hex,
             "method": method,
             "params": params,
         }
-        chan.write(json.dumps(req) + "\n")
-        chan.write_eof()
+        proc.stdin.write(json.dumps(req) + "\n")
+        proc.stdin.write_eof()
 
-        while True:
-            line = await chan.readline()
-            if not line:
-                raise RuntimeError(f"RPC channel closed without response for {method}")
-            msg = json.loads(line)
-            if msg.get("method") == "$/progress":
-                continue  # skip progress for non-streaming invoke
-            if "error" in msg:
-                err = msg["error"]
-                raise RuntimeError(f"{method}: {err.get('message')}")
-            if "result" in msg:
-                return msg["result"]
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    raise RuntimeError(
+                        f"RPC channel closed without response for {method}"
+                    )
+                msg = json.loads(line)
+                if msg.get("method") == "$/progress":
+                    continue  # skip progress for non-streaming invoke
+                if "error" in msg:
+                    err = msg["error"]
+                    raise RuntimeError(f"{method}: {err.get('message')}")
+                if "result" in msg:
+                    return msg["result"]
+        finally:
+            proc.close()
+            await proc.wait_closed()
 
     async def invoke_stream(self, method: str, **params) -> AsyncIterator[object]:
         """Streaming call. Yields progress chunks (dicts from params) then
         the final result. Caller consumes via `async for`."""
         await self.connect()
-        chan = await self._open_channel()
+        proc = await self._open_process()
         req = {
             "jsonrpc": "2.0",
             "id": uuid.uuid4().hex,
             "method": method,
             "params": params,
         }
-        chan.write(json.dumps(req) + "\n")
-        chan.write_eof()
+        proc.stdin.write(json.dumps(req) + "\n")
+        proc.stdin.write_eof()
 
-        while True:
-            line = await chan.readline()
-            if not line:
-                return
-            msg = json.loads(line)
-            if msg.get("method") == "$/progress":
-                yield msg.get("params", {})
-                continue
-            if "error" in msg:
-                raise RuntimeError(f"{method}: {msg['error'].get('message')}")
-            if "result" in msg:
-                yield msg["result"]
-                return
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    return
+                msg = json.loads(line)
+                if msg.get("method") == "$/progress":
+                    yield msg.get("params", {})
+                    continue
+                if "error" in msg:
+                    raise RuntimeError(
+                        f"{method}: {msg['error'].get('message')}"
+                    )
+                if "result" in msg:
+                    yield msg["result"]
+                    return
+        finally:
+            proc.close()
+            await proc.wait_closed()

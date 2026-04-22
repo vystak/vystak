@@ -29,7 +29,10 @@ BUILTIN_SPECS: dict[str, tuple[str, list[str], bool]] = {
 def generate_builtin_tools(skill_tool_names: list[str]) -> dict[str, str]:
     """Given the set of tool names referenced by all skills, emit a
     builtin_tools.py file defining @tool-decorated async functions that
-    delegate to WorkspaceRpcClient."""
+    delegate to WorkspaceRpcClient, plus a sibling workspace_client.py
+    that is a verbatim copy of the adapter's source module so the generated
+    code can import it without needing vystak_adapter_langchain installed
+    in the agent container."""
     recognized = [n for n in skill_tool_names if n in BUILTIN_SPECS]
 
     lines = [
@@ -37,7 +40,7 @@ def generate_builtin_tools(skill_tool_names: list[str]) -> dict[str, str]:
         "",
         "from langchain_core.tools import tool",
         "",
-        "from vystak_adapter_langchain.workspace_client import WorkspaceRpcClient",
+        "from workspace_client import WorkspaceRpcClient",
         "",
         "# Populated at module load by the bootstrap code.",
         "workspace_client: WorkspaceRpcClient | None = None",
@@ -76,4 +79,15 @@ def generate_builtin_tools(skill_tool_names: list[str]) -> dict[str, str]:
                 lines.append(f"    return await c.invoke('{rpc_method}')")
         lines.append("")
 
-    return {"builtin_tools.py": "\n".join(lines)}
+    # Bundle the adapter's workspace_client.py verbatim as a sibling file so
+    # generated builtin_tools.py can import it by plain module name in the
+    # agent container (where vystak_adapter_langchain is not installed).
+    from pathlib import Path
+
+    import vystak_adapter_langchain.workspace_client as _ws_client
+    ws_client_src = Path(_ws_client.__file__).read_text()
+
+    return {
+        "builtin_tools.py": "\n".join(lines),
+        "workspace_client.py": ws_client_src,
+    }
