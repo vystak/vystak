@@ -92,9 +92,14 @@ def generate_agent_hcl_with_workspace_ssh(
     )
 
     if role == "agent":
+        # Destinations are under /shared/ssh rather than /vystak/ssh: the
+        # vault-agent sidecar writes into the agent-secrets volume mounted
+        # at /shared (same volume used by /shared/secrets.env). The agent
+        # container's Dockerfile symlinks /vystak/ssh → /shared/ssh so
+        # agent-side code can reference the canonical /vystak/ssh/* paths.
         ssh_templates = f"""
 template {{
-  destination = "/vystak/ssh/id_ed25519"
+  destination = "/shared/ssh/id_ed25519"
   perms       = "0400"
   contents    = <<-EOT
     {{{{- with secret "secret/data/_vystak/workspace-ssh/{agent_name}/client-key" }}}}{{{{ .Data.data.value }}}}{{{{- end }}}}
@@ -102,7 +107,7 @@ template {{
 }}
 
 template {{
-  destination = "/vystak/ssh/known_hosts"
+  destination = "/shared/ssh/known_hosts"
   perms       = "0444"
   contents    = <<-EOT
     vystak-{agent_name}-workspace {{{{- with secret "secret/data/_vystak/workspace-ssh/{agent_name}/host-key-pub" }}}} {{{{ .Data.data.value }}}}{{{{- end }}}}

@@ -94,9 +94,11 @@ def test_agent_hcl_includes_workspace_ssh_templates():
     )
     # Normal secrets.env template still present
     assert "/shared/secrets.env" in hcl
-    # Agent-side SSH files
-    assert "/vystak/ssh/id_ed25519" in hcl
-    assert "/vystak/ssh/known_hosts" in hcl
+    # Agent-side SSH files. Written under /shared/ssh/* (same volume used
+    # by secrets.env); the agent Dockerfile symlinks /vystak/ssh →
+    # /shared/ssh so agent-side code can use the /vystak/ssh/* path.
+    assert "/shared/ssh/id_ed25519" in hcl
+    assert "/shared/ssh/known_hosts" in hcl
     assert '0400' in hcl  # private key perms
     # Private-key template reads client-key
     assert "_vystak/workspace-ssh/assistant/client-key" in hcl
