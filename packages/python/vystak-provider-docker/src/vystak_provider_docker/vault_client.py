@@ -116,6 +116,14 @@ class VaultClient:
             path=name, secret={"value": value}
         )
 
+    def kv_delete(self, name: str) -> None:
+        """Permanently delete a KV v2 path (metadata + all versions).
+
+        Used by ``vystak secrets rotate-ssh`` to invalidate existing keys
+        before regenerating.
+        """
+        self._client.secrets.kv.v2.delete_metadata_and_all_versions(path=name)
+
     def kv_list(self) -> list[str]:
         try:
             resp = self._client.secrets.kv.v2.list_secrets(path="")

@@ -207,6 +207,14 @@ def _restart_sidecar(principal_name: str) -> None:
         pass
 
 
+def _get_docker_client():
+    """Return a docker-py client. Isolated as a seam so
+    ``rotate-ssh`` tests can patch it without touching a real daemon."""
+    import docker as _docker
+
+    return _docker.from_env()
+
+
 # --- subcommands ----------------------------------------------------------
 
 
@@ -389,6 +397,61 @@ def rotate_approle_cmd(principal, rotate_role_id, rotate_all, file):
         _write_approle_volume(name, role_id, secret_id)
         _restart_sidecar(name)
         click.echo(f"  rotated  {name}")
+
+
+@secrets.command("rotate-ssh")
+@click.argument("agent_name", required=True)
+@click.option("--file", default="vystak.yaml")
+def rotate_ssh_cmd(agent_name: str, file: str):
+    """Regenerate the SSH keypairs for a workspace-backed agent.
+
+    Deletes the four ``_vystak/workspace-ssh/<agent>/*`` entries from
+    Vault, then runs ``WorkspaceSshKeygenNode.provision`` which generates
+    fresh ed25519 keypairs inside a throwaway alpine container and
+    pushes them back into Vault. Agent and workspace containers are left
+    running — the next apply will pick up the new keys.
+
+    Never prints key material.
+    """
+    agents, _channels, vault = _load_config(Path(file))
+    if vault is None:
+        raise click.ClickException("rotate-ssh requires a Vault declaration.")
+    matching = [a for a in agents if a.name == agent_name]
+    if not matching:
+        raise click.ClickException(
+            f"Agent '{agent_name}' not found. Known: "
+            f"{', '.join(a.name for a in agents) or '(none)'}"
+        )
+    agent = matching[0]
+    if agent.workspace is None:
+        raise click.ClickException(
+            f"Agent '{agent_name}' has no workspace; nothing to rotate."
+        )
+
+    vault_client = _make_vault_client(vault)
+    docker_client = _get_docker_client()
+
+    # Invalidate existing keys (delete from Vault) then regenerate.
+    import contextlib
+
+    for key in ("client-key", "host-key", "client-key-pub", "host-key-pub"):
+        with contextlib.suppress(Exception):
+            vault_client.kv_delete(
+                f"_vystak/workspace-ssh/{agent_name}/{key}"
+            )
+
+    from vystak_provider_docker.nodes.workspace_ssh_keygen import (
+        WorkspaceSshKeygenNode,
+    )
+
+    node = WorkspaceSshKeygenNode(
+        vault_client=vault_client,
+        docker_client=docker_client,
+        agent_name=agent_name,
+    )
+    node.provision(context={})
+
+    click.echo(f"  rotated  {agent_name}")
 
 
 @secrets.command("diff")
