@@ -306,11 +306,11 @@ class DockerProvider(PlatformProvider):
         agent = self._agent
         if agent and agent.secrets:
             principals[f"{agent.name}-agent"] = [s.name for s in agent.secrets]
-        if (
-            agent
-            and agent.workspace is not None
-            and agent.workspace.secrets
-        ):
+        # Workspace always gets its own principal when declared — even with
+        # no user-declared secrets, the workspace-role vault-agent sidecar
+        # still needs an AppRole to read SSH keys under _vystak/workspace-ssh/*
+        # and render host_key + authorized_keys into /shared.
+        if agent and agent.workspace is not None:
             principals[f"{agent.name}-workspace"] = [
                 s.name for s in agent.workspace.secrets
             ]
@@ -330,12 +330,32 @@ class DockerProvider(PlatformProvider):
         graph.add_dependency(sync.name, kv_setup.name)
 
         # Per-principal: approle → approle-creds → vault-agent
+        # A principal is "workspace-adjacent" when it belongs to an agent
+        # that declares a workspace. Two variants exist per such agent:
+        # - <agent>-agent principal (client side: renders id_ed25519, known_hosts)
+        # - <agent>-workspace principal (server side: renders host key, authorized_keys)
+        # Both need read on _vystak/workspace-ssh/<agent>/* and use the
+        # SSH-aware HCL generator so their sidecars write the right files.
+        workspace_agents = {
+            a.name for a in ([agent] if agent else []) if a.workspace is not None
+        }
         result_map: dict[str, str] = {}
         for principal_name, secret_names in principals.items():
+            ws_agent: str | None = None
+            ws_role: str | None = None
+            for name in workspace_agents:
+                if principal_name == f"{name}-agent":
+                    ws_agent, ws_role = name, "agent"
+                    break
+                if principal_name == f"{name}-workspace":
+                    ws_agent, ws_role = name, "workspace"
+                    break
+
             approle = AppRoleNode(
                 vault_client=vault_client,
                 principal_name=principal_name,
                 secret_names=secret_names,
+                workspace_agent_name=ws_agent,
             )
             graph.add(approle)
             graph.add_dependency(approle.name, kv_setup.name)
@@ -352,6 +372,8 @@ class DockerProvider(PlatformProvider):
                 image=image,
                 secret_names=secret_names,
                 vault_address=vault_address,
+                workspace_agent_name=ws_agent,
+                workspace_role=ws_role,
             )
             graph.add(sidecar)
             graph.add_dependency(sidecar.name, creds.name)

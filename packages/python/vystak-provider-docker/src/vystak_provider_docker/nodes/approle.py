@@ -17,12 +17,14 @@ class AppRoleNode(Provisionable):
         secret_names: list[str],
         token_ttl: str = "1h",
         token_max_ttl: str = "24h",
+        workspace_agent_name: str | None = None,
     ):
         self._vault = vault_client
         self._principal_name = principal_name
         self._secret_names = list(secret_names)
         self._token_ttl = token_ttl
         self._token_max_ttl = token_max_ttl
+        self._workspace_agent_name = workspace_agent_name
 
     @property
     def policy_name(self) -> str:
@@ -38,7 +40,10 @@ class AppRoleNode(Provisionable):
 
     def provision(self, context: dict) -> ProvisionResult:
         # Write policy
-        policy_hcl = generate_policy_hcl(secret_names=self._secret_names)
+        policy_hcl = generate_policy_hcl(
+            secret_names=self._secret_names,
+            workspace_agent_name=self._workspace_agent_name,
+        )
         self._vault.write_policy(name=self.policy_name, hcl=policy_hcl)
 
         # Upsert AppRole bound to the policy

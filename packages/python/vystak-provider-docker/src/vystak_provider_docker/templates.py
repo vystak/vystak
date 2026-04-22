@@ -68,12 +68,26 @@ template {{
 """
 
 
-def generate_policy_hcl(*, secret_names: list[str]) -> str:
-    """Vault policy granting `read` on each listed secret's KV v2 data path."""
+def generate_policy_hcl(
+    *,
+    secret_names: list[str],
+    workspace_agent_name: str | None = None,
+) -> str:
+    """Vault policy granting `read` on each listed secret's KV v2 data path.
+
+    When ``workspace_agent_name`` is set, also grant read on every key
+    under ``secret/data/_vystak/workspace-ssh/<agent_name>/*`` so the
+    vault-agent sidecar can render SSH host/client keys into /shared/.
+    """
     paths = []
     for name in secret_names:
         paths.append(
             f'path "secret/data/{name}" {{\n  capabilities = ["read"]\n}}'
+        )
+    if workspace_agent_name:
+        paths.append(
+            f'path "secret/data/_vystak/workspace-ssh/{workspace_agent_name}/*"'
+            f" {{\n  capabilities = [\"read\"]\n}}"
         )
     return "\n".join(paths)
 
@@ -140,7 +154,15 @@ template {{
 
 def generate_entrypoint_shim() -> str:
     """Shell script that waits for /shared/secrets.env, sources it into env,
-    then execs the main process."""
+    then execs the main process.
+
+    ``secrets.env`` may be empty (principals with no declared user secrets
+    still get a rendered-but-blank file from the Vault Agent template). The
+    shim waits for file *existence*, not non-empty, and sources only when
+    there are values to source. A small settle delay lets sibling templates
+    (e.g. SSH host key for workspace containers) finish rendering before the
+    main process starts.
+    """
     return """\
 #!/bin/sh
 # vystak entrypoint shim — waits for Vault Agent to render secrets, then exec
@@ -149,18 +171,23 @@ set -e
 SECRETS_FILE="/shared/secrets.env"
 
 for i in $(seq 1 30); do
-  [ -s "$SECRETS_FILE" ] && break
+  [ -e "$SECRETS_FILE" ] && break
   sleep 1
 done
 
-if [ ! -s "$SECRETS_FILE" ]; then
+if [ ! -e "$SECRETS_FILE" ]; then
   echo "vystak: $SECRETS_FILE never populated — Vault Agent unhealthy?" >&2
   exit 1
 fi
 
-set -a
-. "$SECRETS_FILE"
-set +a
+# Settle: give sibling templates (SSH keys, etc.) a moment to finish.
+sleep 1
+
+if [ -s "$SECRETS_FILE" ]; then
+  set -a
+  . "$SECRETS_FILE"
+  set +a
+fi
 
 exec "$@"
 """

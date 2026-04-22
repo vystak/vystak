@@ -7,11 +7,20 @@ from pathlib import Path
 import docker.errors
 from vystak.provisioning.node import Provisionable, ProvisionResult
 
-from vystak_provider_docker.templates import generate_agent_hcl
+from vystak_provider_docker.templates import (
+    generate_agent_hcl,
+    generate_agent_hcl_with_workspace_ssh,
+)
 
 
 class VaultAgentSidecarNode(Provisionable):
-    """Per-principal Vault Agent. Renders /shared/secrets.env continuously."""
+    """Per-principal Vault Agent. Renders /shared/secrets.env continuously.
+
+    When ``workspace_agent_name`` and ``workspace_role`` are provided, the
+    generated HCL also emits SSH key file templates so the sidecar renders
+    the appropriate id_ed25519 + known_hosts (agent role) or host key +
+    authorized_keys (workspace role) into /shared/.
+    """
 
     def __init__(
         self,
@@ -21,12 +30,16 @@ class VaultAgentSidecarNode(Provisionable):
         image: str,
         secret_names: list[str],
         vault_address: str,
+        workspace_agent_name: str | None = None,
+        workspace_role: str | None = None,
     ):
         self._client = client
         self._principal_name = principal_name
         self._image = image
         self._secret_names = list(secret_names)
         self._vault_address = vault_address
+        self._workspace_agent_name = workspace_agent_name
+        self._workspace_role = workspace_role
 
     @property
     def container_name(self) -> str:
@@ -77,9 +90,18 @@ class VaultAgentSidecarNode(Provisionable):
         # Write the agent config to a bind-mounted dir so Vault Agent can read it
         config_dir = Path(".vystak") / "vault-agents" / self._principal_name
         config_dir.mkdir(parents=True, exist_ok=True)
-        agent_hcl = generate_agent_hcl(
-            vault_address=self._vault_address, secret_names=self._secret_names
-        )
+        if self._workspace_agent_name and self._workspace_role:
+            agent_hcl = generate_agent_hcl_with_workspace_ssh(
+                vault_address=self._vault_address,
+                secret_names=self._secret_names,
+                agent_name=self._workspace_agent_name,
+                role=self._workspace_role,
+            )
+        else:
+            agent_hcl = generate_agent_hcl(
+                vault_address=self._vault_address,
+                secret_names=self._secret_names,
+            )
         (config_dir / "agent.hcl").write_text(agent_hcl)
 
         # Stop existing sidecar
