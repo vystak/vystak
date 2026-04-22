@@ -17,6 +17,7 @@ members = [
     "vystak-transport-http",
     "vystak-transport-nats",
     "vystak-workspace",
+    "vystak-workspace-rpc",
 ]
 
 [[package]]
@@ -1383,6 +1384,7 @@ dev = [
     { name = "vystak-provider-docker" },
     { name = "vystak-transport-http" },
     { name = "vystak-transport-nats" },
+    { name = "vystak-workspace-rpc" },
 ]
 
 [package.metadata]
@@ -1409,7 +1411,13 @@ dev = [
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
     { name = "vystak-transport-http", editable = "packages/python/vystak-transport-http" },
     { name = "vystak-transport-nats", editable = "packages/python/vystak-transport-nats" },
+    { name = "vystak-workspace-rpc", editable = "packages/python/vystak-workspace-rpc" },
 ]
+
+[[package]]
+name = "vystak-workspace-rpc"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-workspace-rpc" }
 
 [[package]]
 name = "wcwidth"
