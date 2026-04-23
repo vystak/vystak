@@ -243,5 +243,108 @@ def test_plan_workspace_section_shown_when_declared(tmp_path):
     assert "provision steps: 1" in result.output
 
 
+# ---------------------------------------------------------------------------
+# default path (no vault)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_default_path_emits_env_files_section(tmp_path, monkeypatch):
+    """When no Vault is declared, plan shows per-principal env-file status."""
+    from click.testing import CliRunner
+    from vystak_cli.commands.plan import plan as plan_cmd
+
+    (tmp_path / "vystak.yaml").write_text(
+        "providers:\n"
+        "  docker: {type: docker}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  docker: {provider: docker, type: docker}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: docker\n"
+        "    secrets: [{name: ANTHROPIC_API_KEY}]\n"
+        "    workspace:\n"
+        "      name: ws\n"
+        "      image: python:3.12-slim\n"
+        "      secrets: [{name: STRIPE_API_KEY}]\n"
+    )
+    (tmp_path / ".env").write_text(
+        "ANTHROPIC_API_KEY=a\nSTRIPE_API_KEY=b\n"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(plan_cmd)
+    assert "EnvFiles:" in result.output
+    assert "assistant-agent" in result.output
+    assert "assistant-workspace" in result.output
+    assert "1/1 resolved" in result.output
+    assert "Vault:" not in result.output
+    assert "Identities:" not in result.output
+
+
+def test_plan_default_path_flags_missing_env_values(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from vystak_cli.commands.plan import plan as plan_cmd
+
+    (tmp_path / "vystak.yaml").write_text(
+        "providers:\n"
+        "  docker: {type: docker}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  docker: {provider: docker, type: docker}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: docker\n"
+        "    secrets: [{name: PRESENT}, {name: ABSENT}]\n"
+    )
+    (tmp_path / ".env").write_text("PRESENT=x\n")
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(plan_cmd)
+    assert "EnvFiles:" in result.output
+    assert "1/2 resolved" in result.output
+    assert "missing: ABSENT" in result.output
+
+
+def test_plan_detects_orphan_init_json(tmp_path, monkeypatch):
+    """When Vault init.json is on disk but config has no vault block,
+    the plan warns about orphan resources and prints the cleanup command."""
+    from click.testing import CliRunner
+    from vystak_cli.commands.plan import plan as plan_cmd
+
+    (tmp_path / "vystak.yaml").write_text(
+        "providers:\n"
+        "  docker: {type: docker}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  docker: {provider: docker, type: docker}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: docker\n"
+        "    secrets: [{name: K}]\n"
+    )
+    (tmp_path / ".env").write_text("K=x\n")
+    (tmp_path / ".vystak" / "vault").mkdir(parents=True)
+    (tmp_path / ".vystak" / "vault" / "init.json").write_text("{}")
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(plan_cmd)
+    assert "Orphan resources detected" in result.output
+    assert "init.json" in result.output
+    assert "destroy --delete-vault" in result.output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

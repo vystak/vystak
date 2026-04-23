@@ -90,7 +90,10 @@ def plan(files, file_path):
 
         click.echo()
 
-    _emit_vault_plan(defs)
+    if getattr(defs, "vault", None) is None:
+        _emit_default_path_plan(defs)
+    else:
+        _emit_vault_plan(defs)
     _print_workspace_section(defs.agents)
 
 
@@ -125,6 +128,99 @@ def _print_workspace_section(agents) -> None:
                 f"{len(ws.ssh_authorized_keys)})"
             )
     click.echo()
+
+
+def _emit_default_path_plan(defs) -> None:
+    """Emit default-path plan output — EnvFiles section + orphan detection.
+
+    When no Vault is declared, secrets are materialized into per-principal
+    env files at apply time (``.vystak/env/<principal>.env``). This helper
+    previews what each principal will receive + surfaces any leftover
+    Vault resources from a prior vault-backed deploy that need explicit
+    cleanup.
+    """
+    from vystak.secrets.env_loader import load_env_file
+
+    env_values = load_env_file(Path(".env"), optional=True)
+
+    # --- EnvFiles section
+    principals: list[tuple[str, list[str]]] = []
+    for agent in defs.agents:
+        if agent.secrets:
+            principals.append(
+                (f"{agent.name}-agent", [s.name for s in agent.secrets])
+            )
+        if agent.workspace is not None and agent.workspace.secrets:
+            principals.append(
+                (f"{agent.name}-workspace", [s.name for s in agent.workspace.secrets])
+            )
+    for channel in defs.channels:
+        if channel.secrets:
+            principals.append(
+                (f"{channel.name}-channel", [s.name for s in channel.secrets])
+            )
+
+    if principals:
+        click.echo("EnvFiles:")
+        for p_name, secret_names in principals:
+            resolved = sum(1 for n in secret_names if n in env_values)
+            missing = [n for n in secret_names if n not in env_values]
+            status = f"{resolved}/{len(secret_names)} resolved from .env"
+            if missing:
+                status += f", missing: {', '.join(missing)}"
+            click.echo(f"  {p_name}  {status}")
+        click.echo()
+
+    # --- Orphan detection: leftover Vault resources from a prior deploy
+    orphans = _detect_orphan_vault_resources()
+    if orphans:
+        click.echo("Orphan resources detected:")
+        for o in orphans:
+            click.echo(f"  {o}")
+        click.echo()
+        click.echo("These are from a previous Vault-backed deploy. To clean up:")
+        click.echo("  vystak destroy --delete-vault")
+        click.echo("  vystak apply")
+        click.echo()
+        click.echo("To keep them during migration, proceed with 'vystak apply'.")
+        click.echo()
+
+
+def _detect_orphan_vault_resources() -> list[str]:
+    """Best-effort detection of leftover Vault resources on the default path.
+
+    Returns a list of human-readable resource descriptions. Checks the
+    host-side init.json file and asks the Docker daemon for vystak-vault*
+    containers/volumes. Swallows docker-daemon errors (returns empty)
+    because plan is supposed to be offline-safe.
+    """
+    orphans: list[str] = []
+    init_path = Path(".vystak") / "vault" / "init.json"
+    if init_path.exists():
+        orphans.append(f"{init_path} (Hashi Vault unseal keys + root token)")
+
+    try:
+        import docker as _docker
+
+        dc = _docker.from_env()
+        for container in dc.containers.list(all=True):
+            name = container.name
+            if name == "vystak-vault" or name.endswith("-vault-agent"):
+                orphans.append(f"container: {name}")
+        for volume in dc.volumes.list():
+            if volume.name == "vystak-vault-data" or (
+                volume.name.startswith("vystak-")
+                and (
+                    volume.name.endswith("-approle")
+                    or volume.name.endswith("-secrets")
+                )
+            ):
+                orphans.append(f"volume: {volume.name}")
+    except Exception:
+        # Docker unreachable — skip. Plan should remain offline-safe.
+        pass
+
+    return orphans
 
 
 def _emit_vault_plan(defs) -> None:
