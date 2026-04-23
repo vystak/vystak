@@ -56,7 +56,7 @@ agents:
     (tmp_path / "tools").mkdir()
     yield tmp_path
     # Best-effort cleanup
-    _run(["uv", "run", "vystak", "destroy", "--yes"], check=False, cwd=str(tmp_path))
+    _run(["uv", "run", "vystak", "destroy"], check=False, cwd=str(tmp_path))
 
 
 def test_default_path_isolates_workspace_secret_from_agent(project):
@@ -64,7 +64,7 @@ def test_default_path_isolates_workspace_secret_from_agent(project):
     secret is NOT present in its env."""
     # Apply
     result = _run(
-        ["uv", "run", "vystak", "apply", "--yes"], check=False, cwd=str(project)
+        ["uv", "run", "vystak", "apply"], check=False, cwd=str(project)
     )
     assert result.returncode == 0, (
         f"apply failed: stdout={result.stdout}\nstderr={result.stderr}"
