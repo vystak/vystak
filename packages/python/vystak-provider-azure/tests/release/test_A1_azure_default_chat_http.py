@@ -25,7 +25,6 @@ from .conftest import (
     app_exists,
     assert_agent_card_azure,
     assert_apply_ok,
-    assert_env_absent,
     assert_env_contains,
     assert_health_azure,
     assert_plan_ok,

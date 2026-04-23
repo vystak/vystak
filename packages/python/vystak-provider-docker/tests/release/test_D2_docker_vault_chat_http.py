@@ -52,7 +52,7 @@ agents:
 """
 
 
-def test_D2_full_cycle(project):
+def test_D2_full_cycle(vault_clean, project):
     (project / "vystak.yaml").write_text(D2_YAML)
 
     # V1 — plan: Vault/AppRoles/Secrets/Policies sections present,

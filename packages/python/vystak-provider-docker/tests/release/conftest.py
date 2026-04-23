@@ -16,16 +16,12 @@ Design principles:
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Callable
 
 import pytest
-
 
 # ----- Prereq detection -------------------------------------------------
 
@@ -69,7 +65,12 @@ def docker_required():
 # ----- Process helpers --------------------------------------------------
 
 
-def run(cmd: list[str], cwd: Path | None = None, check: bool = True, **kw) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    check: bool = True,
+    **kw,
+) -> subprocess.CompletedProcess:
     """subprocess.run wrapper with sensible defaults."""
     return subprocess.run(
         cmd, capture_output=True, text=True, check=check, cwd=cwd, **kw,
@@ -115,7 +116,7 @@ def wait_for_http(url: str, timeout: int = 30, interval: float = 0.5) -> None:
             with urllib.request.urlopen(url, timeout=2) as r:
                 if r.status == 200:
                     return
-        except (urllib.error.URLError, ConnectionError, socket.timeout) as e:
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
             last_err = e
         time.sleep(interval)
     raise TimeoutError(f"{url} did not respond 200 within {timeout}s: {last_err}")
@@ -163,6 +164,25 @@ def post_a2a_task(url: str, message: str, timeout: int = 30) -> dict:
 
 
 @pytest.fixture
+def vault_clean():
+    """Ensure no stale Vault state pollutes this test.
+
+    Pre-test: remove any `vystak-vault` container and `vystak-vault-data`
+    volume left by an aborted prior run (or another worktree). The
+    shared-infra design means a per-project `.vystak/vault/init.json`
+    can go missing while the volume persists with init state — apply
+    then fails with "state mismatch". This fixture forecloses that.
+
+    Post-test: no-op — individual tests handle their own teardown.
+    """
+    for container in ("vystak-vault",):
+        run(["docker", "rm", "-f", container], check=False)
+    for volume in ("vystak-vault-data",):
+        run(["docker", "volume", "rm", volume], check=False)
+    yield
+
+
+@pytest.fixture
 def project(tmp_path, monkeypatch, docker_required):
     """Yield a tmp project dir. Writes `.env` with test-safe sentinels.
 
@@ -184,10 +204,9 @@ def project(tmp_path, monkeypatch, docker_required):
     yield tmp_path
 
     # Teardown — best effort, never fail the test on cleanup.
-    try:
+    import contextlib
+    with contextlib.suppress(Exception):
         vystak(["destroy"], cwd=tmp_path, check=False)
-    except Exception:
-        pass
     # Remove any state files that the CLI might have missed
     for d in (tmp_path / ".vystak",):
         if d.exists():
@@ -240,7 +259,11 @@ def assert_health(container: str, internal_port: int = 8000) -> None:
     assert body.get("status") == "ok", f"unexpected /health body: {body}"
 
 
-def assert_agent_card(container: str, expected_skills: set[str] | None = None, internal_port: int = 8000) -> dict:
+def assert_agent_card(
+    container: str,
+    expected_skills: set[str] | None = None,
+    internal_port: int = 8000,
+) -> dict:
     """V5: agent card is valid A2A, lists expected skills."""
     port = container_http_port(container, internal_port)
     body = http_get_json(f"http://localhost:{port}/.well-known/agent.json")

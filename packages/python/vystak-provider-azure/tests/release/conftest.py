@@ -24,7 +24,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ----- Prereq detection -------------------------------------------------
 
 
@@ -63,14 +62,25 @@ def azure_required():
 # ----- Process helpers --------------------------------------------------
 
 
-def run(cmd: list[str], cwd: Path | None = None, check: bool = True, timeout: int | None = None, **kw) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    check: bool = True,
+    timeout: int | None = None,
+    **kw,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd, capture_output=True, text=True, check=check, cwd=cwd,
         timeout=timeout, **kw,
     )
 
 
-def vystak(args: list[str], cwd: Path, check: bool = True, timeout: int = 600) -> subprocess.CompletedProcess:
+def vystak(
+    args: list[str],
+    cwd: Path,
+    check: bool = True,
+    timeout: int = 600,
+) -> subprocess.CompletedProcess:
     return run(["uv", "run", "vystak", *args], cwd=cwd, check=check, timeout=timeout)
 
 
@@ -157,25 +167,22 @@ def azure_project(tmp_path, monkeypatch, azure_required, request):
     (tmp_path / "tools").mkdir()
 
     # Expose rg_name for the test body to interpolate into vystak.yaml
-    setattr(request.node, "rg_name", rg_name)
+    request.node.rg_name = rg_name
 
     yield tmp_path, rg_name
 
     # Teardown — aggressive, tolerant. Don't block the test run on slow
     # Azure deletion; use --no-wait and trust async GC.
-    try:
+    import contextlib
+    with contextlib.suppress(Exception):
         vystak(["destroy", "--include-resources", "--no-wait"], cwd=tmp_path, check=False)
-    except Exception:
-        pass
     # Belt-and-braces: nuke the whole RG. Safe because it's a unique
     # disposable name owned by this test only.
-    try:
+    with contextlib.suppress(Exception):
         run(
             ["az", "group", "delete", "-n", rg_name, "--yes", "--no-wait"],
             check=False, timeout=30,
         )
-    except Exception:
-        pass
     # Local state cleanup
     for d in (tmp_path / ".vystak",):
         if d.exists():
