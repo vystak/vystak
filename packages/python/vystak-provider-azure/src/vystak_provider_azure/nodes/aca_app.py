@@ -54,6 +54,27 @@ def build_revision_default_path(
             from ``os.environ`` / ``.env`` for the agent principal.
         workspace_secrets: same shape for the workspace principal.
     """
+    # Cross-principal name collisions would silently deliver the agent's
+    # value to the workspace container (both share the same secretRef into
+    # the same inline pool), violating per-container isolation even when
+    # the env scoping looks correct. Reject explicitly.
+    model_keys = {_kv_secret_name(n) for n in model_secrets}
+    workspace_keys = {_kv_secret_name(n) for n in workspace_secrets}
+    collisions = model_keys & workspace_keys
+    if collisions:
+        raise ValueError(
+            f"Secret name collision between agent and workspace principals "
+            f"(normalized ACA names: {sorted(collisions)}). On the default "
+            f"(inline-secret) path both principals resolve secretRef through "
+            f"the same pool, so the workspace container would silently receive "
+            f"the agent's value. Use distinct secret names per principal."
+        )
+
+    # Sidecar is emitted only when both image + workspace_secrets are present.
+    # Drop workspace secrets from the pool when no sidecar will reference
+    # them — no point transmitting values with no consumer.
+    emit_workspace_sidecar = workspace_image is not None and bool(workspace_secrets)
+
     # Revision-level secrets pool: inline values, one per declared secret
     # across both principals. ACA secret names must match [a-z0-9][a-z0-9-]*.
     inline_secrets: list[dict] = []
@@ -64,12 +85,13 @@ def build_revision_default_path(
             continue
         seen.add(safe)
         inline_secrets.append({"name": safe, "value": value})
-    for name, value in workspace_secrets.items():
-        safe = _kv_secret_name(name)
-        if safe in seen:
-            continue
-        seen.add(safe)
-        inline_secrets.append({"name": safe, "value": value})
+    if emit_workspace_sidecar:
+        for name, value in workspace_secrets.items():
+            safe = _kv_secret_name(name)
+            if safe in seen:
+                continue
+            seen.add(safe)
+            inline_secrets.append({"name": safe, "value": value})
     inline_secrets.append(
         {"name": acr_password_secret_ref, "value": acr_password_value}
     )
@@ -79,7 +101,7 @@ def build_revision_default_path(
         {"name": name, "secretRef": _kv_secret_name(name)}
         for name in model_secrets
     ]
-    if workspace_image is not None and workspace_secrets:
+    if emit_workspace_sidecar:
         agent_env.append(
             {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
         )
@@ -95,7 +117,7 @@ def build_revision_default_path(
     ]
 
     # Workspace sidecar container — only when image + workspace secrets provided
-    if workspace_image is not None and workspace_secrets:
+    if emit_workspace_sidecar:
         ws_env: list[dict] = [
             {"name": name, "secretRef": _kv_secret_name(name)}
             for name in workspace_secrets
@@ -168,6 +190,13 @@ def build_revision_for_vault(
     if workspace_identity_resource_id:
         user_assigned_identities[workspace_identity_resource_id] = {}
 
+    # Sidecar is emitted only when both image + workspace_secrets are present.
+    # Drop workspace KV refs from the block when no sidecar will reference
+    # them — no point transmitting refs with no consumer.
+    emit_workspace_sidecar = (
+        workspace_image is not None and bool(workspace_secrets)
+    )
+
     # Build KV-backed secrets list: one entry per secret, referencing the
     # owning UAMI. ACA secret names must match [a-z0-9][a-z0-9-]*.
     kv_secrets_block: list[dict] = []
@@ -179,14 +208,15 @@ def build_revision_for_vault(
                 "identity": agent_identity_resource_id,
             }
         )
-    for s in workspace_secrets:
-        kv_secrets_block.append(
-            {
-                "name": _kv_secret_name(s),
-                "keyVaultUrl": f"{vault_uri}secrets/{s}",
-                "identity": workspace_identity_resource_id,
-            }
-        )
+    if emit_workspace_sidecar:
+        for s in workspace_secrets:
+            kv_secrets_block.append(
+                {
+                    "name": _kv_secret_name(s),
+                    "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                    "identity": workspace_identity_resource_id,
+                }
+            )
     kv_secrets_block.append(
         {"name": acr_password_secret_ref, "value": acr_password_value}
     )
@@ -219,7 +249,7 @@ def build_revision_for_vault(
         }
     ]
 
-    if workspace_image and workspace_secrets:
+    if emit_workspace_sidecar:
         ws_env: list[dict] = [
             {"name": s, "secretRef": _kv_secret_name(s)} for s in workspace_secrets
         ]

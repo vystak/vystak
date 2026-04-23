@@ -1,4 +1,11 @@
-"""Tests for ACA app revision JSON when Vault is declared."""
+"""Tests for ACA app revision JSON on both the Vault and default delivery paths.
+
+Covers ``build_revision_for_vault`` (vault-backed, UAMI + lifecycle:None)
+and ``build_revision_default_path`` (inline values, no UAMI). Every
+per-container scoping assertion here codifies the isolation invariant:
+the agent container's env never contains workspace-scoped secrets and
+vice versa.
+"""
 
 from unittest.mock import MagicMock
 
@@ -349,3 +356,68 @@ def test_build_revision_default_path_no_workspace_image_no_sidecar():
     containers = revision["properties"]["template"]["containers"]
     assert len(containers) == 1
     assert containers[0]["name"] == "agent"
+
+    # Workspace secret value must NOT appear in the inline pool — no consumer.
+    pool_names = {s["name"] for s in revision["properties"]["configuration"]["secrets"]}
+    assert "stripe-api-key" not in pool_names, (
+        "workspace secret value transmitted to Azure with no container to consume it"
+    )
+
+
+def test_build_revision_default_path_rejects_same_name_collision():
+    """Agent and workspace declaring the same secret name is rejected —
+    otherwise the workspace container would silently resolve its secretRef
+    to the agent's value via the shared inline pool."""
+    import pytest
+    from vystak_provider_azure.nodes.aca_app import build_revision_default_path
+
+    agent = _fixture_agent(with_workspace_secret=True)
+    with pytest.raises(ValueError) as exc:
+        build_revision_default_path(
+            agent=agent,
+            model_secrets={"DATABASE_URL": "sk-agent-db"},
+            workspace_secrets={"DATABASE_URL": "sk-workspace-db"},
+            acr_login_server="myacr.azurecr.io",
+            acr_password_secret_ref="acr-password",
+            acr_password_value="pw",
+            agent_image="myacr.azurecr.io/assistant:abc",
+            workspace_image="myacr.azurecr.io/assistant-workspace:abc",
+        )
+    assert "collision" in str(exc.value).lower()
+    assert "database-url" in str(exc.value)
+
+
+def test_build_revision_for_vault_drops_dead_workspace_refs():
+    """When workspace_image is None, workspace KV refs must not appear in
+    the revision's secrets block — no sidecar will consume them."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_for_vault
+
+    agent = _fixture_agent(with_workspace_secret=True)
+    revision = build_revision_for_vault(
+        agent=agent,
+        vault_uri="https://my-vault.vault.azure.net/",
+        agent_identity_resource_id="/subs/.../uami-agent",
+        agent_identity_client_id="agent-client-id",
+        workspace_identity_resource_id="/subs/.../uami-workspace",
+        workspace_identity_client_id="workspace-client-id",
+        model_secrets=["ANTHROPIC_API_KEY"],
+        workspace_secrets=["STRIPE_API_KEY"],
+        acr_login_server="myacr.azurecr.io",
+        acr_password_secret_ref="acr-password",
+        acr_password_value="pw",
+        agent_image="myacr.azurecr.io/assistant:abc",
+        workspace_image=None,
+    )
+
+    containers = revision["properties"]["template"]["containers"]
+    assert len(containers) == 1
+
+    kv_names = {
+        s["name"]
+        for s in revision["properties"]["configuration"]["secrets"]
+        if "keyVaultUrl" in s
+    }
+    assert "anthropic-api-key" in kv_names
+    assert "stripe-api-key" not in kv_names, (
+        "workspace KV ref transmitted to Azure with no container to consume it"
+    )
