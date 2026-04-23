@@ -58,6 +58,24 @@ def _validate_heartbeat_targets(
                 )
 
 
+def _validate_workspace_platform_persistence(agent: Agent) -> None:
+    """Reject unsupported persistence modes for the target platform.
+
+    ACA (container-apps) has no host filesystem — ``persistence: bind`` is
+    fundamentally unserviceable. Catch it at load time with an actionable
+    message so users aren't debugging a failed deploy later.
+    """
+    ws = agent.workspace
+    if ws is None or ws.persistence != "bind":
+        return
+    if agent.platform.type == "container-apps":
+        raise ValueError(
+            f"Agent '{agent.name}': workspace.persistence='bind' is not "
+            f"supported on Azure Container Apps (no host filesystem). "
+            f"Use 'volume' (Azure Files) or 'ephemeral'."
+        )
+
+
 def _lookup_agent(by_name: dict, name: str, field: str, ctx: str) -> object:
     if name not in by_name:
         raise KeyError(
@@ -227,6 +245,8 @@ def load_multi_yaml(
         agent_data_list.append(agent_data)
 
     agents: list[Agent] = [Agent.model_validate(d) for d in agent_data_list]
+    for agent in agents:
+        _validate_workspace_platform_persistence(agent)
     agents_by_name = {a.name: a for a in agents}
 
     # Phase 2: re-attach subagents now that all agents exist.
