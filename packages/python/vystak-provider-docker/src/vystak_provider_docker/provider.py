@@ -535,7 +535,11 @@ class DockerProvider(PlatformProvider):
             graph.add(keygen)
             graph.add_dependency(keygen.name, "network")
 
-            ssh_host_dir = str(Path(".vystak") / "ssh" / agent.name)
+            # Docker bind-mount sources must be absolute paths; the
+            # container nodes will pass this dir to docker-py `volumes=`.
+            ssh_host_dir = str(
+                (Path.cwd() / ".vystak" / "ssh" / agent.name).resolve()
+            )
 
             tools_path = tools_dir or (Path.cwd() / "tools")
             ws_node = DockerWorkspaceNode(
