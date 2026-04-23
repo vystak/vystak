@@ -102,58 +102,6 @@ def load_multi_yaml(
 
         agent = Agent.model_validate(agent_data)
 
-        # Cross-object check: workspace secrets need a compatible backend.
-        # - Azure provider: Azure Key Vault via ACA lifecycle:None + secretRef.
-        # - Docker provider: HashiCorp Vault via per-principal AppRole +
-        #   Vault Agent sidecar + per-container secrets volume.
-        # A Docker-platform agent without a declared Hashi Vault has no
-        # mechanism to isolate workspace secrets from the agent container
-        # and is therefore rejected.
-        if agent.workspace and agent.workspace.secrets:
-            platform_provider_type = (
-                agent.platform.provider.type
-                if agent.platform and agent.platform.provider
-                else None
-            )
-            if platform_provider_type == "docker":
-                from vystak.schema.common import VaultType
-
-                if vault is None or vault.type is not VaultType.VAULT:
-                    raise ValueError(
-                        f"Workspace '{agent.workspace.name}' on agent "
-                        f"'{agent.name}' declares secrets on a Docker platform, "
-                        f"but no HashiCorp Vault is declared. Add a "
-                        f"'vault: {{type: vault, provider: docker, ...}}' "
-                        f"section to isolate workspace secrets from the agent "
-                        f"container."
-                    )
-            elif platform_provider_type != "azure":
-                raise ValueError(
-                    f"Workspace '{agent.workspace.name}' on agent '{agent.name}' "
-                    f"declares secrets, but the agent's platform provider is "
-                    f"'{platform_provider_type}'. Supported: Azure (Key Vault) "
-                    f"or Docker (HashiCorp Vault)."
-                )
-
-        # Spec 1: workspace requires a Vault declaration for SSH key delivery
-        if agent.workspace is not None and vault is None:
-            raise ValueError(
-                f"Agent '{agent.name}' declares a workspace but no Vault "
-                f"is declared in this deployment. Spec 1 workspaces require "
-                f"a Vault for SSH key storage and workspace-secret delivery.\n"
-                f"\n"
-                f"Add to your config:\n"
-                f"  vault:\n"
-                f"    name: vystak-vault\n"
-                f"    provider: {agent.platform.provider.name if agent.platform else 'docker'}\n"
-                f"    type: vault\n"
-                f"    mode: deploy\n"
-                f"    config: {{}}\n"
-                f"\n"
-                f"See docs/superpowers/specs/2026-04-19-secret-manager-design.md "
-                f"for the Vault schema."
-            )
-
         agents.append(agent)
 
     channels: list[Channel] = []
