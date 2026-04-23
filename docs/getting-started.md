@@ -290,8 +290,10 @@ operational features (rotation, audit, shared storage). The declared
   resolution counts.
 - `vystak secrets list` — show declared secrets and whether each is
   in `.env` / the vault.
-- `vystak secrets push` — bootstrap declared secrets from `.env` into
-  the vault (vault-declared deploys only).
+- `vystak secrets push` — on the default path, previews which declared
+  secrets will resolve from `.env` at apply time. When a `vault:` block
+  is declared, bootstraps values from `.env` into the declared backend
+  (push-if-missing by default; `--force` overwrites).
 - `vystak secrets diff` — compare `.env` ↔ `.vystak/env/*.env` ↔ vault.
   Prints only names and status — never values.
 - `vystak secrets rotate-ssh <agent>` — regenerate the workspace SSH
