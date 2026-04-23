@@ -390,6 +390,18 @@ Per `CHANGELOG.md` Unreleased / "Known follow-up work":
    default-path state files are not cleaned. Use the CLI.
 4. **`_ResolvedPassthroughNode` design** — no functional impact; design
    debt noted.
+5. **Vault path + channels with secrets — silent security hole.** In
+   `vystak-provider-docker/src/vystak_provider_docker/provider.py`,
+   `_add_vault_nodes` enumerates agent + workspace principals but not
+   channels. Channel secrets are pushed to Vault KV at apply time but
+   no per-channel AppRole or Vault Agent sidecar is created.
+   `DockerChannelNode` silently falls back to `os.environ` passthrough,
+   so channel containers read their secrets from container env — not
+   from Vault. **Cells D5 and D8 are `pytest.mark.xfail(strict=True)`
+   pending a provider fix** that mirrors the per-agent AppRole creation
+   for channels with declared secrets. A companion Vault-on-Azure gap
+   may exist — not yet verified because the multi-container ACA
+   deploy plumbing itself is gap #1 above.
 
 ---
 

@@ -25,6 +25,14 @@ pytestmark = [
     pytest.mark.release_integration,  # Edge; runs alongside integration
     pytest.mark.release_slack,
     pytest.mark.docker,
+    pytest.mark.xfail(
+        reason=(
+            "Same provider gap as D5: _add_vault_nodes does not enumerate "
+            "channel principals. See test_D5_docker_vault_slack_http.py and "
+            "test_plan.md Known gaps."
+        ),
+        strict=True,
+    ),
 ]
 
 

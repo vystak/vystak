@@ -79,10 +79,16 @@ def test_D7_full_cycle(slack_env):
     project = slack_env
     (project / "vystak.yaml").write_text(D7_YAML)
 
+    # NOTE: plan's EnvFiles section intentionally omits channel rows
+    # (PR #5 Round-2) because the default-path graph doesn't create
+    # per-channel env-file nodes — channels get secrets via the
+    # DockerChannelNode's own `os.environ` passthrough. So we only
+    # assert the agent row here; channel secret delivery is verified
+    # at V3 below.
     assert_plan_ok(
         cwd=project,
-        expect_sections=["EnvFiles:", "d7agent-agent", "slack-channel"],
-        absent_sections=["Vault:", "Orphan resources"],
+        expect_sections=["EnvFiles:", "d7agent-agent"],
+        absent_sections=["Vault:", "Orphan resources", "slack-channel"],
     )
 
     assert_apply_ok(cwd=project)

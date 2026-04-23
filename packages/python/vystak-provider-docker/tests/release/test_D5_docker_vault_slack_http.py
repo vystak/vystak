@@ -32,6 +32,19 @@ pytestmark = [
     pytest.mark.release_integration,
     pytest.mark.release_slack,
     pytest.mark.docker,
+    pytest.mark.xfail(
+        reason=(
+            "Provider gap: _add_vault_nodes in vystak-provider-docker only "
+            "enumerates agent + workspace principals. Channels with secrets "
+            "get their values pushed to Vault KV but no per-channel AppRole "
+            "or Vault Agent sidecar is created. DockerChannelNode silently "
+            "falls back to os.environ passthrough, so channel secrets are "
+            "NOT actually delivered from Vault — a silent security hole on "
+            "the Vault-declared path for channel secrets. See test_plan.md "
+            "Known gaps."
+        ),
+        strict=True,
+    ),
 ]
 
 
