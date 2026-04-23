@@ -76,6 +76,34 @@ class _LateBoundKvSetupNode(Provisionable):
     def destroy(self) -> None:
         pass
 
+
+class _ResolvedPassthroughNode(Provisionable):
+    """Pre-resolved ProvisionResult exposed as a node for graph observability.
+
+    Used when a node's side effects complete at graph-build time (e.g. the
+    default-path env-file generation). The provision() method returns the
+    already-computed result without re-executing side effects.
+    """
+
+    def __init__(self, result: ProvisionResult, *, name_hint: str):
+        self._result = result
+        self._name = name_hint
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def depends_on(self) -> list[str]:
+        return []
+
+    def provision(self, context: dict) -> ProvisionResult:
+        return self._result
+
+    def destroy(self) -> None:
+        pass
+
+
 DOCKERFILE_TEMPLATE = """\
 FROM python:3.11-slim
 WORKDIR /app
@@ -441,6 +469,94 @@ class DockerProvider(PlatformProvider):
 
         return ws_node.container_name
 
+    def _add_default_path_nodes(
+        self, graph, *, tools_dir: Path | None = None
+    ) -> tuple[dict[str, dict], str | None, str | None]:
+        """Default delivery path — no Vault.
+
+        Eagerly resolves env-file nodes at graph-build time so container nodes
+        can be configured with env dicts before they're constructed. The
+        env-file nodes are still added to the graph (as passthroughs) for
+        observability.
+
+        Returns:
+            resolved_envs: ``{principal_name → env dict}`` for containers.
+            ssh_host_dir: ``.vystak/ssh/<agent>/`` path when workspace is
+                declared, else None.
+            workspace_host: internal DNS name for the workspace container,
+                or None when no workspace is declared.
+        """
+        from vystak_provider_docker.nodes import (
+            DockerEnvFileNode,
+            DockerWorkspaceNode,
+            WorkspaceSshKeygenNode,
+        )
+
+        agent = self._agent
+        if agent is None:
+            return {}, None, None
+
+        resolved_envs: dict[str, dict] = {}
+
+        principals: dict[str, list[str]] = {
+            f"{agent.name}-agent": [s.name for s in (agent.secrets or [])],
+        }
+        if agent.workspace is not None:
+            principals[f"{agent.name}-workspace"] = [
+                s.name for s in agent.workspace.secrets
+            ]
+
+        for p_name, secret_names in principals.items():
+            node = DockerEnvFileNode(
+                principal_name=p_name,
+                declared_secret_names=secret_names,
+                env_values=self._env_values or {},
+                allow_missing=self._allow_missing,
+            )
+            # Eager-resolve so container nodes can be configured before
+            # graph.execute() runs. Side effect: writes .vystak/env/<p>.env.
+            result = node.provision(context={})
+            if not result.success:
+                raise RuntimeError(
+                    result.error or f"env-file node failed for {p_name}"
+                )
+            resolved_envs[p_name] = result.info["env"]
+            # Add a passthrough to the graph for plan observability.
+            graph.add(_ResolvedPassthroughNode(result, name_hint=node.name))
+
+        ssh_host_dir: str | None = None
+        workspace_host: str | None = None
+        if agent.workspace is not None:
+            keygen = WorkspaceSshKeygenNode(
+                vault_client=None,
+                docker_client=self._client,
+                agent_name=agent.name,
+            )
+            graph.add(keygen)
+            graph.add_dependency(keygen.name, "network")
+
+            ssh_host_dir = str(Path(".vystak") / "ssh" / agent.name)
+
+            tools_path = tools_dir or (Path.cwd() / "tools")
+            ws_node = DockerWorkspaceNode(
+                client=self._client,
+                agent_name=agent.name,
+                workspace=agent.workspace,
+                tools_dir=tools_path,
+            )
+            ws_node.set_default_path_context(
+                env=resolved_envs[f"{agent.name}-workspace"],
+                ssh_host_dir=ssh_host_dir,
+            )
+            graph.add(ws_node)
+            graph.add_dependency(ws_node.name, keygen.name)
+            graph.add_dependency(
+                ws_node.name, f"env-file:{agent.name}-workspace"
+            )
+            workspace_host = ws_node.container_name
+
+        return resolved_envs, ssh_host_dir, workspace_host
+
     def _build_graph_for_tests(self, agent, *, tools_dir: Path | None = None):
         """Test hook — builds the provisioning graph for the given agent
         without executing it. Mirrors the public apply() flow: network,
@@ -461,6 +577,8 @@ class DockerProvider(PlatformProvider):
 
             vault_volume_map: dict[str, str] = {}
             workspace_host: str | None = None
+            default_envs: dict[str, dict] = {}
+            default_ssh_host_dir: str | None = None
             if self._vault is not None:
                 from vystak.schema.common import VaultType
 
@@ -469,6 +587,10 @@ class DockerProvider(PlatformProvider):
                     workspace_host = self._add_workspace_nodes(
                         graph, tools_dir=tools_dir
                     )
+            else:
+                default_envs, default_ssh_host_dir, workspace_host = (
+                    self._add_default_path_nodes(graph, tools_dir=tools_dir)
+                )
 
             agent_node = DockerAgentNode(
                 self._client,
@@ -482,9 +604,18 @@ class DockerProvider(PlatformProvider):
                 agent_node.set_vault_context(
                     secrets_volume_name=vault_volume_map[agent_principal]
                 )
+            if agent_principal in default_envs:
+                agent_node.set_default_path_context(
+                    env=default_envs[agent_principal],
+                    ssh_host_dir=default_ssh_host_dir,
+                )
             if workspace_host:
                 agent_node.set_workspace_context(workspace_host=workspace_host)
             graph.add(agent_node)
+            if agent_principal in default_envs:
+                graph.add_dependency(
+                    agent_node.name, f"env-file:{agent_principal}"
+                )
             if workspace_host:
                 graph.add_dependency(
                     agent_node.name, f"workspace:{agent.name}"
@@ -539,6 +670,8 @@ class DockerProvider(PlatformProvider):
             # HashiCorp Vault subgraph — only when vault.type == 'vault'
             vault_volume_map: dict[str, str] = {}
             workspace_host: str | None = None
+            default_envs: dict[str, dict] = {}
+            default_ssh_host_dir: str | None = None
             if self._vault is not None:
                 from vystak.schema.common import VaultType
 
@@ -549,6 +682,12 @@ class DockerProvider(PlatformProvider):
                     # them into per-principal volumes, workspace container
                     # reads from /shared.
                     workspace_host = self._add_workspace_nodes(graph)
+            else:
+                # Default path — no Vault. Per-container --env-file delivery
+                # and bind-mounted SSH keys from .vystak/ssh/<agent>/.
+                default_envs, default_ssh_host_dir, workspace_host = (
+                    self._add_default_path_nodes(graph)
+                )
 
             # Agent container
             agent_node = DockerAgentNode(
@@ -566,6 +705,11 @@ class DockerProvider(PlatformProvider):
                 agent_node.set_vault_context(
                     secrets_volume_name=vault_volume_map[agent_principal]
                 )
+            if agent_principal and agent_principal in default_envs:
+                agent_node.set_default_path_context(
+                    env=default_envs[agent_principal],
+                    ssh_host_dir=default_ssh_host_dir,
+                )
             if workspace_host:
                 agent_node.set_workspace_context(workspace_host=workspace_host)
             graph.add(agent_node)
@@ -574,6 +718,10 @@ class DockerProvider(PlatformProvider):
             if agent_principal and agent_principal in vault_volume_map:
                 graph.add_dependency(
                     agent_node.name, f"vault-agent:{agent_principal}"
+                )
+            if agent_principal and agent_principal in default_envs:
+                graph.add_dependency(
+                    agent_node.name, f"env-file:{agent_principal}"
                 )
             if workspace_host:
                 graph.add_dependency(

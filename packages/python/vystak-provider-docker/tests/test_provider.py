@@ -585,6 +585,63 @@ def test_agent_node_default_path_env_and_ssh_mount(tmp_path, monkeypatch):
     assert "ln -sf /shared/ssh /vystak/ssh" in dockerfile
 
 
+def test_apply_graph_default_path_no_vault_nodes(tmp_path, monkeypatch):
+    """When vault is None, the graph emits no Vault nodes — only network,
+    env-file per principal, ssh-keygen, workspace, and agent."""
+    monkeypatch.chdir(tmp_path)
+
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.platform import Platform
+    from vystak.schema.provider import Provider
+    from vystak.schema.secret import Secret
+    from vystak.schema.workspace import Workspace
+    from vystak_provider_docker.provider import DockerProvider
+
+    prov = DockerProvider.__new__(DockerProvider)
+    prov._client = MagicMock()
+    prov._agent = None
+    prov._generated_code = type(
+        "_GC", (), {"files": {}, "entrypoint": "server.py"}
+    )()
+    prov._vault = None
+    prov._env_values = {"ANTHROPIC_API_KEY": "sk-a", "STRIPE_API_KEY": "sk-s"}
+    prov._force_sync = False
+    prov._allow_missing = False
+
+    docker_p = Provider(name="docker", type="docker")
+    anthropic = Provider(name="anthropic", type="anthropic")
+    agent = Agent(
+        name="assistant",
+        model=Model(
+            name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
+        ),
+        platform=Platform(name="docker", type="docker", provider=docker_p),
+        secrets=[Secret(name="ANTHROPIC_API_KEY")],
+        workspace=Workspace(
+            name="ws",
+            image="python:3.12-slim",
+            secrets=[Secret(name="STRIPE_API_KEY")],
+        ),
+    )
+
+    graph = prov._build_graph_for_tests(agent)
+    node_names = {n.name for n in graph.nodes()}
+
+    # No Vault nodes
+    assert not any("hashi-vault" in n for n in node_names), node_names
+    assert not any("approle" in n for n in node_names), node_names
+    assert not any(n.startswith("vault-agent:") for n in node_names), node_names
+
+    # Default-path nodes present
+    assert "network" in node_names
+    assert "env-file:assistant-agent" in node_names
+    assert "env-file:assistant-workspace" in node_names
+    assert "workspace-ssh-keygen:assistant" in node_names
+    assert "workspace:assistant" in node_names
+    assert "agent:assistant" in node_names
+
+
 class TestStatus:
     def test_running(self, provider, mock_docker_client):
         client, _ = mock_docker_client
