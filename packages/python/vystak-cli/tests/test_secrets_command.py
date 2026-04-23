@@ -462,5 +462,156 @@ agents:
     assert "not applicable" in out or "vault" in out
 
 
+# ---------------------------------------------------------------------------
+# default path (no vault declared)
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_PATH_YAML = """\
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  docker: {provider: docker, type: docker}
+models:
+  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
+agents:
+  - name: assistant
+    model: sonnet
+    platform: docker
+    secrets: [{name: ANTHROPIC_API_KEY}, {name: MISSING_KEY}]
+"""
+
+
+def _write_default_path_yaml(tmp_path: Path) -> Path:
+    p = tmp_path / "vystak.yaml"
+    p.write_text(DEFAULT_PATH_YAML)
+    return p
+
+
+def test_secrets_list_default_path_shows_env_only_tag(tmp_path):
+    config = _write_default_path_yaml(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(secrets, ["list", "--file", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "env-passthrough" in result.output.lower() or "no vault" in result.output.lower()
+    assert "ANTHROPIC_API_KEY" in result.output
+    assert "[env-only]" in result.output
+
+
+def test_secrets_push_default_path_previews_resolution(tmp_path):
+    config = _write_default_path_yaml(tmp_path)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-test\n")
+    runner = CliRunner()
+    result = runner.invoke(
+        secrets,
+        [
+            "push",
+            "--file",
+            str(config),
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--allow-missing",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Default path" in result.output
+    assert "ready" in result.output
+    assert "ANTHROPIC_API_KEY" in result.output
+    # allow_missing → missing secret reported but not an error
+    assert "MISSING_KEY" in result.output
+    # secret VALUES must never appear
+    assert "sk-test" not in result.output
+
+
+def test_secrets_push_default_path_errors_on_missing_without_allow_missing(tmp_path):
+    config = _write_default_path_yaml(tmp_path)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-test\n")
+    runner = CliRunner()
+    result = runner.invoke(
+        secrets,
+        ["push", "--file", str(config), "--env-file", str(tmp_path / ".env")],
+    )
+    # Default path previews but flags MISSING as capital-case to signal the
+    # problem; exit code is still 0 (preview is non-mutating) but the output
+    # surfaces the issue loudly.
+    assert result.exit_code == 0, result.output
+    assert "MISSING" in result.output
+
+
+def test_secrets_set_default_path_rejects_with_helpful_message(tmp_path):
+    config = _write_default_path_yaml(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        secrets, ["set", "FOO=bar", "--file", str(config)]
+    )
+    assert result.exit_code != 0
+    assert "Default path" in result.output
+    assert "Edit .env" in result.output
+    # The value itself should not be re-echoed
+    assert "bar" not in result.output.replace("FOO=bar", "").replace("'bar'", "")
+
+
+def test_secrets_rotate_ssh_default_path_regenerates_host_files(
+    tmp_path, monkeypatch
+):
+    """Default-path rotate-ssh wipes .vystak/ssh/<agent>/ and regenerates."""
+    import subprocess
+
+    def _fake_run(*args, **kwargs):
+        volumes = kwargs.get("volumes") or (args[2] if len(args) > 2 else {})
+        host_dir = list(volumes.keys())[0]
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", f"{host_dir}/client-key", "-q"],
+            check=True,
+        )
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", f"{host_dir}/host-key", "-q"],
+            check=True,
+        )
+        return None
+
+    # Create a workspace-declaring default-path config
+    yaml_body = (
+        "providers:\n"
+        "  docker: {type: docker}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  docker: {provider: docker, type: docker}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: docker\n"
+        "    workspace: {name: ws, image: 'python:3.12-slim'}\n"
+    )
+    config = tmp_path / "vystak.yaml"
+    config.write_text(yaml_body)
+
+    # Seed stale files to prove they get wiped
+    stale_ssh = tmp_path / ".vystak" / "ssh" / "assistant"
+    stale_ssh.mkdir(parents=True)
+    (stale_ssh / "client-key").write_text("stale")
+
+    monkeypatch.chdir(tmp_path)
+
+    fake_docker = MagicMock()
+    fake_docker.containers.run.side_effect = _fake_run
+    with patch(
+        "vystak_cli.commands.secrets._get_docker_client",
+        return_value=fake_docker,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            secrets, ["rotate-ssh", "assistant", "--file", str(config)]
+        )
+    assert result.exit_code == 0, result.output
+    assert "rotated" in result.output
+    # Stale file content is gone; fresh keypair replaced it
+    assert (tmp_path / ".vystak" / "ssh" / "assistant" / "client-key").read_text() != "stale"
+    assert (tmp_path / ".vystak" / "ssh" / "assistant" / "client-key.pub").exists()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

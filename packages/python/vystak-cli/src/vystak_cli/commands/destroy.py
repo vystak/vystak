@@ -118,6 +118,7 @@ def destroy(
         except Exception as e:
             click.echo(f"  FAILED: {e}", err=True)
 
+    vault = getattr(defs, "vault", None)
     for agent in agents:
         click.echo(f"Destroying agent: {agent.name}")
         provider = get_provider(agent)
@@ -125,8 +126,8 @@ def destroy(
         # Thread vault declaration so the provider knows to tear down
         # Vault-specific resources (sidecars, approle volumes, secret
         # volumes) via its _destroy_vault_resources branch.
-        if hasattr(provider, "set_vault") and getattr(defs, "vault", None):
-            provider.set_vault(defs.vault)
+        if hasattr(provider, "set_vault") and vault:
+            provider.set_vault(vault)
 
         if include_resources and hasattr(provider, "list_resources"):
             resources = provider.list_resources(agent.name)
@@ -149,4 +150,27 @@ def destroy(
         except Exception as e:
             click.echo(f"  FAILED: {e}", err=True)
 
+    # Default path: clean up per-principal env files + SSH key directories
+    # that were materialized at apply time. Vault-path state (init.json,
+    # approle volumes) is handled by provider.destroy under --delete-vault.
+    if vault is None:
+        _cleanup_default_path_state(agents)
+
     click.echo(f"Destroyed {len(agents)} agent(s), {len(channels)} channel(s)")
+
+
+def _cleanup_default_path_state(agents) -> None:
+    """Remove .vystak/env/*.env and .vystak/ssh/<agent>/ for destroyed agents."""
+    import shutil
+
+    env_dir = Path(".vystak") / "env"
+    ssh_root = Path(".vystak") / "ssh"
+
+    for agent in agents:
+        for suffix in ("-agent.env", "-workspace.env"):
+            p = env_dir / f"{agent.name}{suffix}"
+            if p.exists():
+                p.unlink()
+        d = ssh_root / agent.name
+        if d.exists():
+            shutil.rmtree(d)

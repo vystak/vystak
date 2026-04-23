@@ -264,11 +264,25 @@ def push_cmd(file: str, env_file: str, force: bool, allow_missing: bool, names):
     from vystak.schema.common import VaultType
 
     declared, vault = _collect_declared_secrets(Path(file))
-    if vault is None:
-        raise click.ClickException("No vault declared in config; push has nothing to do.")
-
     env_values = load_env_file(Path(env_file), optional=True)
     target = list(names) if names else declared
+
+    if vault is None:
+        # Default path: secrets are materialized into per-principal env
+        # files at `vystak apply` time. There's no out-of-band push to do;
+        # surface the resolution status as a preview.
+        click.echo(
+            "Default path (no vault): env-file generation happens at "
+            "'vystak apply'. Previewing resolution from .env:"
+        )
+        for name in target:
+            if name in env_values:
+                click.echo(f"  ready   {name}")
+            elif allow_missing:
+                click.echo(f"  missing {name}")
+            else:
+                click.echo(f"  MISSING {name}  (absent from .env)")
+        return
 
     if vault.type is VaultType.VAULT:
         client = _make_vault_client(vault)
@@ -334,7 +348,12 @@ def set_cmd(assignment: str, file: str):
     name, value = assignment.split("=", 1)
     _, vault = _collect_declared_secrets(Path(file))
     if vault is None:
-        raise click.ClickException("No vault declared.")
+        raise click.ClickException(
+            "Default path (no vault): 'secrets set' is not supported. "
+            "Edit .env directly (e.g. `echo "
+            f"'{name}=<value>' >> .env`), then run 'vystak apply' to "
+            "materialize."
+        )
 
     if vault.type is VaultType.VAULT:
         client = _make_vault_client(vault)
@@ -414,8 +433,6 @@ def rotate_ssh_cmd(agent_name: str, file: str):
     Never prints key material.
     """
     agents, _channels, vault = _load_config(Path(file))
-    if vault is None:
-        raise click.ClickException("rotate-ssh requires a Vault declaration.")
     matching = [a for a in agents if a.name == agent_name]
     if not matching:
         raise click.ClickException(
@@ -428,10 +445,32 @@ def rotate_ssh_cmd(agent_name: str, file: str):
             f"Agent '{agent_name}' has no workspace; nothing to rotate."
         )
 
-    vault_client = _make_vault_client(vault)
     docker_client = _get_docker_client()
 
-    # Invalidate existing keys (delete from Vault) then regenerate.
+    from vystak_provider_docker.nodes.workspace_ssh_keygen import (
+        WorkspaceSshKeygenNode,
+    )
+
+    if vault is None:
+        # Default path: invalidate .vystak/ssh/<agent>/ so the node
+        # regenerates into host files on the next provision() call.
+        import shutil
+
+        host_dir = Path(".vystak") / "ssh" / agent_name
+        if host_dir.exists():
+            shutil.rmtree(host_dir)
+
+        node = WorkspaceSshKeygenNode(
+            vault_client=None,
+            docker_client=docker_client,
+            agent_name=agent_name,
+        )
+        node.provision(context={})
+        click.echo(f"  rotated  {agent_name}  (host path, no vault)")
+        return
+
+    # Vault path: invalidate the four KV entries, regenerate + push.
+    vault_client = _make_vault_client(vault)
     import contextlib
 
     for key in ("client-key", "host-key", "client-key-pub", "host-key-pub"):
@@ -439,10 +478,6 @@ def rotate_ssh_cmd(agent_name: str, file: str):
             vault_client.kv_delete(
                 f"_vystak/workspace-ssh/{agent_name}/{key}"
             )
-
-    from vystak_provider_docker.nodes.workspace_ssh_keygen import (
-        WorkspaceSshKeygenNode,
-    )
 
     node = WorkspaceSshKeygenNode(
         vault_client=vault_client,
