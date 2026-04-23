@@ -234,7 +234,12 @@ def build_revision_for_vault(
     agent_env: list[dict] = [
         {"name": s, "secretRef": _kv_secret_name(s)} for s in model_secrets
     ]
-    if workspace_identity_resource_id:
+    if emit_workspace_sidecar:
+        # Match the default-path helper — only inject the RPC URL when a
+        # sidecar will actually exist to respond on localhost:50051.
+        # Previously gated on workspace_identity_resource_id alone, which
+        # could inject a URL pointing at a non-existent service when a
+        # caller provided the UAMI but no workspace_image/secrets.
         agent_env.append(
             {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
         )
