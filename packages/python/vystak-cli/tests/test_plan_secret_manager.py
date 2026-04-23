@@ -346,5 +346,87 @@ def test_plan_detects_orphan_init_json(tmp_path, monkeypatch):
     assert "destroy --delete-vault" in result.output
 
 
+def test_plan_orphan_detection_scoped_to_current_agents(monkeypatch):
+    """_detect_orphan_vault_resources filters docker-ls to names that
+    include an agent declared in THIS config. Unrelated vystak-vault*
+    containers from other worktrees must NOT be flagged."""
+    from unittest.mock import MagicMock
+
+    from vystak_cli.commands.plan import _detect_orphan_vault_resources
+
+    fake_dc = MagicMock()
+    this_sidecar = MagicMock()
+    this_sidecar.name = "vystak-assistant-agent-vault-agent"
+    other_sidecar = MagicMock()
+    other_sidecar.name = "vystak-otheragent-agent-vault-agent"
+    fake_dc.containers.list.return_value = [this_sidecar, other_sidecar]
+
+    this_volume = MagicMock()
+    this_volume.name = "vystak-assistant-agent-secrets"
+    other_volume = MagicMock()
+    other_volume.name = "vystak-otheragent-agent-secrets"
+    shared = MagicMock()
+    shared.name = "vystak-vault-data"  # shared across worktrees; must NOT flag
+    fake_dc.volumes.list.return_value = [this_volume, other_volume, shared]
+
+    import docker as _docker
+
+    monkeypatch.setattr(_docker, "from_env", lambda: fake_dc)
+
+    orphans = _detect_orphan_vault_resources(agent_names=["assistant"])
+    joined = "\n".join(orphans)
+    assert "vystak-assistant-agent-vault-agent" in joined
+    assert "vystak-assistant-agent-secrets" in joined
+    # The other worktree's resources and the shared vault-data volume
+    # must NOT be flagged — otherwise the remediation 'destroy
+    # --delete-vault' would destroy someone else's Vault state.
+    assert "otheragent" not in joined, (
+        f"orphan detection leaked across worktrees: {joined}"
+    )
+    assert "vystak-vault-data" not in joined, (
+        "shared vystak-vault-data volume flagged as orphan — another "
+        "worktree may depend on it"
+    )
+
+
+def test_plan_env_files_omits_channel_rows(tmp_path, monkeypatch):
+    """plan's EnvFiles section must not list channel principals — the
+    provider's default-path graph doesn't emit per-channel env-file
+    nodes, so advertising them would misrepresent what apply will do."""
+    from click.testing import CliRunner
+    from vystak_cli.commands.plan import plan as plan_cmd
+
+    (tmp_path / "vystak.yaml").write_text(
+        "providers:\n"
+        "  docker: {type: docker}\n"
+        "  anthropic: {type: anthropic}\n"
+        "platforms:\n"
+        "  docker: {provider: docker, type: docker}\n"
+        "models:\n"
+        "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
+        "agents:\n"
+        "  - name: assistant\n"
+        "    model: sonnet\n"
+        "    platform: docker\n"
+        "    secrets: [{name: ANTHROPIC_API_KEY}]\n"
+        "channels:\n"
+        "  - name: slack\n"
+        "    type: slack\n"
+        "    platform: docker\n"
+        "    secrets: [{name: SLACK_BOT_TOKEN}]\n"
+    )
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=x\nSLACK_BOT_TOKEN=y\n")
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(plan_cmd)
+    assert "EnvFiles:" in result.output
+    assert "assistant-agent" in result.output
+    assert "slack-channel" not in result.output, (
+        "EnvFiles section advertised a channel row the provider does not "
+        "materialize: " + result.output
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

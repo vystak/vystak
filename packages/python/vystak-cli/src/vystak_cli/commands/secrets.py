@@ -509,9 +509,26 @@ def diff_cmd(file: str, env_file: str):
     env_values = load_env_file(Path(env_file), optional=True)
 
     if vault is None:
+        # Default path: compare declared ∩ .env ∩ .vystak/env/*.env.
+        # Never reference "vault" in status strings — there is none.
+        materialized: set[str] = set()
+        env_file_dir = Path(".vystak") / "env"
+        if env_file_dir.exists():
+            for f in env_file_dir.glob("*.env"):
+                for line in f.read_text().splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        materialized.add(line.split("=", 1)[0].strip())
         for name in declared:
             in_env = name in env_values
-            status = "env-only (vault missing)" if in_env else "missing (absent in env and vault)"
+            in_materialized = name in materialized
+            if in_env and in_materialized:
+                status = "ready (in .env and .vystak/env)"
+            elif in_env and not in_materialized:
+                status = "pending (in .env, not yet applied)"
+            elif not in_env and in_materialized:
+                status = "stale (in .vystak/env but absent from .env)"
+            else:
+                status = "missing (absent from both .env and .vystak/env)"
             click.echo(f"  {name}  {status}")
         return
 
