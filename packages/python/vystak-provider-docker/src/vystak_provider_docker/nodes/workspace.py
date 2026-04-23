@@ -25,6 +25,8 @@ class DockerWorkspaceNode(Provisionable):
         self._agent_name = agent_name
         self._workspace = workspace
         self._tools_dir = Path(tools_dir)
+        self._default_path_env: dict[str, str] | None = None
+        self._default_path_ssh_host_dir: str | None = None
 
     @property
     def container_name(self) -> str:
@@ -45,11 +47,29 @@ class DockerWorkspaceNode(Provisionable):
 
     @property
     def depends_on(self) -> list[str]:
-        # Depends on the workspace-principal vault-agent sidecar and SSH keygen.
+        if self._default_path_env is not None:
+            # Default path: no Vault Agent sidecar, just the keygen node.
+            return [f"workspace-ssh-keygen:{self._agent_name}"]
         return [
             f"vault-agent:{self._agent_name}-workspace",
             f"workspace-ssh-keygen:{self._agent_name}",
         ]
+
+    def set_default_path_context(
+        self,
+        *,
+        env: dict[str, str],
+        ssh_host_dir: str,
+    ) -> None:
+        """Declare the default (no-Vault) delivery context.
+
+        Env dict is passed directly to docker run environment=. SSH host
+        directory is bind-mounted piece-by-piece into the workspace's /shared
+        path (matching sshd_config expectations for
+        /shared/ssh_host_ed25519_key and /shared/authorized_keys_vystak-agent).
+        """
+        self._default_path_env = dict(env)
+        self._default_path_ssh_host_dir = ssh_host_dir
 
     def provision(self, context: dict) -> ProvisionResult:
         ws = self._workspace
@@ -121,9 +141,24 @@ class DockerWorkspaceNode(Provisionable):
         except docker.errors.NotFound:
             pass
 
-        volumes: dict = {
-            self.secrets_volume_name: {"bind": "/shared", "mode": "ro"},
-        }
+        volumes: dict = {}
+        if self._default_path_ssh_host_dir is not None:
+            # Default path: bind-mount individual SSH files matching the
+            # sshd_config paths (HostKey /shared/ssh_host_ed25519_key;
+            # AuthorizedKeysFile /shared/authorized_keys_vystak-agent).
+            ssh_dir = Path(self._default_path_ssh_host_dir)
+            volumes[str(ssh_dir / "host-key")] = {
+                "bind": "/shared/ssh_host_ed25519_key",
+                "mode": "ro",
+            }
+            volumes[str(ssh_dir / "client-key.pub")] = {
+                "bind": "/shared/authorized_keys_vystak-agent",
+                "mode": "ro",
+            }
+        else:
+            # Vault path: /shared is populated by the workspace-principal
+            # Vault Agent sidecar volume.
+            volumes[self.secrets_volume_name] = {"bind": "/shared", "mode": "ro"}
         tmpfs: dict = {}
         if ws.persistence == "volume":
             # Ensure data volume exists
@@ -144,7 +179,7 @@ class DockerWorkspaceNode(Provisionable):
         elif ws.ssh:
             ports["22/tcp"] = None  # Docker auto-allocates
 
-        self._client.containers.run(
+        run_kwargs: dict = dict(
             image=image_tag,
             name=self.container_name,
             detach=True,
@@ -157,6 +192,10 @@ class DockerWorkspaceNode(Provisionable):
                 "vystak.workspace.persistence": ws.persistence,
             },
         )
+        if self._default_path_env is not None:
+            run_kwargs["environment"] = dict(self._default_path_env)
+
+        self._client.containers.run(**run_kwargs)
 
         info: dict = {
             "container_name": self.container_name,

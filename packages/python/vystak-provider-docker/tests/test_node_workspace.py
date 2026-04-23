@@ -86,3 +86,85 @@ def test_persistence_bind_uses_host_path(tmp_path, monkeypatch):
     volumes = run_kwargs["volumes"]
     assert str(host_proj.resolve()) in volumes
     assert volumes[str(host_proj.resolve())]["bind"] == "/workspace"
+
+
+def test_workspace_default_path_env_and_ssh_mount(tmp_path, monkeypatch):
+    """Default-path wiring: env dict goes to container environment;
+    host-key and client-key.pub bind-mount into /shared/ssh_host_ed25519_key
+    and /shared/authorized_keys_vystak-agent respectively. Vault secrets-volume
+    mount is NOT present."""
+    monkeypatch.chdir(tmp_path)
+
+    from unittest.mock import MagicMock
+
+    import docker as _docker
+    from vystak.schema.workspace import Workspace
+    from vystak_provider_docker.nodes.workspace import DockerWorkspaceNode
+
+    client = MagicMock()
+    new_container = MagicMock()
+    new_container.ports = {}
+    client.containers.get.side_effect = [
+        _docker.errors.NotFound("x"),
+        new_container,
+    ]
+
+    ws = Workspace(name="ws", image="python:3.12-slim", secrets=[], persistence="ephemeral")
+    node = DockerWorkspaceNode(
+        client=client,
+        agent_name="assistant",
+        workspace=ws,
+        tools_dir=tmp_path / "tools",
+    )
+    node.set_default_path_context(
+        env={"STRIPE_API_KEY": "sk-test"},
+        ssh_host_dir=str(tmp_path / ".vystak" / "ssh" / "assistant"),
+    )
+
+    network_info = MagicMock()
+    network_info.name = "vystak-net"
+    context = {"network": MagicMock(info={"network": network_info})}
+
+    result = node.provision(context)
+    assert result.success, result.error
+
+    _, kwargs = client.containers.run.call_args
+    # Env from default path is set
+    assert kwargs["environment"]["STRIPE_API_KEY"] == "sk-test"
+    # SSH bind-mounts (workspace side)
+    ssh_dir_host = str(tmp_path / ".vystak" / "ssh" / "assistant")
+    assert f"{ssh_dir_host}/host-key" in kwargs["volumes"]
+    assert kwargs["volumes"][f"{ssh_dir_host}/host-key"]["bind"] == "/shared/ssh_host_ed25519_key"
+    assert kwargs["volumes"][f"{ssh_dir_host}/host-key"]["mode"] == "ro"
+    assert f"{ssh_dir_host}/client-key.pub" in kwargs["volumes"]
+    client_pub_bind = kwargs["volumes"][f"{ssh_dir_host}/client-key.pub"]["bind"]
+    assert client_pub_bind == "/shared/authorized_keys_vystak-agent"
+    # Vault secrets-volume mount is NOT in volumes
+    assert "vystak-assistant-workspace-secrets" not in kwargs["volumes"]
+
+
+def test_workspace_default_path_depends_on_drops_vault_agent():
+    """depends_on drops 'vault-agent:<agent>-workspace' when default-path
+    context is set; keeps the ssh-keygen dependency."""
+    from unittest.mock import MagicMock
+
+    from vystak.schema.workspace import Workspace
+    from vystak_provider_docker.nodes.workspace import DockerWorkspaceNode
+
+    ws = Workspace(name="ws", secrets=[])
+    node = DockerWorkspaceNode(
+        client=MagicMock(),
+        agent_name="assistant",
+        workspace=ws,
+        tools_dir=MagicMock(),
+    )
+    # Vault path (default) — both deps present
+    assert "vault-agent:assistant-workspace" in node.depends_on
+    assert "workspace-ssh-keygen:assistant" in node.depends_on
+
+    # Default path — vault-agent dep dropped
+    node.set_default_path_context(
+        env={}, ssh_host_dir="/tmp/stub"
+    )
+    assert "vault-agent:assistant-workspace" not in node.depends_on
+    assert "workspace-ssh-keygen:assistant" in node.depends_on
