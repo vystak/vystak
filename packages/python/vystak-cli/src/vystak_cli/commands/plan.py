@@ -370,6 +370,13 @@ def _print_vault_sections_hashi(vault, agents, channels) -> None:
             click.echo(
                 f"  {a.name}-workspace  will create (policy: {count} secret{plural})"
             )
+    for channel in channels:
+        if channel.secrets:
+            count = len(channel.secrets)
+            plural = "s" if count != 1 else ""
+            click.echo(
+                f"  {channel.name}-channel   will create (policy: {count} secret{plural})"
+            )
     click.echo()
 
     # --- Secrets — declared-name list only, values never printed
@@ -412,4 +419,7 @@ def _print_vault_sections_hashi(vault, agents, channels) -> None:
         if a.workspace is not None:
             for s in a.workspace.secrets:
                 click.echo(f"  {a.name}-workspace  \u2192 {s.name}  (read)")
+    for channel in channels:
+        for s in channel.secrets:
+            click.echo(f"  {channel.name}-channel   \u2192 {s.name}  (read)")
     click.echo()

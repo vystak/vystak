@@ -142,6 +142,13 @@ def _run_provider_apply(
         # rejects Vault(type='key-vault') at plan time.
         if hasattr(provider, "set_vault"):
             provider.set_vault(vault)
+        # Pass channels so the Vault subgraph enumerates channel principals
+        # alongside agent + workspace. Without this, a vault-declared
+        # deploy pushes channel secrets to KV but creates no per-channel
+        # AppRole or sidecar, and the channel silently falls back to env
+        # passthrough — defeating the Vault guarantee.
+        if hasattr(provider, "set_channels"):
+            provider.set_channels(channels)
         if hasattr(provider, "set_env_values"):
             provider.set_env_values(env_values)
         if hasattr(provider, "set_force_sync"):
@@ -223,6 +230,11 @@ def _run_provider_apply(
         click.echo(f"\nChannel: {channel.name}")
 
         provider = get_provider(channel)
+        # Thread vault into the channel provider too — apply_channel uses
+        # it to wire the channel container to its pre-provisioned Vault
+        # Agent sidecar volume (created during the agent's apply()).
+        if hasattr(provider, "set_vault"):
+            provider.set_vault(vault)
         try:
             current_hash = provider.get_channel_hash(channel)
             deploy_plan = provider.plan_channel(channel, current_hash)

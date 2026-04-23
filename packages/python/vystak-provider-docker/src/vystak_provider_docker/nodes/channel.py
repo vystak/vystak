@@ -116,10 +116,22 @@ class DockerChannelNode(Provisionable):
             env = {
                 "PORT": str(self._container_port),
             }
-            for secret in self._channel.secrets:
-                value = os.environ.get(secret.name)
-                if value:
-                    env[secret.name] = value
+            # Channel secrets delivery:
+            # - Vault path (_vault_secrets_volume set): secrets are rendered
+            #   into /shared/secrets.env by the per-channel Vault Agent
+            #   sidecar and sourced by the entrypoint shim. Inlining them
+            #   into the container-level env here would defeat Vault
+            #   isolation — the plaintext would appear in `docker inspect`
+            #   and `docker exec env` alongside the rendered file.
+            # - Default path (no vault): fall back to os.environ passthrough
+            #   so the channel container has its declared secrets in env at
+            #   start. This is the path DockerEnvFileNode equivalent for
+            #   channels — direct env delivery, no separate file.
+            if self._vault_secrets_volume is None:
+                for secret in self._channel.secrets:
+                    value = os.environ.get(secret.name)
+                    if value:
+                        env[secret.name] = value
 
             # Caller-supplied overrides (e.g. transport-plugin env contract)
             # take precedence over the defaults above.

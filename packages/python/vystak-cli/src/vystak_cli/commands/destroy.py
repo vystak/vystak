@@ -128,6 +128,12 @@ def destroy(
         # volumes) via its _destroy_vault_resources branch.
         if hasattr(provider, "set_vault") and vault:
             provider.set_vault(vault)
+        # Channels are needed so _destroy_vault_resources enumerates
+        # channel principals when cleaning up per-principal sidecars +
+        # volumes. Channels on this config were co-deployed with the
+        # agent via the same _add_vault_nodes pass.
+        if hasattr(provider, "set_channels"):
+            provider.set_channels(channels)
 
         if include_resources and hasattr(provider, "list_resources"):
             resources = provider.list_resources(agent.name)

@@ -111,16 +111,17 @@ irreversible.
   end-to-end without Vault.
 - Hashi Vault on Azure ACA; Azure Key Vault as an external store on
   Docker.
-- **Vault path + channels with secrets (security gap).**
-  `DockerProvider._add_vault_nodes` enumerates agent + workspace
-  principals but not channels. Channel-declared secrets get pushed to
-  Vault KV at apply time, but no per-channel AppRole or Vault Agent
-  sidecar is created — `DockerChannelNode` silently falls back to
-  `os.environ` passthrough, defeating Vault's isolation guarantee for
-  channel secrets. Surfaced by release-tier cells D5 and D8 (marked
-  `pytest.mark.xfail(strict=True)` pending fix). Fix is symmetric
-  with the existing principal enumeration: loop over channels with
-  declared secrets and create one AppRole + sidecar per channel.
+- ~~**Vault path + channels with secrets (security gap).**~~ **Fixed.**
+  `DockerProvider._add_vault_nodes` now enumerates channel principals
+  alongside agent + workspace, creating one AppRole + Vault Agent
+  sidecar per channel with declared secrets. `apply_channel` wires
+  the channel container to its sidecar's `/shared` volume;
+  `DockerChannelNode` skips the `os.environ` passthrough when a vault
+  context is set, so channel secrets reach the container via the
+  Vault-rendered `/shared/secrets.env` exclusively. `vystak plan`
+  output gains `<channel>-channel` rows in the AppRoles/Policies
+  sections for Hashi Vault configs. Release cells D5 and D8 pass
+  end-to-end.
 
 ### Specs / plans
 

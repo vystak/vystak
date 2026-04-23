@@ -123,6 +123,7 @@ class DockerProvider(PlatformProvider):
         self._client = self._create_client()
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
+        self._channels: list[Channel] = []
         self._vault = None
         self._env_values: dict[str, str] = {}
         self._force_sync: bool = False
@@ -143,6 +144,18 @@ class DockerProvider(PlatformProvider):
 
     def set_agent(self, agent: Agent) -> None:
         self._agent = agent
+
+    def set_channels(self, channels: list) -> None:
+        """Declare the channels deployed alongside the agent.
+
+        Consumed by ``_add_vault_nodes`` to enumerate channel principals
+        with declared secrets so each gets its own AppRole + Vault Agent
+        sidecar, mirroring the agent/workspace isolation pattern.
+        Without this, channel secrets pushed to Vault would have no
+        per-channel reader and the channel container would fall back to
+        ``os.environ`` passthrough — defeating the Vault guarantee.
+        """
+        self._channels = list(channels)
 
     def set_vault(self, vault) -> None:
         """Declare the secrets backing store for this deploy.
@@ -342,6 +355,19 @@ class DockerProvider(PlatformProvider):
             principals[f"{agent.name}-workspace"] = [
                 s.name for s in agent.workspace.secrets
             ]
+        # Channels with declared secrets each get their own principal —
+        # without this, channel values get pushed to Vault KV but no
+        # reader exists on the channel container side, so
+        # DockerChannelNode silently falls back to os.environ passthrough
+        # and the vault declaration provides zero isolation for channel
+        # secrets. The channel sidecars provisioned here are then wired
+        # into DockerChannelNode by apply_channel using the deterministic
+        # volume name `vystak-<channel>-channel-secrets`.
+        for channel in self._channels:
+            if channel.secrets:
+                principals[f"{channel.name}-channel"] = [
+                    s.name for s in channel.secrets
+                ]
 
         # Secret sync — pushes declared secrets from .env if absent in KV
         all_declared: list[str] = []
@@ -841,6 +867,12 @@ class DockerProvider(PlatformProvider):
             and self._agent.workspace.secrets
         ):
             principals.append(f"{agent_name}-workspace")
+        # Channel sidecars — same lifecycle ownership as agent/workspace
+        # sidecars. Created during _add_vault_nodes when channels have
+        # declared secrets; torn down here on destroy.
+        for channel in self._channels:
+            if channel.secrets:
+                principals.append(f"{channel.name}-channel")
 
         if not keep_sidecars:
             for p in principals:
@@ -998,6 +1030,23 @@ class DockerProvider(PlatformProvider):
                 host_port=host_port,
                 extra_env=channel_extra_env,
             )
+
+            # Vault context — when a Hashi Vault is declared and this
+            # channel has declared secrets, mount the pre-provisioned
+            # channel sidecar's /shared volume into the container. The
+            # sidecar and its KV AppRole were created during the agent's
+            # apply() via _add_vault_nodes (which enumerates channel
+            # principals when set_channels was called). Volume name is
+            # deterministic: vystak-<principal>-secrets.
+            if self._vault is not None and channel.secrets:
+                from vystak.schema.common import VaultType
+
+                if self._vault.type is VaultType.VAULT:
+                    principal = f"{channel.name}-channel"
+                    channel_node.set_vault_context(
+                        secrets_volume_name=f"vystak-{principal}-secrets"
+                    )
+
             graph.add(channel_node)
 
             results = graph.execute()
