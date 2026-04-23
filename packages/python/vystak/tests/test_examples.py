@@ -106,7 +106,8 @@ def test_docker_workspace_nodejs_example_loads():
     - The agent declares ``ANTHROPIC_API_KEY`` + ``ANTHROPIC_API_URL`` as
       model-side secrets (delivered via per-container ``--env-file``).
     - The workspace declares a node:20-slim image with multi-step
-      provisioning.
+      provisioning AND its own ``STRIPE_API_KEY`` secret — the example
+      demonstrates the per-container isolation invariant without Vault.
     """
     path = _examples_dir() / "docker-workspace-nodejs" / "vystak.yaml"
     assert path.exists(), f"Example file missing: {path}"
@@ -118,8 +119,15 @@ def test_docker_workspace_nodejs_example_loads():
     )
     assert len(agents) == 1
     assert agents[0].name == "node-coder"
-    secret_names = {s.name for s in agents[0].secrets}
-    assert {"ANTHROPIC_API_KEY", "ANTHROPIC_API_URL"} <= secret_names
+    agent_secret_names = {s.name for s in agents[0].secrets}
+    assert {"ANTHROPIC_API_KEY", "ANTHROPIC_API_URL"} <= agent_secret_names
     assert agents[0].workspace is not None
     assert agents[0].workspace.image == "node:20-slim"
     assert any("typescript" in step for step in agents[0].workspace.provision)
+    # Workspace-scoped secret demonstrates per-container isolation.
+    workspace_secret_names = {s.name for s in agents[0].workspace.secrets}
+    assert "STRIPE_API_KEY" in workspace_secret_names
+    # Cross-scoping invariant: workspace secrets must not appear on the agent
+    # and vice versa.
+    assert "STRIPE_API_KEY" not in agent_secret_names
+    assert "ANTHROPIC_API_KEY" not in workspace_secret_names

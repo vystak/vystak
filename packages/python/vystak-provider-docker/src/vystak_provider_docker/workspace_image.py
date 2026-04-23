@@ -2,7 +2,9 @@
 
 Takes user schema fields (image, provision, copy, tool_deps_manager),
 produces the full Dockerfile string. Vystak appendix handles openssh,
-vystak-workspace-rpc installation, and entrypoint shim.
+vystak-workspace-rpc installation, and — on the Vault path only — an
+entrypoint shim that blocks until Vault Agent has rendered
+/shared/secrets.env. On the default path, sshd becomes CMD directly.
 """
 
 

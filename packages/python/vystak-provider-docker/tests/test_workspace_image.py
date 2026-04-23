@@ -77,3 +77,37 @@ def test_tool_deps_none_skips_install():
     # Neither the pip3 tools install nor the npm install line is emitted.
     assert "pip3 install --break-system-packages -r /workspace/tools/requirements.txt" not in df
     assert "npm install" not in df
+
+
+def test_entrypoint_shim_emitted_by_default():
+    """Vault path (default) wires the shim that waits for
+    /shared/secrets.env."""
+    from vystak_provider_docker.workspace_image import generate_workspace_dockerfile
+
+    df = generate_workspace_dockerfile(
+        image="python:3.12-slim",
+        provision=[],
+        copy={},
+        tool_deps_manager=None,
+    )
+    assert "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh" in df
+    assert 'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]' in df
+    assert 'CMD ["/usr/sbin/sshd"' in df
+
+
+def test_no_entrypoint_shim_on_default_path():
+    """Default path: no Vault Agent, no /shared/secrets.env, no shim.
+    sshd becomes CMD directly so the container doesn't block on a file
+    that will never appear."""
+    from vystak_provider_docker.workspace_image import generate_workspace_dockerfile
+
+    df = generate_workspace_dockerfile(
+        image="node:20-slim",
+        provision=[],
+        copy={},
+        tool_deps_manager=None,
+        use_entrypoint_shim=False,
+    )
+    assert "entrypoint-shim" not in df
+    assert "ENTRYPOINT" not in df
+    assert 'CMD ["/usr/sbin/sshd"' in df
