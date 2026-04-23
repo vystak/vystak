@@ -4,6 +4,7 @@ from vystak_provider_docker.nodes.agent import DockerAgentNode
 from vystak_provider_docker.nodes.approle import AppRoleNode
 from vystak_provider_docker.nodes.approle_credentials import AppRoleCredentialsNode
 from vystak_provider_docker.nodes.channel import DockerChannelNode
+from vystak_provider_docker.nodes.env_file import DockerEnvFileNode
 from vystak_provider_docker.nodes.hashi_vault import (
     HashiVaultInitNode,
     HashiVaultServerNode,
@@ -23,6 +24,7 @@ __all__ = [
     "AppRoleNode",
     "DockerAgentNode",
     "DockerChannelNode",
+    "DockerEnvFileNode",
     "DockerNetworkNode",
     "DockerServiceNode",
     "DockerWorkspaceNode",
