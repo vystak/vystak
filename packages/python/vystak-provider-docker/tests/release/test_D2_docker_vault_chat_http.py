@@ -75,12 +75,20 @@ def test_D2_full_cycle(project):
     assert init_json.exists(), "init.json not written"
     assert init_json.stat().st_mode & 0o777 == 0o600, "init.json perms != 600"
 
-    # V3 — secrets delivered via /shared/secrets.env (Vault path);
-    # inspecting env of the agent container should show both keys
-    # after the entrypoint shim has sourced the file.
-    env = docker_exec("vystak-vaultagent", "env")
-    assert "ANTHROPIC_API_KEY=" in env
-    assert "ANTHROPIC_API_URL=" in env
+    # V3 — secrets delivered via /shared/secrets.env (Vault path).
+    # `docker exec env` shows only the container-level env (what was
+    # passed via `environment=` at run), NOT the vars the shim sources
+    # before exec'ing the main process. So we verify the rendered file
+    # itself, which proves Vault Agent successfully authenticated,
+    # fetched the secrets, and rendered them.
+    secrets_env = docker_exec("vystak-vaultagent", "cat /shared/secrets.env")
+    assert "ANTHROPIC_API_KEY=" in secrets_env, (
+        f"Vault Agent did not render ANTHROPIC_API_KEY:\n{secrets_env}"
+    )
+    assert "ANTHROPIC_API_URL=" in secrets_env
+    # Workspace secrets must NOT be in the agent's rendered file.
+    # (Workspace not declared in D2; this assertion is a no-op today
+    # but documents the invariant for D5/D6/D8 which add a workspace.)
 
     # V4, V5, V6
     assert_health("vystak-vaultagent")

@@ -39,8 +39,10 @@ platforms:
     type: docker
     provider: docker
     transport:
+      name: nats-transport
       type: nats
       config:
+        type: nats
         subject_prefix: "vystak"
 models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
