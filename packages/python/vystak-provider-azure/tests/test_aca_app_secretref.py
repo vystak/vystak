@@ -238,3 +238,114 @@ def test_channel_app_with_vault_uses_per_container_secretref():
     assert all(
         s["lifecycle"] == "None" for s in body["properties"]["configuration"]["identitySettings"]
     )
+
+
+def test_build_revision_default_path_agent_only():
+    """No workspace, no Vault: single container, agent's secrets inline with
+    per-container secretRef scoping. No UAMI, no lifecycle:None."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_default_path
+
+    agent = _fixture_agent(with_workspace_secret=False)
+    revision = build_revision_default_path(
+        agent=agent,
+        model_secrets={"ANTHROPIC_API_KEY": "sk-test"},
+        workspace_secrets={},
+        acr_login_server="myacr.azurecr.io",
+        acr_password_secret_ref="acr-password",
+        acr_password_value="pw",
+        agent_image="myacr.azurecr.io/assistant:abc",
+        workspace_image=None,
+    )
+
+    # Single container
+    containers = revision["properties"]["template"]["containers"]
+    assert len(containers) == 1
+    assert containers[0]["name"] == "agent"
+
+    # Agent env wires ANTHROPIC_API_KEY via secretRef
+    agent_env = containers[0]["env"]
+    assert any(
+        e.get("secretRef") == "anthropic-api-key" and e["name"] == "ANTHROPIC_API_KEY"
+        for e in agent_env
+    )
+
+    # No UAMI / no identity block / no identitySettings
+    assert "identity" not in revision
+    assert "identitySettings" not in revision["properties"]["configuration"]
+
+    # Inline secrets pool has the value, no keyVaultUrl refs
+    secrets = revision["properties"]["configuration"]["secrets"]
+    anthropic_entry = next(s for s in secrets if s["name"] == "anthropic-api-key")
+    assert anthropic_entry["value"] == "sk-test"
+    assert "keyVaultUrl" not in anthropic_entry
+
+
+def test_build_revision_default_path_isolates_workspace_from_agent():
+    """Workspace declared, no Vault: two containers. Agent container's env
+    contains ONLY the agent's secrets; workspace container's env contains
+    ONLY the workspace's secrets. The per-container isolation invariant
+    holds without Vault."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_default_path
+
+    agent = _fixture_agent(with_workspace_secret=True)
+    revision = build_revision_default_path(
+        agent=agent,
+        model_secrets={"ANTHROPIC_API_KEY": "sk-agent"},
+        workspace_secrets={"STRIPE_API_KEY": "sk-workspace"},
+        acr_login_server="myacr.azurecr.io",
+        acr_password_secret_ref="acr-password",
+        acr_password_value="pw",
+        agent_image="myacr.azurecr.io/assistant:abc",
+        workspace_image="myacr.azurecr.io/assistant-workspace:abc",
+    )
+
+    containers = revision["properties"]["template"]["containers"]
+    assert len(containers) == 2
+
+    agent_container = next(c for c in containers if c["name"] == "agent")
+    workspace_container = next(c for c in containers if c["name"] == "workspace")
+
+    agent_env_names = {e["name"] for e in agent_container["env"]}
+    ws_env_names = {e["name"] for e in workspace_container["env"]}
+
+    # Per-container scoping invariant
+    assert "ANTHROPIC_API_KEY" in agent_env_names
+    assert "STRIPE_API_KEY" not in agent_env_names, (
+        "agent container leaked STRIPE_API_KEY into its env"
+    )
+    assert "STRIPE_API_KEY" in ws_env_names
+    assert "ANTHROPIC_API_KEY" not in ws_env_names, (
+        "workspace container leaked ANTHROPIC_API_KEY into its env"
+    )
+
+    # Both values present in the revision-level inline secrets pool
+    secret_pool = {s["name"]: s for s in revision["properties"]["configuration"]["secrets"]}
+    assert secret_pool["anthropic-api-key"]["value"] == "sk-agent"
+    assert secret_pool["stripe-api-key"]["value"] == "sk-workspace"
+
+    # No UAMI on default path
+    assert "identity" not in revision
+    assert "identitySettings" not in revision["properties"]["configuration"]
+
+
+def test_build_revision_default_path_no_workspace_image_no_sidecar():
+    """Even with workspace_secrets provided, if workspace_image is None
+    no sidecar container is emitted — matches build_revision_for_vault's
+    contract."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_default_path
+
+    agent = _fixture_agent(with_workspace_secret=True)
+    revision = build_revision_default_path(
+        agent=agent,
+        model_secrets={"ANTHROPIC_API_KEY": "sk-a"},
+        workspace_secrets={"STRIPE_API_KEY": "sk-s"},
+        acr_login_server="myacr.azurecr.io",
+        acr_password_secret_ref="acr-password",
+        acr_password_value="pw",
+        agent_image="myacr.azurecr.io/assistant:abc",
+        workspace_image=None,
+    )
+
+    containers = revision["properties"]["template"]["containers"]
+    assert len(containers) == 1
+    assert containers[0]["name"] == "agent"
