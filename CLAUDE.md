@@ -41,6 +41,13 @@ uv run pytest packages/python/ -k "test_hasher"       # by name pattern
 uv run pytest -m docker -v           # runs only docker-marked tests
 # (Default `just test-python` excludes them via `-m 'not docker'`.)
 
+# Release-tier matrix from test_plan.md — each cell is a full
+# deploy → verify → destroy lifecycle pytest. Gated cells auto-skip.
+uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
+  -m "release_smoke or release_integration or release_live_chat"
+# ~42s cold locally; 7 PASS, 5 SKIP (Slack-gated and live-chat without
+# real keys). See "Release tests" section below.
+
 # Docs site (Docusaurus under website/)
 just docs-dev           # pnpm --filter vystak-docs start
 just docs-build
@@ -54,6 +61,69 @@ As of main (`f82c342`), `just ci` does **not** fully green because of issues unr
 - **`typecheck-python`** fails with ~124 pyright errors, mostly Pydantic-style test fixtures missing required fields (`name=`, `provider=`, `type=`). Never ran in CI before 2026-04-16 because lint-python blocked it first.
 
 `just lint-python`, `just test-python`, `just typecheck-typescript`, `just test-typescript` all pass. When adding work, assume these four gates are the live ones.
+
+## Release tests (16-cell matrix)
+
+Test cells live under `tests/release/` in each provider package and
+exercise the full deploy → verify → destroy lifecycle. Each cell is
+one pytest file per combination from `test_plan.md` (repo root):
+**stack × secrets × channel × transport**. The canonical reference is
+`test_plan.md`; this section just documents how to run them.
+
+Markers (all gated — default `pytest` excludes them):
+
+| Marker | What | Prereqs |
+|---|---|---|
+| `release_smoke` | Must-pass release gate. Docker cells D1–D4 + Azure A1/A2. | Docker daemon (for D cells) |
+| `release_integration` | Compose two+ axes. D5–D7, A3–A5, Postgres variants (sessions / memory / both). | Docker daemon |
+| `release_smoke_azure` | Azure smoke A1/A2. | `AZURE_SUBSCRIPTION_ID` + `az login` |
+| `release_slack` | Cells with Slack channel (D3/D5/D7/D8, A3/A4/A7/A8). | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` |
+| `release_live_chat` | Real LLM round-trip (single cell). | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
+
+Common invocations:
+
+```bash
+# Full local Docker suite (~42s cold; auto-skips gated cells)
+uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
+  -m "release_smoke or release_integration or release_live_chat"
+
+# Single cell
+uv run pytest .../test_D1_docker_default_chat_http.py -v -m release_smoke
+
+# With Slack tokens (unlocks D3/D5/D7/D8 locally)
+export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
+uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
+  -m "release_integration or release_slack"
+
+# Live LLM round-trip (costs ~pennies; asserts response contains "pong")
+export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_URL=https://api.anthropic.com
+uv run pytest .../test_live_chat.py -v -m release_live_chat
+
+# Azure smoke (3–5 min per cell; cleans up its own disposable RG)
+az login && export AZURE_SUBSCRIPTION_ID=...
+uv run pytest packages/python/vystak-provider-azure/tests/release/ -v \
+  -m release_smoke_azure
+```
+
+Shared fixtures (per-provider `tests/release/conftest.py`):
+
+- `project` / `azure_project` — tmp project dir with sentinel `.env`,
+  guaranteed `vystak destroy` teardown even on test failure.
+- `vault_clean` — removes stale `vystak-vault` container and
+  `vystak-vault-data` volume before each Vault-path test. Required
+  because the shared `vystak-vault-data` volume persists across
+  worktrees; a per-project `init.json` can go missing while the
+  volume survives with init state, producing "state mismatch" on apply.
+- `postgres_clean` — removes stale `vystak-data-*` and legacy
+  `agentstack-data-*` volumes before each Postgres test. Required
+  because Postgres initializes PGDATA with the FIRST password it sees
+  on that volume; subsequent runs with a fresh password in
+  `.vystak/secrets.json` fail authentication.
+
+Verification dimensions V1–V9 (see `test_plan.md` for details): V1
+plan, V2 apply, V3 isolation (per-container secret scoping), V4 health,
+V5 agent card, V6 channel I/O, V7 transport, V8 rotation, V9 destroy.
 
 ## Architecture — three orthogonal axes
 
