@@ -73,7 +73,7 @@ def test_sessions_postgres(postgres_clean, project):
     # Postgres service container is running. Naming depends on the
     # DockerServiceNode — typically `vystak-<service-name>` or
     # `vystak-<service-canonical-name>`. Discover by listing.
-    from subprocess import PIPE, run
+    from subprocess import run
     ps = run(
         ["docker", "ps", "--format", "{{.Names}}"],
         capture_output=True, text=True, check=True,
@@ -93,7 +93,7 @@ def test_sessions_postgres(postgres_clean, project):
     )
     # The URL should point at the Postgres service (internal DNS).
     assert "postgresql://" in agent_env or "postgres://" in agent_env, (
-        f"SESSION_STORE_URL doesn't look like a Postgres URL"
+        "SESSION_STORE_URL doesn't look like a Postgres URL"
     )
 
     # V4 — agent still healthy with Postgres in the mix.
