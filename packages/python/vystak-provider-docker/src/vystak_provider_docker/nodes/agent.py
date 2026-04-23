@@ -32,11 +32,30 @@ class DockerAgentNode(Provisionable):
         self._extra_env = extra_env or {}
         self._vault_secrets_volume: str | None = None
         self._workspace_host: str | None = None
+        self._default_path_env: dict[str, str] | None = None
+        self._default_path_ssh_host_dir: str | None = None
 
     def set_vault_context(self, *, secrets_volume_name: str) -> None:
         """Declare the per-principal secrets volume. Triggers entrypoint-shim
         injection + /shared mount during provision()."""
         self._vault_secrets_volume = secrets_volume_name
+
+    def set_default_path_context(
+        self,
+        *,
+        env: dict[str, str],
+        ssh_host_dir: str | None = None,
+    ) -> None:
+        """Declare the default (no-Vault) delivery context.
+
+        ``env`` is added directly to the container environment (equivalent to
+        ``--env-file``). ``ssh_host_dir`` is the host directory produced by
+        ``WorkspaceSshKeygenNode`` — individual files are bind-mounted into
+        the container's ``/shared/ssh/`` paths so existing agent-side code
+        (which reads ``/vystak/ssh/*`` via the symlink) works unchanged.
+        """
+        self._default_path_env = dict(env)
+        self._default_path_ssh_host_dir = ssh_host_dir
 
     def set_workspace_context(self, *, workspace_host: str) -> None:
         """Declare that this agent should RPC into a workspace container
@@ -155,7 +174,7 @@ class DockerAgentNode(Provisionable):
                 # /shared). Expose them at the canonical /vystak/ssh/* path
                 # via a symlink — agent-side code reads from /vystak/ssh/.
                 dockerfile_content += (
-                    "RUN mkdir -p /vystak && ln -s /shared/ssh /vystak/ssh\n"
+                    "RUN mkdir -p /vystak && ln -sf /shared/ssh /vystak/ssh\n"
                 )
             dockerfile_content += (
                 f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
@@ -190,6 +209,12 @@ class DockerAgentNode(Provisionable):
             # take precedence over the defaults above.
             env.update(self._extra_env)
 
+            # Default path delivers secrets via docker run environment=;
+            # Vault path delivers via Vault Agent → /shared/secrets.env → shim.
+            if self._default_path_env is not None:
+                for key, value in self._default_path_env.items():
+                    env[key] = value
+
             if self._workspace_host:
                 env["VYSTAK_WORKSPACE_HOST"] = self._workspace_host
 
@@ -205,8 +230,22 @@ class DockerAgentNode(Provisionable):
                         "mode": "rw",
                     }
             if self._vault_secrets_volume:
+                # Vault path: entire /shared populated by Vault Agent sidecar.
                 volumes[self._vault_secrets_volume] = {
                     "bind": "/shared",
+                    "mode": "ro",
+                }
+            elif self._default_path_ssh_host_dir:
+                # Default path: bind-mount individual SSH files to /shared/ssh/*.
+                from pathlib import Path as _Path
+
+                ssh_dir = _Path(self._default_path_ssh_host_dir)
+                volumes[str(ssh_dir / "client-key")] = {
+                    "bind": "/shared/ssh/id_ed25519",
+                    "mode": "ro",
+                }
+                volumes[str(ssh_dir / "host-key.pub")] = {
+                    "bind": "/shared/ssh/host_key.pub",
                     "mode": "ro",
                 }
 

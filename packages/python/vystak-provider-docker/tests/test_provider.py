@@ -510,6 +510,81 @@ class TestVaultSubgraph:
         assert ("agent:test-bot", "workspace:test-bot") in added_deps
 
 
+def test_agent_node_default_path_env_and_ssh_mount(tmp_path, monkeypatch):
+    """Default-path wiring: env dict goes to container environment, SSH
+    keys are bind-mounted individually into /shared/ssh/*, no entrypoint
+    shim is injected into the Dockerfile."""
+    monkeypatch.chdir(tmp_path)
+
+    from unittest.mock import MagicMock
+
+    import docker as _docker
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak.schema.secret import Secret
+    from vystak_provider_docker.nodes.agent import DockerAgentNode
+
+    client = MagicMock()
+    # First containers.get() call — existing-container removal path — raises NotFound
+    # Second containers.get() call — after containers.run — returns the new container
+    new_container = MagicMock()
+    new_container.ports = {"8000/tcp": [{"HostPort": "9000"}]}
+    client.containers.get.side_effect = [
+        _docker.errors.NotFound("x"),
+        new_container,
+    ]
+
+    anthropic = Provider(name="anthropic", type="anthropic")
+    agent = Agent(
+        name="assistant",
+        model=Model(
+            name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
+        ),
+        secrets=[Secret(name="ANTHROPIC_API_KEY")],
+    )
+    code = type(
+        "_GC",
+        (),
+        {
+            "files": {"server.py": "print('ok')", "requirements.txt": ""},
+            "entrypoint": "server.py",
+        },
+    )()
+    plan = type("_Plan", (), {"target_hash": "abc"})()
+
+    node = DockerAgentNode(client, agent, code, plan)
+    node.set_default_path_context(
+        env={"ANTHROPIC_API_KEY": "sk-test"},
+        ssh_host_dir=str(tmp_path / ".vystak" / "ssh" / "assistant"),
+    )
+    node.set_workspace_context(workspace_host="vystak-assistant-workspace")
+
+    network_info = MagicMock()
+    network_info.name = "vystak-net"
+    context = {"network": MagicMock(info={"network": network_info})}
+
+    result = node.provision(context)
+    assert result.success, result.error
+
+    _, kwargs = client.containers.run.call_args
+    # Env from default_path_env is injected
+    assert kwargs["environment"]["ANTHROPIC_API_KEY"] == "sk-test"
+    # SSH bind-mount to /shared/ssh/id_ed25519
+    ssh_key_host = str(tmp_path / ".vystak" / "ssh" / "assistant" / "client-key")
+    assert ssh_key_host in kwargs["volumes"]
+    assert kwargs["volumes"][ssh_key_host]["bind"] == "/shared/ssh/id_ed25519"
+    assert kwargs["volumes"][ssh_key_host]["mode"] == "ro"
+
+    # Dockerfile should NOT inject the entrypoint shim on the default path
+    dockerfile_path = tmp_path / ".vystak" / "assistant" / "Dockerfile"
+    assert dockerfile_path.exists(), "Dockerfile was not written"
+    dockerfile = dockerfile_path.read_text()
+    assert "entrypoint-shim" not in dockerfile
+    # But the /vystak/ssh symlink SHOULD still be created when workspace_host is set
+    assert "ln -sf /shared/ssh /vystak/ssh" in dockerfile
+
+
 class TestStatus:
     def test_running(self, provider, mock_docker_client):
         client, _ = mock_docker_client

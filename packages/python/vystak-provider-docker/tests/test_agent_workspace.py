@@ -120,4 +120,4 @@ def test_set_workspace_context_adds_dockerfile_symlink(tmp_path, monkeypatch):
         )
 
     dockerfile = (tmp_path / ".vystak" / "assistant" / "Dockerfile").read_text()
-    assert "ln -s /shared/ssh /vystak/ssh" in dockerfile
+    assert "ln -sf /shared/ssh /vystak/ssh" in dockerfile
