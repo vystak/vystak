@@ -95,3 +95,31 @@ def test_docker_workspace_compute_example_loads():
     assert agents[0].workspace is not None
     assert agents[0].workspace.image == "python:3.12-slim"
     assert "pip install ruff pytest" in agents[0].workspace.provision[1]
+
+
+def test_docker_workspace_nodejs_example_loads():
+    """`examples/docker-workspace-nodejs/vystak.yaml` — workspace on the
+    default (no-Vault) delivery path.
+
+    Validates:
+    - No top-level ``vault:`` block → loader returns ``vault=None``.
+    - The agent declares ``ANTHROPIC_API_KEY`` + ``ANTHROPIC_API_URL`` as
+      model-side secrets (delivered via per-container ``--env-file``).
+    - The workspace declares a node:20-slim image with multi-step
+      provisioning.
+    """
+    path = _examples_dir() / "docker-workspace-nodejs" / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
+
+    data = yaml.safe_load(path.read_text())
+    agents, channels, vault = load_multi_yaml(data)
+    assert vault is None, (
+        "docker-workspace-nodejs demonstrates the default (no-Vault) path"
+    )
+    assert len(agents) == 1
+    assert agents[0].name == "node-coder"
+    secret_names = {s.name for s in agents[0].secrets}
+    assert {"ANTHROPIC_API_KEY", "ANTHROPIC_API_URL"} <= secret_names
+    assert agents[0].workspace is not None
+    assert agents[0].workspace.image == "node:20-slim"
+    assert any("typescript" in step for step in agents[0].workspace.provision)

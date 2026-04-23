@@ -5,13 +5,6 @@ providers:
 platforms:
   local: {type: docker, provider: docker}
 
-vault:
-  name: vystak-vault
-  provider: docker
-  type: vault
-  mode: deploy
-  config: {}
-
 models:
   sonnet:
     provider: anthropic
