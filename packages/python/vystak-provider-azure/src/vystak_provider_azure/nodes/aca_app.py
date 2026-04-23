@@ -26,6 +26,117 @@ def _kv_secret_name(raw: str) -> str:
     return raw.lower().replace("_", "-")
 
 
+def build_revision_default_path(
+    *,
+    agent,
+    model_secrets: dict[str, str],
+    workspace_secrets: dict[str, str],
+    acr_login_server: str,
+    acr_password_secret_ref: str,
+    acr_password_value: str,
+    agent_image: str,
+    workspace_image: str | None,
+    extra_env: list[dict] | None = None,
+) -> dict:
+    """Build the ACA revision body for the default (no-Vault) delivery path.
+
+    Values from ``model_secrets`` land only in the agent container's env via
+    per-container ``secretRef``. Values from ``workspace_secrets`` land only
+    in the workspace container's env (when present). Values are inline in
+    ``configuration.secrets[]`` — no UAMI, no ``lifecycle:None``.
+
+    Mirror of ``build_revision_for_vault`` minus the UAMI/KV plumbing. The
+    per-container isolation invariant is preserved: the agent container's
+    env table never contains workspace-scoped secrets, and vice versa.
+
+    Args:
+        model_secrets: ``{declared_name → value}`` — resolved at apply time
+            from ``os.environ`` / ``.env`` for the agent principal.
+        workspace_secrets: same shape for the workspace principal.
+    """
+    # Revision-level secrets pool: inline values, one per declared secret
+    # across both principals. ACA secret names must match [a-z0-9][a-z0-9-]*.
+    inline_secrets: list[dict] = []
+    seen: set[str] = set()
+    for name, value in model_secrets.items():
+        safe = _kv_secret_name(name)
+        if safe in seen:
+            continue
+        seen.add(safe)
+        inline_secrets.append({"name": safe, "value": value})
+    for name, value in workspace_secrets.items():
+        safe = _kv_secret_name(name)
+        if safe in seen:
+            continue
+        seen.add(safe)
+        inline_secrets.append({"name": safe, "value": value})
+    inline_secrets.append(
+        {"name": acr_password_secret_ref, "value": acr_password_value}
+    )
+
+    # Agent container: env references only model secrets
+    agent_env: list[dict] = [
+        {"name": name, "secretRef": _kv_secret_name(name)}
+        for name in model_secrets
+    ]
+    if workspace_image is not None and workspace_secrets:
+        agent_env.append(
+            {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
+        )
+    if extra_env:
+        agent_env.extend(extra_env)
+
+    containers: list[dict] = [
+        {
+            "name": "agent",
+            "image": agent_image,
+            "env": agent_env,
+        }
+    ]
+
+    # Workspace sidecar container — only when image + workspace secrets provided
+    if workspace_image is not None and workspace_secrets:
+        ws_env: list[dict] = [
+            {"name": name, "secretRef": _kv_secret_name(name)}
+            for name in workspace_secrets
+        ]
+        ws_env.append({"name": "VYSTAK_WORKSPACE_RPC_PORT", "value": "50051"})
+        containers.append(
+            {
+                "name": "workspace",
+                "image": workspace_image,
+                "env": ws_env,
+                "resources": {"cpu": 0.5, "memory": "1Gi"},
+            }
+        )
+
+    revision: dict = {
+        "location": None,  # Caller fills from platform config
+        "properties": {
+            "configuration": {
+                "secrets": inline_secrets,
+                "registries": [
+                    {
+                        "server": acr_login_server,
+                        "username": acr_login_server.split(".")[0],
+                        "passwordSecretRef": acr_password_secret_ref,
+                    }
+                ],
+                "ingress": {
+                    "external": True,
+                    "targetPort": 8000,
+                    "transport": "auto",
+                },
+            },
+            "template": {
+                "containers": containers,
+                "scale": {"minReplicas": 1, "maxReplicas": 10},
+            },
+        },
+    }
+    return revision
+
+
 def build_revision_for_vault(
     *,
     agent,
