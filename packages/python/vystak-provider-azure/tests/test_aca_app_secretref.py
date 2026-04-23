@@ -387,6 +387,38 @@ def test_build_revision_default_path_rejects_same_name_collision():
     assert "database-url" in str(exc.value)
 
 
+def test_build_revision_for_vault_no_rpc_url_when_no_sidecar():
+    """VYSTAK_WORKSPACE_RPC_URL must not be injected into the agent env
+    when no workspace sidecar will actually exist — pointing the agent
+    at localhost:50051 with no listener produces a runtime connection
+    error. Edge case: workspace UAMI declared but no image/secrets, so
+    emit_workspace_sidecar is False."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_for_vault
+
+    agent = _fixture_agent(with_workspace_secret=True)
+    revision = build_revision_for_vault(
+        agent=agent,
+        vault_uri="https://my-vault.vault.azure.net/",
+        agent_identity_resource_id="/subs/.../uami-agent",
+        agent_identity_client_id="agent-client-id",
+        workspace_identity_resource_id="/subs/.../uami-workspace",
+        workspace_identity_client_id="workspace-client-id",
+        model_secrets=["ANTHROPIC_API_KEY"],
+        workspace_secrets=[],  # no workspace secrets → emit_workspace_sidecar is False
+        acr_login_server="myacr.azurecr.io",
+        acr_password_secret_ref="acr-password",
+        acr_password_value="pw",
+        agent_image="myacr.azurecr.io/assistant:abc",
+        workspace_image="myacr.azurecr.io/assistant-workspace:abc",
+    )
+    agent_container = revision["properties"]["template"]["containers"][0]
+    agent_env_names = {e["name"] for e in agent_container["env"]}
+    assert "VYSTAK_WORKSPACE_RPC_URL" not in agent_env_names, (
+        "agent env points at a non-existent RPC URL because the sidecar "
+        "is not emitted when workspace_secrets is empty"
+    )
+
+
 def test_build_revision_for_vault_drops_dead_workspace_refs():
     """When workspace_image is None, workspace KV refs must not appear in
     the revision's secrets block — no sidecar will consume them."""
