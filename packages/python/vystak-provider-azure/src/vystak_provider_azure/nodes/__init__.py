@@ -4,9 +4,13 @@ from vystak_provider_azure.nodes.aca_app import ContainerAppNode
 from vystak_provider_azure.nodes.aca_channel_app import AzureChannelAppNode
 from vystak_provider_azure.nodes.aca_environment import ACAEnvironmentNode
 from vystak_provider_azure.nodes.acr import ACRNode
+from vystak_provider_azure.nodes.identity import UserAssignedIdentityNode
+from vystak_provider_azure.nodes.kv_grant import KvGrantNode
 from vystak_provider_azure.nodes.log_analytics import LogAnalyticsNode
 from vystak_provider_azure.nodes.postgres import AzurePostgresNode
 from vystak_provider_azure.nodes.resource_group import ResourceGroupNode
+from vystak_provider_azure.nodes.secret_sync import SecretSyncNode
+from vystak_provider_azure.nodes.vault import KeyVaultNode
 
 __all__ = [
     "ResourceGroupNode",
@@ -16,4 +20,8 @@ __all__ = [
     "ContainerAppNode",
     "AzureChannelAppNode",
     "AzurePostgresNode",
+    "KeyVaultNode",
+    "UserAssignedIdentityNode",
+    "KvGrantNode",
+    "SecretSyncNode",
 ]

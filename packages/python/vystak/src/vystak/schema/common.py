@@ -43,3 +43,13 @@ class AgentProtocol(StrEnum):
     A2A_TURN = "a2a-turn"
     A2A_STREAM = "a2a-stream"
     MEDIA_BRIDGE = "media-bridge"
+
+
+class VaultType(StrEnum):
+    KEY_VAULT = "key-vault"
+    VAULT = "vault"
+
+
+class VaultMode(StrEnum):
+    DEPLOY = "deploy"
+    EXTERNAL = "external"

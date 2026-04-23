@@ -1,0 +1,33 @@
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: vystak-vault-example-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+vault:
+  name: vystak-vault
+  provider: azure
+  mode: deploy
+  config:
+    vault_name: vystak-vault-example
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+agents:
+  - name: assistant
+    instructions: You are a helpful assistant.
+    model: sonnet
+    secrets:
+      - name: ANTHROPIC_API_KEY
+    platform: aca

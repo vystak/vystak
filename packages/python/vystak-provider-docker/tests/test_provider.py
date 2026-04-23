@@ -260,30 +260,254 @@ class TestApply:
 
 
 class TestDestroy:
-    def test_removes_container(self, provider, mock_docker_client):
+    def test_removes_container(self, provider, mock_docker_client, not_found_error):
         client, _ = mock_docker_client
-        container = MagicMock()
-        client.containers.get.return_value = container
+        agent_container = MagicMock()
+
+        def _get(name):
+            if name == "vystak-test-bot":
+                return agent_container
+            raise not_found_error("not found")
+
+        client.containers.get.side_effect = _get
         provider.destroy("test-bot")
-        container.stop.assert_called_once()
-        container.remove.assert_called_once()
+        agent_container.stop.assert_called_once()
+        agent_container.remove.assert_called_once()
 
     def test_not_found(self, provider, mock_docker_client, not_found_error):
         client, _ = mock_docker_client
         client.containers.get.side_effect = not_found_error("not found")
         provider.destroy("test-bot")  # should not raise
 
-    def test_include_resources(self, provider, mock_docker_client, sample_agent):
+    def test_include_resources(
+        self, provider, mock_docker_client, sample_agent, not_found_error
+    ):
         """destroy with include_resources uses DockerServiceNode.destroy()."""
         client, _ = mock_docker_client
-        container = MagicMock()
-        client.containers.get.return_value = container
+        agent_container = MagicMock()
+
+        def _get(name):
+            if name == "vystak-test-bot":
+                return agent_container
+            raise not_found_error("not found")
+
+        client.containers.get.side_effect = _get
         # Empty containers list for service destroy
         client.containers.list.return_value = []
         provider.set_agent(sample_agent)
         provider.destroy("test-bot", include_resources=True)
-        container.stop.assert_called_once()
-        container.remove.assert_called_once()
+        agent_container.stop.assert_called_once()
+        agent_container.remove.assert_called_once()
+
+
+class TestVaultRejection:
+    def test_docker_rejects_vault_at_plan(self, provider, sample_agent):
+        from vystak.schema.common import VaultMode
+        from vystak.schema.vault import Vault
+
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="azure", type="azure"),
+                mode=VaultMode.DEPLOY,
+                config={"vault_name": "vv"},
+            )
+        )
+        with pytest.raises(ValueError, match="Azure Key Vault"):
+            provider.plan(sample_agent)
+
+    def test_docker_plan_rejects_key_vault_type(self, provider, sample_agent):
+        """Azure KV type on a Docker deploy remains rejected (v1 behavior)."""
+        from vystak.schema.common import VaultMode, VaultType
+        from vystak.schema.vault import Vault
+
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="azure", type="azure"),
+                type=VaultType.KEY_VAULT,
+                mode=VaultMode.DEPLOY,
+                config={"vault_name": "v"},
+            )
+        )
+        with pytest.raises(ValueError, match="Azure Key Vault"):
+            provider.plan(sample_agent)
+
+    def test_docker_plan_accepts_hashi_vault_type(
+        self, provider, sample_agent, mock_docker_client, not_found_error
+    ):
+        """HashiCorp Vault type passes plan-time rejection and returns a plan."""
+        from vystak.schema.common import VaultMode, VaultType
+        from vystak.schema.vault import Vault
+
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="docker", type="docker"),
+                type=VaultType.VAULT,
+                mode=VaultMode.DEPLOY,
+                config={},
+            )
+        )
+        # Should NOT raise; plan proceeds and returns a non-None plan.
+        deploy_plan = provider.plan(sample_agent)
+        assert deploy_plan is not None
+        assert deploy_plan.agent_name == "test-bot"
+
+
+class TestVaultSubgraph:
+    def test_docker_provider_builds_vault_subgraph(
+        self, provider, mock_docker_client, sample_agent, sample_code
+    ):
+        """With a Hashi Vault declared, ``apply()`` calls ``_add_vault_nodes``
+        which attaches the server / init / unseal / kv-setup / secret-sync /
+        per-principal approle / approle-creds / vault-agent nodes, and the
+        agent node gains a dependency on its sidecar."""
+        from vystak.schema.common import VaultMode, VaultType
+        from vystak.schema.secret import Secret
+        from vystak.schema.vault import Vault
+
+        # Replace the sample agent with one that declares a secret — the
+        # principal map is empty otherwise.
+        sample_agent.secrets = [Secret(name="ANTHROPIC_API_KEY")]
+
+        provider.set_generated_code(sample_code)
+        provider.set_agent(sample_agent)
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="docker", type="docker"),
+                type=VaultType.VAULT,
+                mode=VaultMode.DEPLOY,
+                config={},
+            )
+        )
+        provider.set_env_values({"ANTHROPIC_API_KEY": "k"})
+
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="h",
+            changes={},
+        )
+
+        added_nodes: list = []
+        added_deps: list[tuple[str, str]] = []
+
+        # Simulate a successful run so apply() returns success and we can
+        # inspect which nodes+deps were wired into the graph before execute.
+        mock_results = {
+            "agent:test-bot": ProvisionResult(
+                name="agent:test-bot",
+                success=True,
+                info={"url": "http://localhost:8080"},
+            )
+        }
+
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.add.side_effect = lambda n: added_nodes.append(n)
+            mock_graph.add_dependency.side_effect = lambda a, b: added_deps.append(
+                (a, b)
+            )
+            mock_graph.execute.return_value = mock_results
+            MockGraph.return_value = mock_graph
+            # Patch VaultClient so we don't try to open a real HTTP conn.
+            with patch("vystak_provider_docker.provider.Path"), patch(
+                "vystak_provider_docker.vault_client.hvac.Client"
+            ):
+                provider.apply(plan)
+
+        node_names = [n.name for n in added_nodes]
+        # Core vault subgraph nodes
+        assert "hashi-vault:server" in node_names
+        assert "hashi-vault:init" in node_names
+        assert "hashi-vault:unseal" in node_names
+        assert "hashi-vault:kv-setup" in node_names
+        assert "hashi-vault:secret-sync" in node_names
+        assert "approle:test-bot-agent" in node_names
+        assert "approle-creds:test-bot-agent" in node_names
+        assert "vault-agent:test-bot-agent" in node_names
+        # Agent node depends on its sidecar
+        assert ("agent:test-bot", "vault-agent:test-bot-agent") in added_deps
+
+    def test_docker_provider_adds_workspace_node_when_workspace_declared(
+        self, provider, mock_docker_client, sample_agent, sample_code
+    ):
+        """When agent has a workspace AND vault is declared, apply()'s graph
+        contains the ssh-keygen node + the workspace node with the correct
+        dependency chain."""
+        from vystak.schema.common import VaultMode, VaultType
+        from vystak.schema.secret import Secret
+        from vystak.schema.vault import Vault
+        from vystak.schema.workspace import Workspace
+
+        sample_agent.secrets = [Secret(name="ANTHROPIC_API_KEY")]
+        sample_agent.workspace = Workspace(
+            name="dev", image="python:3.12-slim"
+        )
+
+        provider.set_generated_code(sample_code)
+        provider.set_agent(sample_agent)
+        provider.set_vault(
+            Vault(
+                name="v",
+                provider=Provider(name="docker", type="docker"),
+                type=VaultType.VAULT,
+                mode=VaultMode.DEPLOY,
+                config={},
+            )
+        )
+        provider.set_env_values({"ANTHROPIC_API_KEY": "k"})
+
+        plan = DeployPlan(
+            agent_name="test-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="h",
+            changes={},
+        )
+
+        added_nodes: list = []
+        added_deps: list[tuple[str, str]] = []
+
+        mock_results = {
+            "agent:test-bot": ProvisionResult(
+                name="agent:test-bot",
+                success=True,
+                info={"url": "http://localhost:8080"},
+            )
+        }
+
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.add.side_effect = lambda n: added_nodes.append(n)
+            mock_graph.add_dependency.side_effect = (
+                lambda a, b: added_deps.append((a, b))
+            )
+            mock_graph.execute.return_value = mock_results
+            MockGraph.return_value = mock_graph
+            with patch("vystak_provider_docker.provider.Path"), patch(
+                "vystak_provider_docker.vault_client.hvac.Client"
+            ):
+                provider.apply(plan)
+
+        node_names = [n.name for n in added_nodes]
+        assert "workspace-ssh-keygen:test-bot" in node_names
+        assert "workspace:test-bot" in node_names
+        # Dependency chain: keygen depends on kv-setup; workspace depends on
+        # keygen AND the workspace-principal vault-agent sidecar.
+        assert (
+            "workspace-ssh-keygen:test-bot",
+            "hashi-vault:kv-setup",
+        ) in added_deps
+        assert ("workspace:test-bot", "workspace-ssh-keygen:test-bot") in added_deps
+        # Agent node depends on workspace (so agent starts after workspace is up)
+        assert ("agent:test-bot", "workspace:test-bot") in added_deps
 
 
 class TestStatus:

@@ -27,6 +27,10 @@ class ProvisionGraph:
     def add(self, node: Provisionable) -> None:
         self._nodes[node.name] = node
 
+    def nodes(self) -> list[Provisionable]:
+        """Return a list of all nodes in the graph (no ordering guarantees)."""
+        return list(self._nodes.values())
+
     def add_dependency(self, name: str, depends_on: str) -> None:
         self._implicit_deps.setdefault(name, []).append(depends_on)
 

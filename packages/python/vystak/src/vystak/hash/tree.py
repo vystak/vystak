@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from vystak.hash.hasher import hash_model
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.workspace import Workspace
 
 
 @dataclass
@@ -23,6 +24,18 @@ class AgentHashTree:
     memory: str
     services: str
     transport: str
+    # v1 Secret Manager additions
+    workspace_identity: str
+    grants: str
+    root: str
+
+
+@dataclass
+class WorkspaceHashTree:
+    """Per-section hashes for a workspace — identity + secret grant set."""
+
+    identity: str
+    secrets: str
     root: str
 
 
@@ -57,6 +70,26 @@ def _hash_str(value: str | None) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def hash_workspace(ws: Workspace) -> WorkspaceHashTree:
+    """Compute the hash tree for a workspace (identity + secret declarations)."""
+    identity = _hash_str(ws.identity)
+    secrets = _hash_list(ws.secrets)
+    root = hashlib.sha256(f"{identity}|{secrets}".encode()).hexdigest()
+    return WorkspaceHashTree(identity=identity, secrets=secrets, root=root)
+
+
+def compute_grants_hash(agent: Agent) -> str:
+    """Compute a deterministic hash of the (role, secret_name) grant set
+    derived from the agent tree (agent-level secrets + workspace secrets)."""
+    pairs: list[tuple[str, str]] = []
+    pairs.extend(("agent", s.name) for s in agent.secrets)
+    if agent.workspace:
+        pairs.extend(("workspace", s.name) for s in agent.workspace.secrets)
+    pairs.sort()
+    blob = "|".join(f"{role}:{name}" for role, name in pairs)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
 def _hash_transport(agent: Agent) -> str:
     """Contribute transport identity (type + config) to the agent hash.
 
@@ -87,6 +120,13 @@ def hash_agent(agent: Agent) -> AgentHashTree:
     services = _hash_list(agent.services)
     transport = _hash_transport(agent)
 
+    workspace_identity = (
+        hash_workspace(agent.workspace).identity
+        if agent.workspace
+        else _hash_str(None)
+    )
+    grants = compute_grants_hash(agent)
+
     sections = "|".join(
         [
             brain,
@@ -99,6 +139,8 @@ def hash_agent(agent: Agent) -> AgentHashTree:
             memory,
             services,
             transport,
+            workspace_identity,
+            grants,
         ]
     )
     root = hashlib.sha256(sections.encode()).hexdigest()
@@ -114,6 +156,8 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         memory=memory,
         services=services,
         transport=transport,
+        workspace_identity=workspace_identity,
+        grants=grants,
         root=root,
     )
 

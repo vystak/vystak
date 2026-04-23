@@ -5,6 +5,12 @@ from pathlib import Path
 
 import docker
 import docker.errors
+from azure.keyvault.secrets import SecretClient
+from azure.mgmt.appcontainers import ContainerAppsAPIClient
+from azure.mgmt.authorization import AuthorizationManagementClient
+from azure.mgmt.keyvault import KeyVaultManagementClient
+from azure.mgmt.msi import ManagedServiceIdentityClient
+from azure.mgmt.resource import ResourceManagementClient
 from vystak.channels import get_plugin
 from vystak.hash import hash_agent, hash_channel
 from vystak.providers.base import (
@@ -17,6 +23,7 @@ from vystak.providers.base import (
 from vystak.provisioning import ProvisionGraph
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.vault import Vault
 from vystak_provider_docker.secrets import get_resource_password
 
 from vystak_provider_azure.auth import get_credential, get_location, get_subscription_id
@@ -26,8 +33,12 @@ from vystak_provider_azure.nodes import (
     AzureChannelAppNode,
     AzurePostgresNode,
     ContainerAppNode,
+    KeyVaultNode,
+    KvGrantNode,
     LogAnalyticsNode,
     ResourceGroupNode,
+    SecretSyncNode,
+    UserAssignedIdentityNode,
 )
 
 
@@ -38,6 +49,10 @@ class AzureProvider(PlatformProvider):
         self._generated_code: GeneratedCode | None = None
         self._agent: Agent | None = None
         self._listener = None
+        self._vault: Vault | None = None
+        self._env_values: dict[str, str] = {}
+        self._force_sync: bool = False
+        self._allow_missing: bool = False
 
     def set_listener(self, listener) -> None:
         self._listener = listener
@@ -47,6 +62,33 @@ class AzureProvider(PlatformProvider):
 
     def set_agent(self, agent: Agent) -> None:
         self._agent = agent
+
+    def set_vault(self, vault: Vault | None) -> None:
+        """Declare the secrets backing store for this deploy.
+
+        When set and the agent (or its workspace) declares any Secret, the
+        provider adds KeyVault / UAMI / SecretSync / KvGrant nodes to the
+        provisioning graph and switches ContainerAppNode into vault-backed
+        mode (per-container secretRef + lifecycle:None identities).
+        """
+        self._vault = vault
+
+    def set_env_values(self, values: dict[str, str]) -> None:
+        """Supply deployer-side secret values (typically from a .env file).
+
+        SecretSyncNode pushes values from this dict into the vault when the
+        corresponding secret is absent (or when force=True). Values are only
+        used during apply; they are never written to disk by vystak itself.
+        """
+        self._env_values = dict(values)
+
+    def set_force_sync(self, force: bool) -> None:
+        """If True, SecretSyncNode overwrites existing KV values (--force)."""
+        self._force_sync = force
+
+    def set_allow_missing(self, allow: bool) -> None:
+        """If True, SecretSyncNode won't abort when a secret is absent everywhere."""
+        self._allow_missing = allow
 
     # ------------------------------------------------------------------
     # Config helpers
@@ -110,6 +152,221 @@ class AzureProvider(PlatformProvider):
             if desktop_socket.exists():
                 return docker.DockerClient(base_url=f"unix://{desktop_socket}")
             raise
+
+    def _tenant_id(self, cfg: dict) -> str:
+        """Resolve the Azure tenant ID for the deploy.
+
+        Falls back to an empty string when no tenant is configured — the
+        KeyVaultNode only uses tenant_id in DEPLOY mode, and apply-time
+        construction will populate this from CLI context there. Tests that
+        mock the KV client never reach the tenant lookup.
+        """
+        return cfg.get("tenant_id", "")
+
+    # ------------------------------------------------------------------
+    # Graph construction
+    # ------------------------------------------------------------------
+
+    def _build_graph_for_tests(self, agent: Agent) -> ProvisionGraph:
+        """Construct the provisioning graph for inspection in tests.
+
+        Tests should patch the Azure client classes at module scope
+        (`vystak_provider_azure.provider.*Client`) so no real API calls
+        happen. The graph returned has the same structure `apply()` would
+        build, minus Docker / DeployPlan bits.
+        """
+        cfg = self._platform_config()
+        credential = get_credential()
+        subscription_id = get_subscription_id(cfg)
+        location = get_location(cfg)
+        rg_name = self._rg_name(agent.name)
+        tags = self._tags(agent.name)
+
+        resource_client = ResourceManagementClient(credential, subscription_id)
+        graph = ProvisionGraph()
+        rg_node = ResourceGroupNode(
+            client=resource_client,
+            rg_name=rg_name,
+            location=location,
+            tags=tags,
+        )
+        graph.add(rg_node)
+
+        self._add_vault_nodes(
+            graph=graph,
+            agent=agent,
+            rg_name=rg_name,
+            location=location,
+            tags=tags,
+            credential=credential,
+            subscription_id=subscription_id,
+            cfg=cfg,
+        )
+        return graph
+
+    def _add_vault_nodes(
+        self,
+        *,
+        graph: ProvisionGraph,
+        agent: Agent,
+        rg_name: str,
+        location: str,
+        tags: dict,
+        credential,
+        subscription_id: str,
+        cfg: dict,
+    ) -> tuple[KeyVaultNode | None, str | None, str | None, list[str], list[str]]:
+        """Add Vault/Identity/Grant/SecretSync nodes when a Vault is declared.
+
+        Returns (vault_node, agent_identity_name, workspace_identity_name,
+        model_secrets, workspace_secrets) so the caller can wire the
+        ContainerAppNode's vault context. When no Vault is declared,
+        returns (None, None, None, [], []).
+
+        Topological order the graph executes:
+          RG -> Vault -> [Identity(s)] -> SecretSync -> [Grant(s)]
+        Each Grant also depends on SecretSync so the secret value exists
+        before the grant has any effect.
+        """
+        if self._vault is None:
+            return (None, None, None, [], [])
+
+        agent_secret_names = [s.name for s in agent.secrets]
+        workspace_secret_names: list[str] = []
+        if agent.workspace and agent.workspace.secrets:
+            workspace_secret_names = [s.name for s in agent.workspace.secrets]
+
+        # If nothing actually needs secrets, skip the whole subgraph.
+        if not agent_secret_names and not workspace_secret_names:
+            return (None, None, None, [], [])
+
+        kv_mgmt_client = KeyVaultManagementClient(credential, subscription_id)
+        vault_name = self._vault.config.get("vault_name") or self._vault.name
+        vault_node = KeyVaultNode(
+            client=kv_mgmt_client,
+            rg_name=rg_name,
+            vault_name=vault_name,
+            location=location,
+            mode=self._vault.mode,
+            subscription_id=subscription_id,
+            tenant_id=self._tenant_id(cfg),
+            tags=tags,
+        )
+        graph.add(vault_node)
+        graph.add_dependency(vault_node.name, "resource-group")
+
+        msi_client = ManagedServiceIdentityClient(credential, subscription_id)
+
+        agent_identity_node: UserAssignedIdentityNode | None = None
+        workspace_identity_node: UserAssignedIdentityNode | None = None
+
+        # Agent identity — only needed if agent has model secrets
+        if agent_secret_names:
+            existing_identity = getattr(agent, "identity", None)
+            if existing_identity:
+                agent_identity_node = UserAssignedIdentityNode.from_existing(
+                    resource_id=existing_identity,
+                    name=f"{agent.name}-agent",
+                )
+            else:
+                agent_identity_node = UserAssignedIdentityNode(
+                    client=msi_client,
+                    rg_name=rg_name,
+                    uami_name=f"{agent.name}-agent",
+                    location=location,
+                    tags=tags,
+                )
+            graph.add(agent_identity_node)
+            graph.add_dependency(agent_identity_node.name, "resource-group")
+
+        # Workspace identity — only needed if workspace has secrets
+        if workspace_secret_names:
+            existing_ws_identity = agent.workspace.identity if agent.workspace else None
+            if existing_ws_identity:
+                workspace_identity_node = UserAssignedIdentityNode.from_existing(
+                    resource_id=existing_ws_identity,
+                    name=f"{agent.name}-workspace",
+                )
+            else:
+                workspace_identity_node = UserAssignedIdentityNode(
+                    client=msi_client,
+                    rg_name=rg_name,
+                    uami_name=f"{agent.name}-workspace",
+                    location=location,
+                    tags=tags,
+                )
+            graph.add(workspace_identity_node)
+            graph.add_dependency(workspace_identity_node.name, "resource-group")
+
+        # SecretSync — runs after the vault exists; deployer credentials push
+        # values for any declared secrets missing from KV.
+        secret_client = SecretClient(
+            vault_url=f"https://{vault_name}.vault.azure.net/",
+            credential=credential,
+        )
+        all_declared = list(agent_secret_names) + list(workspace_secret_names)
+        secret_sync = SecretSyncNode(
+            client=secret_client,
+            declared_secrets=all_declared,
+            env_values=self._env_values,
+            force=self._force_sync,
+            allow_missing=self._allow_missing,
+        )
+        graph.add(secret_sync)
+        graph.add_dependency(secret_sync.name, vault_node.name)
+
+        # Grants — one per (identity, secret) pair, scoped to the individual
+        # KV secret path. Each grant depends on the identity (principal_id),
+        # the vault, and secret-sync (value must exist before the grant has
+        # useful effect).
+        auth_client = AuthorizationManagementClient(credential, subscription_id)
+        vault_scope = (
+            f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}"
+            f"/providers/Microsoft.KeyVault/vaults/{vault_name}"
+        )
+        if agent_identity_node is not None:
+            for secret_name in agent_secret_names:
+                secret_scope = f"{vault_scope}/secrets/{secret_name}"
+                grant = KvGrantNode(
+                    client=auth_client,
+                    scope=secret_scope,
+                    principal_id=None,  # resolved via set_principal_from_context
+                    subscription_id=subscription_id,
+                )
+                grant.set_principal_from_context(
+                    key=agent_identity_node.name,
+                    field="principal_id",
+                )
+                graph.add(grant)
+                graph.add_dependency(grant.name, agent_identity_node.name)
+                graph.add_dependency(grant.name, vault_node.name)
+                graph.add_dependency(grant.name, secret_sync.name)
+
+        if workspace_identity_node is not None:
+            for secret_name in workspace_secret_names:
+                secret_scope = f"{vault_scope}/secrets/{secret_name}"
+                grant = KvGrantNode(
+                    client=auth_client,
+                    scope=secret_scope,
+                    principal_id=None,
+                    subscription_id=subscription_id,
+                )
+                grant.set_principal_from_context(
+                    key=workspace_identity_node.name,
+                    field="principal_id",
+                )
+                graph.add(grant)
+                graph.add_dependency(grant.name, workspace_identity_node.name)
+                graph.add_dependency(grant.name, vault_node.name)
+                graph.add_dependency(grant.name, secret_sync.name)
+
+        return (
+            vault_node,
+            agent_identity_node.name if agent_identity_node else None,
+            workspace_identity_node.name if workspace_identity_node else None,
+            agent_secret_names,
+            workspace_secret_names,
+        )
 
     # ------------------------------------------------------------------
     # PlatformProvider interface
@@ -282,18 +539,45 @@ class AzureProvider(PlatformProvider):
                     )
                 )
 
-            graph.add(
-                ContainerAppNode(
-                    aca_client=aca_client,
-                    docker_client=docker_client,
-                    rg_name=rg_name,
-                    agent=self._agent,
-                    generated_code=self._generated_code,
-                    plan=plan,
-                    platform_config=cfg,
-                    peer_routes_json=peer_routes or "{}",
-                )
+            # Vault subgraph: when a Vault is declared and the agent has any
+            # declared secrets, add KeyVault + UAMI(s) + SecretSync + Grant(s)
+            # before ContainerApp, and route ContainerApp through
+            # build_revision_for_vault. Callers control this via
+            # provider.set_vault(...) / set_env_values(...) /
+            # set_force_sync(...) / set_allow_missing(...).
+            vault_ctx = self._add_vault_nodes(
+                graph=graph,
+                agent=self._agent,
+                rg_name=rg_name,
+                location=location,
+                tags=tags,
+                credential=credential,
+                subscription_id=subscription_id,
+                cfg=cfg,
             )
+            vault_node, agent_identity_key, workspace_identity_key, model_secrets, ws_secrets = (
+                vault_ctx
+            )
+
+            container_app_node = ContainerAppNode(
+                aca_client=aca_client,
+                docker_client=docker_client,
+                rg_name=rg_name,
+                agent=self._agent,
+                generated_code=self._generated_code,
+                plan=plan,
+                platform_config=cfg,
+                peer_routes_json=peer_routes or "{}",
+            )
+            if vault_node is not None and agent_identity_key is not None:
+                container_app_node.set_vault_context(
+                    vault_key=vault_node.name,
+                    agent_identity_key=agent_identity_key,
+                    workspace_identity_key=workspace_identity_key,
+                    model_secrets=model_secrets,
+                    workspace_secrets=ws_secrets,
+                )
+            graph.add(container_app_node)
 
             results = graph.execute()
 
@@ -374,7 +658,6 @@ class AzureProvider(PlatformProvider):
         subscription_id = get_subscription_id(cfg)
         rg_name = self._rg_name(agent_name)
 
-        from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
         aca_client = ContainerAppsAPIClient(credential, subscription_id)
 
@@ -707,7 +990,6 @@ class AzureProvider(PlatformProvider):
         rg_name = self._channel_rg_name(channel)
         app_name = self._channel_app_name(channel.name)
 
-        from azure.mgmt.appcontainers import ContainerAppsAPIClient
 
         aca_client = ContainerAppsAPIClient(credential, subscription_id)
         poller = aca_client.container_apps.begin_delete(rg_name, app_name)

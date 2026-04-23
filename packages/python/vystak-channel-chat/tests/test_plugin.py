@@ -354,10 +354,17 @@ class TestServerTemplateResponsesApi:
         assert 'client.post(f"{agent_url}/v1/responses"' not in SERVER_PY
         assert "httpx" not in SERVER_PY
 
-    def test_requirements_no_httpx(self):
+    def test_requirements_includes_transport_pip_deps(self):
         from vystak_channel_chat.server_template import REQUIREMENTS
 
-        assert "httpx" not in REQUIREMENTS
+        # vystak-transport-http is bundled as source (not pip-installed), but
+        # its own pip-install deps (httpx, sse-starlette) need to be in the
+        # container's requirements.txt so pip resolves them at image build.
+        assert "httpx" in REQUIREMENTS
+        assert "sse-starlette" in REQUIREMENTS
+        # The bundled packages themselves still must not appear.
+        assert "vystak-transport-http" not in REQUIREMENTS
+        assert "vystak>=" not in REQUIREMENTS
 
 
 class TestGeneratedResponsesApi:

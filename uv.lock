@@ -17,6 +17,7 @@ members = [
     "vystak-transport-http",
     "vystak-transport-nats",
     "vystak-workspace",
+    "vystak-workspace-rpc",
 ]
 
 [[package]]
@@ -60,6 +61,28 @@ wheels = [
 ]
 
 [[package]]
+name = "asyncssh"
+version = "2.22.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/d5/957886c316466349d55c4de6a688a10a98295c0b4429deb8db1a17f3eb19/asyncssh-2.22.0.tar.gz", hash = "sha256:c3ce72b01be4f97b40e62844dd384227e5ff5a401a3793007c42f86a5c8eb537", size = 540523, upload-time = "2025-12-21T23:38:30.5Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/ae/0da2f2214fc183338af1afe5a103a2052fd03464e8eafbd827abff58a4d0/asyncssh-2.22.0-py3-none-any.whl", hash = "sha256:d16465ccdf1ed20eba1131b14415b155e047f6f5be0d19f39c2e0b61331ee0e7", size = 374938, upload-time = "2025-12-21T23:38:28.976Z" },
+]
+
+[[package]]
+name = "azure-common"
+version = "1.1.28"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/71/f6f71a276e2e69264a97ad39ef850dca0a04fce67b12570730cb38d0ccac/azure-common-1.1.28.zip", hash = "sha256:4ac0cd3214e36b6a1b6a442686722a5d8cc449603aa833f3f0f40bda836704a3", size = 20914, upload-time = "2022-02-03T19:39:44.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/55/7f118b9c1b23ec15ca05d15a578d8207aa1706bc6f7c87218efffbbf875d/azure_common-1.1.28-py2.py3-none-any.whl", hash = "sha256:5c12d3dcf4ec20599ca6b0d3e09e86e146353d443e7fcc050c9a19c1f9df20ad", size = 14462, upload-time = "2022-02-03T19:39:42.417Z" },
+]
+
+[[package]]
 name = "azure-core"
 version = "1.39.0"
 source = { registry = "https://pypi.org/simple" }
@@ -89,6 +112,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-keyvault-secrets"
+version = "4.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/b8/03c7b4edd1e3355ad5fffb70e68af70cd09542963f45cf3a2aa9fb3930b5/azure_keyvault_secrets-4.11.0.tar.gz", hash = "sha256:ac14727b9159cca353173ec5a454d8d7b192a6f2f5e7eb540f9fbcf914fa0ca0", size = 112291, upload-time = "2026-04-17T00:52:12.422Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/76/41c513917c0e8dc68de0c33578c6a0668b4a09eb4dc3e2782d382dc2947f/azure_keyvault_secrets-4.11.0-py3-none-any.whl", hash = "sha256:d8543b710423569bd00ada2a2533fe83d52d8e1fe026e1c47f41a3bc0fc73ef5", size = 103148, upload-time = "2026-04-17T00:52:13.796Z" },
+]
+
+[[package]]
 name = "azure-mgmt-appcontainers"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -100,6 +137,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/73/01/e84cadcf7d71fdff9a79218c8fb165ab20ce6e64af8526be485039897fa5/azure_mgmt_appcontainers-4.0.0.tar.gz", hash = "sha256:1731136ca0166c5fbc21a58cd37ea76787d20989e7f95dc12ae627efaf1dc3a5", size = 213877, upload-time = "2025-10-24T07:28:42.834Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3e/1a/cb62ec5f12b2c7cf89e1a1607478ae3befd14420139f4cfc1dfea567645b/azure_mgmt_appcontainers-4.0.0-py3-none-any.whl", hash = "sha256:2338025ac0c3dc8867dbcda80d7446aaad3f3e8875e7cc71892e833f9ee7e0ef", size = 331814, upload-time = "2025-10-24T07:28:44.084Z" },
+]
+
+[[package]]
+name = "azure-mgmt-authorization"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-common" },
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/ab/e79874f166eed24f4456ce4d532b29a926fb4c798c2c609eefd916a3f73d/azure-mgmt-authorization-4.0.0.zip", hash = "sha256:69b85abc09ae64fc72975bd43431170d8c7eb5d166754b98aac5f3845de57dc4", size = 1134795, upload-time = "2023-07-25T04:47:46.033Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/b3/8ec1268082f4d20cc8bf723a1a8e6b9e330bcc338a4dbcee9c7737e9dc1c/azure_mgmt_authorization-4.0.0-py3-none-any.whl", hash = "sha256:d8feeb3842e6ddf1a370963ca4f61fb6edc124e8997b807dd025bc9b2379cd1a", size = 1072620, upload-time = "2023-07-25T04:47:49.26Z" },
 ]
 
 [[package]]
@@ -129,6 +180,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-mgmt-keyvault"
+version = "14.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/dd/e74f82797ee3ff7001832427a218f3079e6174b9fa8b354b84434172d89d/azure_mgmt_keyvault-14.0.1.tar.gz", hash = "sha256:d141a8084ae4c7c5bd1cafeca49a8f3fbebc58dc5bc5290f322ea73d8b307ef7", size = 105496, upload-time = "2026-03-27T08:02:15.282Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/c3/29238b1ef3784c31722b900c9c187d7c23dd0d7e724e970f3a7c104ed7aa/azure_mgmt_keyvault-14.0.1-py3-none-any.whl", hash = "sha256:7710873c5b667e19d86109caf2898dddb902e5ed21013e01d7d85ebb496928d7", size = 104380, upload-time = "2026-03-27T08:02:16.726Z" },
+]
+
+[[package]]
 name = "azure-mgmt-loganalytics"
 version = "13.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -140,6 +205,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/01/d782a0e58a8cbf49afabef7872c029872b6e5b12d7a5f89d635f219795e3/azure_mgmt_loganalytics-13.1.1.tar.gz", hash = "sha256:4f971ee9d43fdc99e8299f44ca9f8f7a3b5f100be139fb0a9dac7efef8b698af", size = 134047, upload-time = "2026-01-05T09:52:25.827Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/30/041fcaac73e26b76f162bf1eee0bf5637bcb1b76f479bec077095f59d19a/azure_mgmt_loganalytics-13.1.1-py3-none-any.whl", hash = "sha256:73382d5036f478d3f6e856a0effc3637be2ebc782ab667fc45b25707edceaa55", size = 218285, upload-time = "2026-01-05T09:52:27.226Z" },
+]
+
+[[package]]
+name = "azure-mgmt-msi"
+version = "7.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-common" },
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/83/f2e8eeca619905ffc48205664ad10e7cdfc168be522a06d04bea54e41556/azure_mgmt_msi-7.1.0.tar.gz", hash = "sha256:1a01a089f1f66cb0d4b2886603d5ba415f360eff0be6f685737ecdd59c78225b", size = 177406, upload-time = "2025-07-21T06:26:50.414Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/38/6c7fee6d6b543c8c2eddb00f4c9584c07ada660b54760bf0a155de41e5b3/azure_mgmt_msi-7.1.0-py3-none-any.whl", hash = "sha256:4810d5559e71bd3c4e3e8bce311753fbe993d2bda23805bb81d3ca66786ad4da", size = 252909, upload-time = "2025-07-21T06:26:51.525Z" },
 ]
 
 [[package]]
@@ -483,6 +563,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
+]
+
+[[package]]
+name = "hvac"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/57/b46c397fb3842cfb02a44609aa834c887f38dd75f290c2fc5a34da4b2fee/hvac-2.4.0.tar.gz", hash = "sha256:e0056ad9064e7923e874e6769015b032580b639e29246f5ab1044f7959c1c7e0", size = 332543, upload-time = "2025-10-30T12:57:47.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/33/71e45a6bd6875f44a26f99da31c63b6840123e88bedf2c0b1ce429b8be12/hvac-2.4.0-py3-none-any.whl", hash = "sha256:008db5efd8c2f77bd37d2368ea5f713edceae1c65f11fd608393179478649e0f", size = 155921, upload-time = "2025-10-30T12:57:46.253Z" },
 ]
 
 [[package]]
@@ -1049,11 +1141,15 @@ name = "vystak-adapter-langchain"
 version = "0.1.0"
 source = { editable = "packages/python/vystak-adapter-langchain" }
 dependencies = [
+    { name = "asyncssh" },
     { name = "vystak" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
+requires-dist = [
+    { name = "asyncssh", specifier = ">=2.14" },
+    { name = "vystak", editable = "packages/python/vystak" },
+]
 
 [[package]]
 name = "vystak-adapter-mastra"
@@ -1148,10 +1244,15 @@ name = "vystak-provider-azure"
 version = "0.1.0"
 source = { editable = "packages/python/vystak-provider-azure" }
 dependencies = [
+    { name = "azure-core" },
     { name = "azure-identity" },
+    { name = "azure-keyvault-secrets" },
     { name = "azure-mgmt-appcontainers" },
+    { name = "azure-mgmt-authorization" },
     { name = "azure-mgmt-containerregistry" },
+    { name = "azure-mgmt-keyvault" },
     { name = "azure-mgmt-loganalytics" },
+    { name = "azure-mgmt-msi" },
     { name = "azure-mgmt-rdbms" },
     { name = "azure-mgmt-resource" },
     { name = "docker" },
@@ -1160,10 +1261,15 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "azure-core", specifier = ">=1.30.0" },
     { name = "azure-identity", specifier = ">=1.15" },
+    { name = "azure-keyvault-secrets", specifier = ">=4.7.0" },
     { name = "azure-mgmt-appcontainers", specifier = ">=3.0" },
+    { name = "azure-mgmt-authorization", specifier = ">=4.0.0" },
     { name = "azure-mgmt-containerregistry", specifier = ">=10.0" },
+    { name = "azure-mgmt-keyvault", specifier = ">=10.0.0" },
     { name = "azure-mgmt-loganalytics", specifier = ">=13.0" },
+    { name = "azure-mgmt-msi", specifier = ">=7.0.0" },
     { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
     { name = "azure-mgmt-resource", specifier = ">=23.0" },
     { name = "docker", specifier = ">=7.0" },
@@ -1176,12 +1282,14 @@ version = "0.1.0"
 source = { editable = "packages/python/vystak-provider-docker" }
 dependencies = [
     { name = "docker" },
+    { name = "hvac" },
     { name = "vystak" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "docker", specifier = ">=7.0" },
+    { name = "hvac", specifier = ">=2.0" },
     { name = "vystak", editable = "packages/python/vystak" },
 ]
 
@@ -1256,12 +1364,14 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "asyncssh" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "uvicorn" },
     { name = "vystak" },
     { name = "vystak-adapter-langchain" },
     { name = "vystak-adapter-mastra" },
@@ -1272,18 +1382,23 @@ dev = [
     { name = "vystak-cli" },
     { name = "vystak-provider-azure" },
     { name = "vystak-provider-docker" },
+    { name = "vystak-transport-http" },
+    { name = "vystak-transport-nats" },
+    { name = "vystak-workspace-rpc" },
 ]
 
 [package.metadata]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "asyncssh", specifier = ">=2.14" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.25" },
     { name = "ruff", specifier = ">=0.8" },
+    { name = "uvicorn", specifier = ">=0.34" },
     { name = "vystak", editable = "packages/python/vystak" },
     { name = "vystak-adapter-langchain", editable = "packages/python/vystak-adapter-langchain" },
     { name = "vystak-adapter-mastra", editable = "packages/python/vystak-adapter-mastra" },
@@ -1294,7 +1409,15 @@ dev = [
     { name = "vystak-cli", editable = "packages/python/vystak-cli" },
     { name = "vystak-provider-azure", editable = "packages/python/vystak-provider-azure" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
+    { name = "vystak-transport-http", editable = "packages/python/vystak-transport-http" },
+    { name = "vystak-transport-nats", editable = "packages/python/vystak-transport-nats" },
+    { name = "vystak-workspace-rpc", editable = "packages/python/vystak-workspace-rpc" },
 ]
+
+[[package]]
+name = "vystak-workspace-rpc"
+version = "0.1.0"
+source = { editable = "packages/python/vystak-workspace-rpc" }
 
 [[package]]
 name = "wcwidth"

@@ -199,6 +199,11 @@ def generate_agent_py(
     all_tool_names = found_tool_names + stub_tool_names
     tools_list = ", ".join(all_tool_names) if all_tool_names else ""
 
+    # When a workspace is declared, the built-in tool wrappers in
+    # builtin_tools.py (generated separately) expose an ALL_TOOLS list that
+    # must be passed into create_react_agent alongside any user-defined tools.
+    has_workspace = agent.workspace is not None
+
     # System prompt
     system_prompt = _collect_system_prompt(agent)
 
@@ -267,6 +272,11 @@ def generate_agent_py(
         lines.append("# Tool stubs (no implementation found)")
         lines.append(tool_stubs)
 
+    if has_workspace:
+        lines.append("")
+        lines.append("# Built-in workspace tools (fs.*, exec.*, git.*)")
+        lines.append("from builtin_tools import ALL_TOOLS as _builtin_tools")
+
     if session_store:
         lines.append(MEMORY_TOOLS_CODE)
 
@@ -284,6 +294,13 @@ def generate_agent_py(
         full_tools_list = f"{tools_list}, {memory_tools}" if tools_list else memory_tools
     else:
         full_tools_list = tools_list
+
+    # Splice in built-in workspace tools at the end so they're always available
+    # to the react agent when a workspace is declared.
+    if has_workspace:
+        full_tools_list = (
+            f"{full_tools_list}, *_builtin_tools" if full_tools_list else "*_builtin_tools"
+        )
 
     # For persistent checkpointers, create agent via function (memory set at startup)
     # Use a prompt callable so memory recall is ephemeral (never saved to checkpoint state)
@@ -981,6 +998,10 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     if agent.mcp_servers:
         mcp_pkg = "\nlangchain-mcp-adapters>=0.1"
 
+    # asyncssh is the transport for the agent → workspace JSON-RPC channel
+    # (used by builtin_tools when agent.workspace is declared).
+    workspace_pkg = "\nasyncssh>=2.18" if agent.workspace is not None else ""
+
     # vystak + vystak_transport_http + vystak_transport_nats are bundled as
     # source by DockerAgentNode (on PYTHONPATH via COPY . . in the Dockerfile).
     # nats-py is the runtime dependency for NatsTransport; included
@@ -993,7 +1014,7 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
         fastapi>=0.115
         uvicorn>=0.34
         sse-starlette>=2.0
-        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{tool_deps}
+        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{workspace_pkg}{tool_deps}
     """)
 
 

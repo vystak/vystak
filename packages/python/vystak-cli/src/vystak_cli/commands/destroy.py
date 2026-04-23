@@ -21,14 +21,69 @@ from vystak_cli.provider_factory import get_provider
     default=False,
     help="Don't wait for Azure resource deletion to complete",
 )
-def destroy(files, file_path, agent_name, include_resources, no_wait):
+@click.option(
+    "--delete-vault",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also delete the HashiCorp Vault container, volume, and "
+        ".vystak/vault/init.json host file. Unrecoverable — loses every "
+        "secret value stored in the vault."
+    ),
+)
+@click.option(
+    "--keep-sidecars",
+    is_flag=True,
+    default=False,
+    help=(
+        "Leave Vault Agent sidecar containers and their per-principal "
+        "secrets/approle volumes in place. Useful during iteration."
+    ),
+)
+@click.option(
+    "--delete-workspace-data",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also remove the vystak-<agent>-workspace-data volume, wiping "
+        "every file the workspace has written. Unrecoverable."
+    ),
+)
+@click.option(
+    "--keep-workspace",
+    is_flag=True,
+    default=False,
+    help=(
+        "Leave the vystak-<agent>-workspace container running. Useful "
+        "during iteration when only the agent container needs recycling."
+    ),
+)
+def destroy(
+    files,
+    file_path,
+    agent_name,
+    include_resources,
+    no_wait,
+    delete_vault,
+    keep_sidecars,
+    delete_workspace_data,
+    keep_workspace,
+):
     """Stop and remove deployed agents and channels."""
     if agent_name and not files and not file_path:
         from vystak_provider_docker import DockerProvider
 
         provider = DockerProvider()
         click.echo(f"Destroying: {agent_name}")
-        provider.destroy(agent_name, include_resources=include_resources, no_wait=no_wait)
+        provider.destroy(
+            agent_name,
+            include_resources=include_resources,
+            no_wait=no_wait,
+            delete_vault=delete_vault,
+            keep_sidecars=keep_sidecars,
+            delete_workspace_data=delete_workspace_data,
+            keep_workspace=keep_workspace,
+        )
         click.echo(f"Destroyed: {agent_name}")
         return
 
@@ -67,6 +122,11 @@ def destroy(files, file_path, agent_name, include_resources, no_wait):
         click.echo(f"Destroying agent: {agent.name}")
         provider = get_provider(agent)
         provider.set_agent(agent)
+        # Thread vault declaration so the provider knows to tear down
+        # Vault-specific resources (sidecars, approle volumes, secret
+        # volumes) via its _destroy_vault_resources branch.
+        if hasattr(provider, "set_vault") and getattr(defs, "vault", None):
+            provider.set_vault(defs.vault)
 
         if include_resources and hasattr(provider, "list_resources"):
             resources = provider.list_resources(agent.name)
@@ -76,7 +136,15 @@ def destroy(files, file_path, agent_name, include_resources, no_wait):
                     click.echo(f"    - {r['type']}: {r['name']}")
 
         try:
-            provider.destroy(agent.name, include_resources=include_resources, no_wait=no_wait)
+            provider.destroy(
+                agent.name,
+                include_resources=include_resources,
+                no_wait=no_wait,
+                delete_vault=delete_vault,
+                keep_sidecars=keep_sidecars,
+                delete_workspace_data=delete_workspace_data,
+                keep_workspace=keep_workspace,
+            )
             click.echo("  OK" if not no_wait else "  OK (delete in progress)")
         except Exception as e:
             click.echo(f"  FAILED: {e}", err=True)

@@ -22,6 +22,7 @@ try:
     from vystak.schema.config_loader import load_base_config, merge_configs
     from vystak.schema.loader import load_agent
     from vystak.schema.multi_loader import load_multi_yaml
+    from vystak.schema.vault import Vault
 finally:
     sys.path = _cwd_entries + sys.path
 
@@ -34,10 +35,15 @@ class Definitions:
 
     agents: list[Agent] = field(default_factory=list)
     channels: list[Channel] = field(default_factory=list)
+    vault: Vault | None = None
 
     def extend(self, other: "Definitions") -> None:
         self.agents.extend(other.agents)
         self.channels.extend(other.channels)
+        # Last-wins on vault — callers that merge multiple files with
+        # conflicting vaults should expect the trailing declaration to stick.
+        if other.vault is not None:
+            self.vault = other.vault
 
 
 def find_agent_file(file: str | None = None, search_dir: Path | None = None) -> Path:
@@ -112,17 +118,21 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
 
             if "agents" in data or "channels" in data:
                 merged = merge_configs(base_config, data) if base_config else data
-                agents, channels = load_multi_yaml(merged)
+                agents, channels, vault = load_multi_yaml(merged)
                 defs.agents.extend(agents)
                 defs.channels.extend(channels)
+                if vault is not None:
+                    defs.vault = vault
             elif isinstance(data.get("model"), str) or isinstance(data.get("platform"), str):
                 merged = dict(base_config)
                 if "agents" not in merged:
                     merged["agents"] = []
                 merged["agents"].append(data)
-                agents, channels = load_multi_yaml(merged)
+                agents, channels, vault = load_multi_yaml(merged)
                 defs.agents.extend(agents)
                 defs.channels.extend(channels)
+                if vault is not None:
+                    defs.vault = vault
             else:
                 defs.agents.append(load_agent(path))
 

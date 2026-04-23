@@ -1,5 +1,3 @@
-import pytest
-from pydantic import ValidationError
 from vystak.schema.common import WorkspaceType
 from vystak.schema.provider import Provider
 from vystak.schema.workspace import Workspace
@@ -40,9 +38,11 @@ class TestWorkspace:
         )
         assert ws.provider.name == "gdrive"
 
-    def test_type_required(self):
-        with pytest.raises(ValidationError):
-            Workspace(name="dev")
+    def test_type_optional(self):
+        # Spec 1: `type` is now optional (deprecated). Bare workspace is valid.
+        ws = Workspace(name="dev")
+        assert ws.type is None
+        assert ws.persistence == "volume"
 
     def test_serialization_roundtrip(self):
         ws = Workspace(name="dev", type=WorkspaceType.SANDBOX, filesystem=True, terminal=True)

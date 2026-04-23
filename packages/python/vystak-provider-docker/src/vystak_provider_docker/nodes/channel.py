@@ -32,6 +32,12 @@ class DockerChannelNode(Provisionable):
         self._host_port = host_port
         self._container_port = container_port
         self._extra_env = extra_env or {}
+        self._vault_secrets_volume: str | None = None
+
+    def set_vault_context(self, *, secrets_volume_name: str) -> None:
+        """Declare the per-principal secrets volume. Triggers entrypoint-shim
+        injection + /shared mount during provision()."""
+        self._vault_secrets_volume = secrets_volume_name
 
     @property
     def name(self) -> str:
@@ -61,6 +67,36 @@ class DockerChannelNode(Provisionable):
             for filename, content in self._generated_code.files.items():
                 (build_dir / filename).write_text(content)
 
+            # Vault context: emit shim + rewrite Dockerfile to run under ENTRYPOINT.
+            # The channel plugin supplies the Dockerfile in generated_code.files,
+            # so unlike DockerAgentNode we have to post-process it here.
+            if self._vault_secrets_volume:
+                from vystak_provider_docker.templates import generate_entrypoint_shim
+
+                (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
+                dockerfile_path = build_dir / "Dockerfile"
+                if dockerfile_path.exists():
+                    original = dockerfile_path.read_text()
+                    shim_block = (
+                        "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh\n"
+                        "RUN chmod +x /vystak/entrypoint-shim.sh\n"
+                        'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]\n'
+                    )
+                    # Insert shim immediately before the first CMD directive so
+                    # ENTRYPOINT wraps the channel plugin's own CMD.
+                    lines = original.splitlines(keepends=True)
+                    inserted = False
+                    rewritten: list[str] = []
+                    for line in lines:
+                        if not inserted and line.lstrip().startswith("CMD"):
+                            rewritten.append(shim_block)
+                            inserted = True
+                        rewritten.append(line)
+                    if not inserted:
+                        # No CMD found — append shim + leave original intact.
+                        rewritten.append(shim_block)
+                    dockerfile_path.write_text("".join(rewritten))
+
             # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
             # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
             import vystak
@@ -89,12 +125,20 @@ class DockerChannelNode(Provisionable):
             # take precedence over the defaults above.
             env.update(self._extra_env)
 
+            volumes: dict[str, dict[str, str]] = {}
+            if self._vault_secrets_volume:
+                volumes[self._vault_secrets_volume] = {
+                    "bind": "/shared",
+                    "mode": "ro",
+                }
+
             self._client.containers.run(
                 image_tag,
                 name=container_name,
                 detach=True,
                 ports={f"{self._container_port}/tcp": self._host_port},
                 environment=env,
+                volumes=volumes,
                 network=network.name,
                 labels={
                     "vystak.channel.hash": self._target_hash,

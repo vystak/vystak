@@ -15,6 +15,8 @@ dev-dependencies = [
     "pyright>=1.1",
     "httpx>=0.28",
     "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "asyncssh>=2.14",
     "vystak",
     "vystak-cli",
     "vystak-adapter-mastra",
@@ -25,6 +27,9 @@ dev-dependencies = [
     "vystak-channel-slack",
     "vystak-chat",
     "vystak-provider-azure",
+    "vystak-transport-http",
+    "vystak-transport-nats",
+    "vystak-workspace-rpc",
 ]
 
 [tool.uv.sources]
@@ -38,6 +43,9 @@ vystak-channel-chat = { workspace = true }
 vystak-channel-slack = { workspace = true }
 vystak-chat = { workspace = true }
 vystak-provider-azure = { workspace = true }
+vystak-transport-http = { workspace = true }
+vystak-transport-nats = { workspace = true }
+vystak-workspace-rpc = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
@@ -53,6 +61,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/templates.py" = ["E501"]
 "packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py" = ["E501"]
 "packages/python/vystak-channel-slack/src/vystak_channel_slack/server_template.py" = ["E501"]
+"packages/python/vystak-provider-docker/src/vystak_provider_docker/templates.py" = ["E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"

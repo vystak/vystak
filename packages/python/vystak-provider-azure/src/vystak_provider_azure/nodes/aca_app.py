@@ -21,6 +21,139 @@ from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 
 
+def _kv_secret_name(raw: str) -> str:
+    """Normalize a declared secret name to ACA's `[a-z0-9][a-z0-9-]*` shape."""
+    return raw.lower().replace("_", "-")
+
+
+def build_revision_for_vault(
+    *,
+    agent,
+    vault_uri: str,
+    agent_identity_resource_id: str,
+    agent_identity_client_id: str | None,
+    workspace_identity_resource_id: str | None,
+    workspace_identity_client_id: str | None,
+    model_secrets: list[str],
+    workspace_secrets: list[str],
+    acr_login_server: str,
+    acr_password_secret_ref: str,
+    acr_password_value: str,
+    agent_image: str,
+    workspace_image: str | None,
+    extra_env: list[dict] | None = None,
+) -> dict:
+    """Build the ACA revision body for a vault-backed agent (optional workspace sidecar).
+
+    Uses per-container env[].secretRef and identitySettings[].lifecycle: None
+    so neither container can acquire a token for any UAMI from its own
+    process. Workspace secrets are wired into the workspace container's env
+    only; model secrets into the agent container's env only.
+    """
+    # Collect user-assigned identity resource IDs
+    user_assigned_identities: dict = {
+        agent_identity_resource_id: {},
+    }
+    if workspace_identity_resource_id:
+        user_assigned_identities[workspace_identity_resource_id] = {}
+
+    # Build KV-backed secrets list: one entry per secret, referencing the
+    # owning UAMI. ACA secret names must match [a-z0-9][a-z0-9-]*.
+    kv_secrets_block: list[dict] = []
+    for s in model_secrets:
+        kv_secrets_block.append(
+            {
+                "name": _kv_secret_name(s),
+                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "identity": agent_identity_resource_id,
+            }
+        )
+    for s in workspace_secrets:
+        kv_secrets_block.append(
+            {
+                "name": _kv_secret_name(s),
+                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "identity": workspace_identity_resource_id,
+            }
+        )
+    kv_secrets_block.append(
+        {"name": acr_password_secret_ref, "value": acr_password_value}
+    )
+
+    # Identity settings — all UAMIs are lifecycle: None (unreachable from code)
+    identity_settings: list[dict] = [
+        {"identity": agent_identity_resource_id, "lifecycle": "None"},
+    ]
+    if workspace_identity_resource_id:
+        identity_settings.append(
+            {"identity": workspace_identity_resource_id, "lifecycle": "None"}
+        )
+
+    # Agent container: env wired for model secrets only
+    agent_env: list[dict] = [
+        {"name": s, "secretRef": _kv_secret_name(s)} for s in model_secrets
+    ]
+    if workspace_identity_resource_id:
+        agent_env.append(
+            {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
+        )
+    if extra_env:
+        agent_env.extend(extra_env)
+
+    containers: list[dict] = [
+        {
+            "name": "agent",
+            "image": agent_image,
+            "env": agent_env,
+        }
+    ]
+
+    if workspace_image and workspace_secrets:
+        ws_env: list[dict] = [
+            {"name": s, "secretRef": _kv_secret_name(s)} for s in workspace_secrets
+        ]
+        ws_env.append({"name": "VYSTAK_WORKSPACE_RPC_PORT", "value": "50051"})
+        containers.append(
+            {
+                "name": "workspace",
+                "image": workspace_image,
+                "env": ws_env,
+                "resources": {"cpu": 0.5, "memory": "1Gi"},
+            }
+        )
+
+    revision: dict = {
+        "location": None,  # Caller fills from platform config
+        "identity": {
+            "type": "UserAssigned",
+            "userAssignedIdentities": user_assigned_identities,
+        },
+        "properties": {
+            "configuration": {
+                "identitySettings": identity_settings,
+                "secrets": kv_secrets_block,
+                "registries": [
+                    {
+                        "server": acr_login_server,
+                        "username": acr_login_server.split(".")[0],
+                        "passwordSecretRef": acr_password_secret_ref,
+                    }
+                ],
+                "ingress": {
+                    "external": True,
+                    "targetPort": 8000,
+                    "transport": "auto",
+                },
+            },
+            "template": {
+                "containers": containers,
+                "scale": {"minReplicas": 1, "maxReplicas": 10},
+            },
+        },
+    }
+    return revision
+
+
 class ContainerAppNode(Provisionable):
     """Builds a Docker image, pushes to ACR, and creates an Azure Container App."""
 
@@ -44,6 +177,89 @@ class ContainerAppNode(Provisionable):
         self._platform_config = platform_config
         self._peer_routes_json = peer_routes_json
         self._fqdn: str | None = None
+
+        # Vault-backed deploy context (set via set_vault_context). When
+        # _vault_key is None, provision() takes the env-passthrough path.
+        self._vault_key: str | None = None
+        self._agent_identity_key: str | None = None
+        self._workspace_identity_key: str | None = None
+        self._vault_model_secrets: list[str] = []
+        self._vault_workspace_secrets: list[str] = []
+        self._workspace_image: str | None = None
+
+    def set_vault_context(
+        self,
+        *,
+        vault_key: str,
+        agent_identity_key: str,
+        workspace_identity_key: str | None,
+        model_secrets: list[str],
+        workspace_secrets: list[str],
+        workspace_image: str | None = None,
+    ) -> None:
+        """Switch this node into vault-backed mode.
+
+        When set, provision() routes revision construction through
+        build_revision_for_vault (per-container secretRef + lifecycle:None
+        UAMIs). When unset, provision() uses the legacy env-passthrough path
+        that reads secret values from os.environ at apply time.
+        """
+        self._vault_key = vault_key
+        self._agent_identity_key = agent_identity_key
+        self._workspace_identity_key = workspace_identity_key
+        self._vault_model_secrets = list(model_secrets)
+        self._vault_workspace_secrets = list(workspace_secrets)
+        self._workspace_image = workspace_image
+
+    def _build_body(self, context: dict, acr_info: dict) -> dict:
+        """Build the ACA revision body when in vault-backed mode.
+
+        Returns a dict compatible with build_revision_for_vault. Callers
+        should only invoke this when _vault_key is set.
+        """
+        assert self._vault_key is not None, (
+            "_build_body called without vault context; use legacy path"
+        )
+        vault_info = context[self._vault_key].info
+        agent_id_info = context[self._agent_identity_key].info
+        ws_id_info: dict = {}
+        if self._workspace_identity_key is not None:
+            ws_id_info = context[self._workspace_identity_key].info
+
+        login_server = acr_info["login_server"]
+        agent_image = (
+            acr_info.get("image")
+            or f"{login_server}/{self._agent.name}:{self._plan.target_hash}"
+        )
+        # Derive a default workspace image when the caller declared a
+        # workspace identity but didn't pre-specify the image tag. The
+        # workspace sidecar only materializes when both the image and
+        # workspace_secrets are present in build_revision_for_vault.
+        workspace_image = self._workspace_image
+        if (
+            workspace_image is None
+            and self._workspace_identity_key is not None
+            and self._vault_workspace_secrets
+        ):
+            workspace_image = (
+                f"{login_server}/{self._agent.name}-workspace:{self._plan.target_hash}"
+            )
+
+        return build_revision_for_vault(
+            agent=self._agent,
+            vault_uri=vault_info["vault_uri"],
+            agent_identity_resource_id=agent_id_info["resource_id"],
+            agent_identity_client_id=agent_id_info.get("client_id"),
+            workspace_identity_resource_id=ws_id_info.get("resource_id"),
+            workspace_identity_client_id=ws_id_info.get("client_id"),
+            model_secrets=self._vault_model_secrets,
+            workspace_secrets=self._vault_workspace_secrets,
+            acr_login_server=login_server,
+            acr_password_secret_ref="acr-password",
+            acr_password_value=acr_info["password"],
+            agent_image=agent_image,
+            workspace_image=workspace_image,
+        )
 
     @property
     def name(self) -> str:

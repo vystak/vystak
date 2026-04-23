@@ -30,6 +30,26 @@ class DockerAgentNode(Provisionable):
         self._plan = plan
         self._peer_routes_json = peer_routes_json
         self._extra_env = extra_env or {}
+        self._vault_secrets_volume: str | None = None
+        self._workspace_host: str | None = None
+
+    def set_vault_context(self, *, secrets_volume_name: str) -> None:
+        """Declare the per-principal secrets volume. Triggers entrypoint-shim
+        injection + /shared mount during provision()."""
+        self._vault_secrets_volume = secrets_volume_name
+
+    def set_workspace_context(self, *, workspace_host: str) -> None:
+        """Declare that this agent should RPC into a workspace container
+        over SSH.
+
+        Sets VYSTAK_WORKSPACE_HOST in the container env so agent-side code
+        can resolve the workspace's internal DNS name. The SSH key material
+        is rendered by the agent's vault-agent sidecar into /shared/ssh/
+        (same per-principal secrets volume that carries secrets.env); the
+        Dockerfile emitted here symlinks /vystak/ssh → /shared/ssh so
+        agent-side code can reference the canonical /vystak/ssh/* paths.
+        """
+        self._workspace_host = workspace_host
 
     @property
     def name(self) -> str:
@@ -119,6 +139,25 @@ class DockerAgentNode(Provisionable):
                 "COPY requirements.txt .\n"
                 "RUN pip install --no-cache-dir -r requirements.txt\n"
                 "COPY . .\n"
+            )
+            if self._vault_secrets_volume:
+                from vystak_provider_docker.templates import generate_entrypoint_shim
+
+                (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
+                dockerfile_content += (
+                    "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh\n"
+                    "RUN chmod +x /vystak/entrypoint-shim.sh\n"
+                    'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]\n'
+                )
+            if self._workspace_host:
+                # Agent-side SSH keys are rendered by the vault-agent sidecar
+                # into /shared/ssh/* (the agent-secrets volume mounted at
+                # /shared). Expose them at the canonical /vystak/ssh/* path
+                # via a symlink — agent-side code reads from /vystak/ssh/.
+                dockerfile_content += (
+                    "RUN mkdir -p /vystak && ln -s /shared/ssh /vystak/ssh\n"
+                )
+            dockerfile_content += (
                 f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
             )
             (build_dir / "Dockerfile").write_text(dockerfile_content)
@@ -151,6 +190,9 @@ class DockerAgentNode(Provisionable):
             # take precedence over the defaults above.
             env.update(self._extra_env)
 
+            if self._workspace_host:
+                env["VYSTAK_WORKSPACE_HOST"] = self._workspace_host
+
             # Build volumes
             volumes = {}
             for dep_name in self.depends_on:
@@ -162,6 +204,11 @@ class DockerAgentNode(Provisionable):
                         "bind": "/data",
                         "mode": "rw",
                     }
+            if self._vault_secrets_volume:
+                volumes[self._vault_secrets_volume] = {
+                    "bind": "/shared",
+                    "mode": "ro",
+                }
 
             # Run container
             host_port = self._agent.port if self._agent.port else None
