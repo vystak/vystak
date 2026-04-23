@@ -164,6 +164,34 @@ def post_a2a_task(url: str, message: str, timeout: int = 30) -> dict:
 
 
 @pytest.fixture
+def postgres_clean():
+    """Remove stale Postgres data volumes before the test.
+
+    Postgres containers that attach to an existing PGDATA volume use
+    the password baked into that volume at init time, not the password
+    the caller supplies. If a prior test run's volume survives and the
+    current test generates a fresh password in `.vystak/secrets.json`,
+    authentication fails with 'password authentication failed for user
+    "vystak"' — the agent crashes on startup.
+
+    Mirrors `vault_clean`'s pattern. Best-effort; tolerates missing
+    volumes.
+    """
+    # Per-service volume naming used by DockerServiceNode + legacy
+    # `agentstack-*` names from the pre-rename era.
+    volume_prefixes = ("vystak-data-", "agentstack-data-")
+    import subprocess
+    result = subprocess.run(
+        ["docker", "volume", "ls", "--format", "{{.Name}}"],
+        capture_output=True, text=True, check=False,
+    )
+    for name in result.stdout.splitlines():
+        if any(name.startswith(p) for p in volume_prefixes):
+            run(["docker", "volume", "rm", name], check=False)
+    yield
+
+
+@pytest.fixture
 def vault_clean():
     """Ensure no stale Vault state pollutes this test.
 
