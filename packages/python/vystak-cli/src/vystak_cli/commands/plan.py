@@ -219,28 +219,27 @@ def _detect_orphan_vault_resources(agent_names: list[str] | None = None) -> list
     if not agent_names:
         return orphans
 
+    # Enumerate the exact resource names the provider builds for this
+    # config's agents. Matching on the exact string avoids prefix-collision
+    # footguns where agent 'api' would otherwise match 'api-gateway'.
+    expected_containers: set[str] = set()
+    expected_volumes: set[str] = set()
+    for a in agent_names:
+        for principal_suffix in ("-agent", "-workspace"):
+            principal = f"vystak-{a}{principal_suffix}"
+            expected_containers.add(f"{principal}-vault-agent")
+            expected_volumes.add(f"{principal}-approle")
+            expected_volumes.add(f"{principal}-secrets")
+
     try:
         import docker as _docker
 
         dc = _docker.from_env()
         for container in dc.containers.list(all=True):
-            name = container.name
-            if not name.startswith("vystak-"):
-                continue
-            # vystak-<agent>-vault-agent / vystak-<agent>-workspace-vault-agent
-            if name.endswith("-vault-agent") and any(
-                f"vystak-{a}" in name for a in agent_names
-            ):
-                orphans.append(f"container: {name}")
+            if container.name in expected_containers:
+                orphans.append(f"container: {container.name}")
         for volume in dc.volumes.list():
-            if not volume.name.startswith("vystak-"):
-                continue
-            matches_agent = any(
-                f"vystak-{a}" in volume.name for a in agent_names
-            )
-            if not matches_agent:
-                continue
-            if volume.name.endswith("-approle") or volume.name.endswith("-secrets"):
+            if volume.name in expected_volumes:
                 orphans.append(f"volume: {volume.name}")
     except Exception:
         # Docker unreachable — skip. Plan should remain offline-safe.
