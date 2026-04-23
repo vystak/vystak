@@ -36,3 +36,8 @@ agents:
         - apt-get update && apt-get install -y --no-install-recommends git ripgrep
         - npm install -g typescript prettier eslint
       persistence: volume
+      # Workspace-only secrets — demonstrate per-container isolation.
+      # This value is delivered into the workspace container's env only;
+      # the agent container (where the LLM runs) cannot reach it.
+      secrets:
+        - {name: STRIPE_API_KEY}

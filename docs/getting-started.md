@@ -232,3 +232,67 @@ pnpm --filter @vystak/provider-aws test
 | All TypeScript | `just test-typescript` |
 | Single Python package | `uv run pytest packages/python/<pkg>/tests/ -v` |
 | Single TS package | `pnpm --filter @vystak/<pkg> test` |
+
+## Secrets
+
+Vystak delivers declared secrets into each principal's (agent /
+workspace / channel) container environment. The container boundary
+provides per-principal isolation: the LLM running in the agent
+container cannot read environment variables belonging to a workspace
+container, or vice versa.
+
+### Default path — `.env`
+
+For local development, write secrets to a `.env` file in your project
+root and declare them on the principal that needs them:
+
+```yaml
+agents:
+  - name: assistant
+    secrets:
+      - name: ANTHROPIC_API_KEY
+    workspace:
+      secrets:
+        - name: STRIPE_API_KEY
+```
+
+At `vystak apply` time, values resolve from `.env` and are delivered
+per-container:
+
+- **Docker:** `.vystak/env/<principal>.env` (chmod 600, gitignored)
+  is mounted as the container's `--env-file`.
+- **Azure ACA:** values are inlined as `configuration.secrets[]`
+  entries referenced per-container via `env[].secretRef`.
+
+No Vault container, no sidecars, no init-file ceremony.
+
+### Opt-in — `Vault`
+
+If you want automatic rotation, an audit log of reads, or shared
+secret storage across multiple deploys, declare a `vault:` block:
+
+```yaml
+vault:
+  name: vystak-vault
+  provider: docker     # or azure
+  type: vault          # or key-vault on Azure
+  mode: deploy         # or external for an existing Vault/KV
+```
+
+The container boundary still does the isolation work — Vault adds
+operational features (rotation, audit, shared storage). The declared
+`secrets:` on agent/workspace/channel are unchanged.
+
+### CLI
+
+- `vystak plan` — preview which secrets will be delivered; on the
+  default path, emits an `EnvFiles:` section with per-principal
+  resolution counts.
+- `vystak secrets list` — show declared secrets and whether each is
+  in `.env` / the vault.
+- `vystak secrets push` — bootstrap declared secrets from `.env` into
+  the vault (vault-declared deploys only).
+- `vystak secrets diff` — compare `.env` ↔ `.vystak/env/*.env` ↔ vault.
+  Prints only names and status — never values.
+- `vystak secrets rotate-ssh <agent>` — regenerate the workspace SSH
+  keypair for agent→workspace RPC.

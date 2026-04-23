@@ -11,6 +11,28 @@ JavaScript/TypeScript coding assistant running against a Node 20 workspace.
 - **Default secret delivery path** — secrets flow from `.env` into each
   container's environment via `--env-file` at `vystak apply` time. No Vault
   server, no sidecars, no unseal keys.
+- **Per-container isolation** — `STRIPE_API_KEY` is declared on the
+  workspace only. It lands in the workspace container's environment;
+  the agent container (where the LLM runs) never sees it.
+
+## Verifying the isolation
+
+After `vystak apply`, exec into each container and inspect its environment:
+
+```bash
+docker exec vystak-node-coder env | grep -E 'ANTHROPIC|STRIPE' || true
+# → ANTHROPIC_API_KEY=...
+# → ANTHROPIC_API_URL=...
+# (no STRIPE_API_KEY)
+
+docker exec vystak-node-coder-workspace env | grep -E 'ANTHROPIC|STRIPE' || true
+# → STRIPE_API_KEY=...
+# (no ANTHROPIC_API_KEY, no ANTHROPIC_API_URL)
+```
+
+The LLM in the agent container has no path — env var, filesystem, or
+network — to reach the workspace's `STRIPE_API_KEY`. The container
+boundary does the work.
 
 ## Run
 
