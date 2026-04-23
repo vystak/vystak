@@ -389,6 +389,47 @@ def test_plan_orphan_detection_scoped_to_current_agents(monkeypatch):
     )
 
 
+def test_plan_orphan_detection_rejects_prefix_collision(monkeypatch):
+    """Regression: filter must anchor on the trailing '-' after the agent
+    name. An agent named 'api' must NOT match a sidecar named
+    'vystak-api-gateway-agent-vault-agent' (owned by a different worktree's
+    'api-gateway' agent) — otherwise this worktree's plan would tell the
+    user to run 'destroy --delete-vault' against someone else's Vault."""
+    from unittest.mock import MagicMock
+
+    from vystak_cli.commands.plan import _detect_orphan_vault_resources
+
+    fake_dc = MagicMock()
+    other_worktree_sidecar = MagicMock()
+    other_worktree_sidecar.name = "vystak-api-gateway-agent-vault-agent"
+    this_worktree_sidecar = MagicMock()
+    this_worktree_sidecar.name = "vystak-api-agent-vault-agent"
+    fake_dc.containers.list.return_value = [
+        other_worktree_sidecar,
+        this_worktree_sidecar,
+    ]
+
+    other_volume = MagicMock()
+    other_volume.name = "vystak-api-gateway-agent-secrets"
+    this_volume = MagicMock()
+    this_volume.name = "vystak-api-agent-secrets"
+    fake_dc.volumes.list.return_value = [other_volume, this_volume]
+
+    import docker as _docker
+
+    monkeypatch.setattr(_docker, "from_env", lambda: fake_dc)
+
+    orphans = _detect_orphan_vault_resources(agent_names=["api"])
+    joined = "\n".join(orphans)
+    assert "vystak-api-agent-vault-agent" in joined
+    assert "vystak-api-agent-secrets" in joined
+    # Prefix-colliding names belonging to another worktree MUST NOT appear.
+    assert "api-gateway" not in joined, (
+        f"orphan filter matched a prefix-colliding name from another "
+        f"worktree: {joined}"
+    )
+
+
 def test_plan_env_files_omits_channel_rows(tmp_path, monkeypatch):
     """plan's EnvFiles section must not list channel principals — the
     provider's default-path graph doesn't emit per-channel env-file
