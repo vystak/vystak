@@ -76,4 +76,8 @@ addopts = "--import-mode=importlib -m 'not docker'"
 asyncio_mode = "auto"
 markers = [
     "docker: opt-in integration tests that spin up real Docker containers. Run with -m docker.",
+    "release_smoke: Smoke-tier cells from test_plan.md. Docker daemon + .env required. Run with -m release_smoke.",
+    "release_smoke_azure: Azure smoke cells. Require AZURE_SUBSCRIPTION_ID + az login. Run with -m release_smoke_azure.",
+    "release_integration: Integration-tier cells from test_plan.md.",
+    "release_slack: Require SLACK_BOT_TOKEN + SLACK_APP_TOKEN for a test workspace.",
 ]
