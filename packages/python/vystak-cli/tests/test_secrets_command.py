@@ -613,5 +613,28 @@ def test_secrets_rotate_ssh_default_path_regenerates_host_files(
     assert (tmp_path / ".vystak" / "ssh" / "assistant" / "client-key.pub").exists()
 
 
+def test_secrets_diff_default_path_compares_env_and_materialized(tmp_path, monkeypatch):
+    """diff on default path compares .env ∩ .vystak/env/*.env ∩ declared.
+    Status strings MUST NOT reference 'vault' — there is none."""
+    config = _write_default_path_yaml(tmp_path)
+    # PRESENT is declared, in .env, and already materialized
+    # MISSING_KEY is declared but only in .env (not yet applied)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=x\nMISSING_KEY=y\n")
+    env_dir = tmp_path / ".vystak" / "env"
+    env_dir.mkdir(parents=True)
+    (env_dir / "assistant-agent.env").write_text("ANTHROPIC_API_KEY=x\n")
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(secrets, ["diff", "--file", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "ready" in result.output  # ANTHROPIC_API_KEY is in both
+    assert "pending" in result.output  # MISSING_KEY is in .env but not applied
+    # Default-path status strings must not mention "vault"
+    assert "vault" not in result.output.lower(), (
+        f"diff output references 'vault' on default path: {result.output}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

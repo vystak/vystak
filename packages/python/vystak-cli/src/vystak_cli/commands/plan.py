@@ -143,7 +143,10 @@ def _emit_default_path_plan(defs) -> None:
 
     env_values = load_env_file(Path(".env"), optional=True)
 
-    # --- EnvFiles section
+    # --- EnvFiles section. Only principals the provider actually materializes
+    # on the default path: agent + workspace. Channels are not currently wired
+    # for per-channel env-file generation (follow-up); advertising rows for
+    # them here would misrepresent what `vystak apply` will produce.
     principals: list[tuple[str, list[str]]] = []
     for agent in defs.agents:
         if agent.secrets:
@@ -153,11 +156,6 @@ def _emit_default_path_plan(defs) -> None:
         if agent.workspace is not None and agent.workspace.secrets:
             principals.append(
                 (f"{agent.name}-workspace", [s.name for s in agent.workspace.secrets])
-            )
-    for channel in defs.channels:
-        if channel.secrets:
-            principals.append(
-                (f"{channel.name}-channel", [s.name for s in channel.secrets])
             )
 
     if principals:
@@ -171,8 +169,13 @@ def _emit_default_path_plan(defs) -> None:
             click.echo(f"  {p_name}  {status}")
         click.echo()
 
-    # --- Orphan detection: leftover Vault resources from a prior deploy
-    orphans = _detect_orphan_vault_resources()
+    # --- Orphan detection: leftover Vault resources from a prior deploy.
+    # Scoped to the current config's agents so unrelated worktrees /
+    # parallel deploys on the same Docker host don't show up here and
+    # tempt the user to run `destroy --delete-vault` on someone else's
+    # Vault.
+    agent_names = [a.name for a in defs.agents]
+    orphans = _detect_orphan_vault_resources(agent_names)
     if orphans:
         click.echo("Orphan resources detected:")
         for o in orphans:
@@ -186,18 +189,35 @@ def _emit_default_path_plan(defs) -> None:
         click.echo()
 
 
-def _detect_orphan_vault_resources() -> list[str]:
+def _detect_orphan_vault_resources(agent_names: list[str] | None = None) -> list[str]:
     """Best-effort detection of leftover Vault resources on the default path.
 
-    Returns a list of human-readable resource descriptions. Checks the
-    host-side init.json file and asks the Docker daemon for vystak-vault*
-    containers/volumes. Swallows docker-daemon errors (returns empty)
-    because plan is supposed to be offline-safe.
+    Scoping rules:
+    - ``.vystak/vault/init.json`` is cwd-relative so it unambiguously
+      belongs to this project; always flagged when present.
+    - Per-agent Vault Agent sidecars and per-principal volumes are
+      filtered to names containing an ``agent_names`` entry. Without this
+      filter the global Docker daemon query would show resources from
+      unrelated worktrees or parallel deploys on the same host, and the
+      remediation (`vystak destroy --delete-vault`) would destroy their
+      Vault state.
+    - The shared ``vystak-vault`` server and its ``vystak-vault-data``
+      volume are intentionally NOT flagged here — they may be actively
+      used by another worktree's config. They are cleaned up explicitly
+      via ``vystak destroy --delete-vault`` when the user opts in.
+
+    Returns a list of human-readable resource descriptions. Swallows
+    docker-daemon errors (returns empty for the docker branch) because
+    plan is supposed to be offline-safe.
     """
+    agent_names = list(agent_names or [])
     orphans: list[str] = []
     init_path = Path(".vystak") / "vault" / "init.json"
     if init_path.exists():
         orphans.append(f"{init_path} (Hashi Vault unseal keys + root token)")
+
+    if not agent_names:
+        return orphans
 
     try:
         import docker as _docker
@@ -205,16 +225,22 @@ def _detect_orphan_vault_resources() -> list[str]:
         dc = _docker.from_env()
         for container in dc.containers.list(all=True):
             name = container.name
-            if name == "vystak-vault" or name.endswith("-vault-agent"):
+            if not name.startswith("vystak-"):
+                continue
+            # vystak-<agent>-vault-agent / vystak-<agent>-workspace-vault-agent
+            if name.endswith("-vault-agent") and any(
+                f"vystak-{a}" in name for a in agent_names
+            ):
                 orphans.append(f"container: {name}")
         for volume in dc.volumes.list():
-            if volume.name == "vystak-vault-data" or (
-                volume.name.startswith("vystak-")
-                and (
-                    volume.name.endswith("-approle")
-                    or volume.name.endswith("-secrets")
-                )
-            ):
+            if not volume.name.startswith("vystak-"):
+                continue
+            matches_agent = any(
+                f"vystak-{a}" in volume.name for a in agent_names
+            )
+            if not matches_agent:
+                continue
+            if volume.name.endswith("-approle") or volume.name.endswith("-secrets"):
                 orphans.append(f"volume: {volume.name}")
     except Exception:
         # Docker unreachable — skip. Plan should remain offline-safe.
