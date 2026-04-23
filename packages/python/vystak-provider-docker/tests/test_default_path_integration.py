@@ -70,8 +70,26 @@ def test_default_path_isolates_workspace_secret_from_agent(project):
         f"apply failed: stdout={result.stdout}\nstderr={result.stderr}"
     )
 
-    # Wait briefly for containers to start
-    time.sleep(3)
+    # Wait past the Vault-path workspace shim's 30s timeout to catch the
+    # false-positive case where the workspace appears up briefly but exits
+    # with "/shared/secrets.env never populated".
+    time.sleep(35)
+
+    ps = _run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "name=vystak-isolation-test",
+            "--format",
+            "{{.Names}}",
+        ],
+        check=True,
+    ).stdout
+    assert "vystak-isolation-test" in ps, f"agent container not running: {ps!r}"
+    assert "vystak-isolation-test-workspace" in ps, (
+        f"workspace container not running (likely shim-wait timeout): {ps!r}"
+    )
 
     # Agent container env does NOT contain STRIPE_API_KEY
     agent_env = _run(

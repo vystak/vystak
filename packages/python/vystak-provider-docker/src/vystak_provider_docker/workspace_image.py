@@ -26,8 +26,16 @@ def generate_workspace_dockerfile(
     provision: list[str],
     copy: dict[str, str],
     tool_deps_manager: str | None,
+    use_entrypoint_shim: bool = True,
 ) -> str:
-    """Build the workspace Dockerfile. User layers first, vystak layers last."""
+    """Build the workspace Dockerfile. User layers first, vystak layers last.
+
+    ``use_entrypoint_shim`` controls whether the Vault-path entrypoint shim
+    (waits for ``/shared/secrets.env`` to appear) is wired in. Set it to
+    False on the default (no-Vault) path, where env values are already in
+    the container via ``docker run environment=`` and there's nothing to
+    wait for — sshd becomes the entrypoint directly.
+    """
     effective_manager = tool_deps_manager
     if effective_manager is None:
         effective_manager = detect_tool_deps_manager(image)
@@ -95,10 +103,13 @@ def generate_workspace_dockerfile(
             "RUN test -f /workspace/tools/package.json && "
             "(cd /workspace/tools && npm install) || true"
         )
-    # Entrypoint shim (same pattern as v1 Hashi)
-    lines.append("COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh")
-    lines.append("RUN chmod +x /vystak/entrypoint-shim.sh")
-    lines.append('ENTRYPOINT ["/vystak/entrypoint-shim.sh"]')
+    # Entrypoint — Vault path uses a shim that blocks until
+    # /shared/secrets.env is populated; default path runs sshd directly
+    # because env is already delivered at container start.
+    if use_entrypoint_shim:
+        lines.append("COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh")
+        lines.append("RUN chmod +x /vystak/entrypoint-shim.sh")
+        lines.append('ENTRYPOINT ["/vystak/entrypoint-shim.sh"]')
     lines.append('CMD ["/usr/sbin/sshd", "-D", "-e"]')
 
     return "\n".join(lines) + "\n"

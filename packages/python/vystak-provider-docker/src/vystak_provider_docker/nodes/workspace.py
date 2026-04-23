@@ -76,6 +76,11 @@ class DockerWorkspaceNode(Provisionable):
         build_dir = Path(".vystak") / f"{self._agent_name}-workspace"
         build_dir.mkdir(parents=True, exist_ok=True)
 
+        # Vault path uses an entrypoint shim that waits for /shared/secrets.env
+        # to appear (populated by Vault Agent). Default path has env delivered
+        # via docker run environment= and needs no shim.
+        use_shim = self._default_path_env is None
+
         # Generate Dockerfile (unless user provided custom)
         if ws.dockerfile:
             dockerfile_path = Path(ws.dockerfile).resolve()
@@ -86,6 +91,7 @@ class DockerWorkspaceNode(Provisionable):
                 provision=ws.provision,
                 copy=ws.copy,
                 tool_deps_manager=ws.tool_deps_manager,
+                use_entrypoint_shim=use_shim,
             )
             (build_dir / "Dockerfile").write_text(df)
 
@@ -93,9 +99,10 @@ class DockerWorkspaceNode(Provisionable):
         sshd_conf = self._generate_sshd_config(ws)
         (build_dir / "vystak-sshd.conf").write_text(sshd_conf)
 
-        # entrypoint-shim (reuse v1 pattern)
-        from vystak_provider_docker.templates import generate_entrypoint_shim
-        (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
+        # Emit shim only when the Vault path will use it.
+        if use_shim:
+            from vystak_provider_docker.templates import generate_entrypoint_shim
+            (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
 
         # Copy vystak_workspace_rpc source into build context
         import vystak_workspace_rpc
