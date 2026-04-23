@@ -437,10 +437,16 @@ class DockerProvider(PlatformProvider):
 
         vault_client = getattr(self, "_vault_client_for_workspace", None)
         if vault_client is None:
-            # Should never happen: vault is required for workspace.
+            # This method is only reachable on the Vault-declared path;
+            # callers must run _add_vault_nodes first to populate the
+            # shared vault_client. The default (no-Vault) path uses
+            # _add_default_path_nodes instead and does not invoke this
+            # method. Reaching this branch indicates a provider-internal
+            # sequencing bug, not a user-facing misconfiguration.
             raise RuntimeError(
-                "workspace declared but no vault_client available; "
-                "_add_vault_nodes must run before _add_workspace_nodes"
+                "internal error: _add_workspace_nodes called without a "
+                "vault_client. _add_vault_nodes must run first on the "
+                "Vault path; on the default path, use _add_default_path_nodes."
             )
 
         # SSH keygen — pushes keys to Vault under _vystak/workspace-ssh/<agent>/*
