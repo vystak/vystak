@@ -20,11 +20,23 @@ Smoke test for the Slack channel plugin. Deploys:
 
 ## Run
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_APP_TOKEN=xapp-...
+Put the tokens in an `.env` file alongside `vystak.py` (or pass `--env-file`
+pointing at your existing env file). `vystak apply` reads them from
+`--env-file` (defaults to `.env` in the current directory).
 
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+
+# Optional — only if you're routing the Anthropic SDK to a non-default
+# endpoint such as MiniMax. If set, also add
+# `ast.Secret(name="ANTHROPIC_API_URL")` to weather_agent.secrets in
+# vystak.py so the value reaches the container.
+# ANTHROPIC_API_URL=https://api.minimax.io/anthropic
+```
+
+```bash
 cd examples/docker-slack
 vystak apply
 ```
