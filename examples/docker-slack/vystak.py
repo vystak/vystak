@@ -48,6 +48,18 @@ weather_agent = ast.Agent(
     model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=[])],
+    # Secrets must be declared on the agent for the Docker provider to
+    # wire them into the container env. The model's api_keys field is
+    # informational — it tells the adapter which env var the LLM client
+    # will read, but the provider's secret-delivery loop iterates
+    # agent.secrets, not model.api_keys.
+    #
+    # Add ANTHROPIC_API_URL here if you're routing to a non-default
+    # endpoint (e.g. MiniMax's Anthropic-compatible API at
+    # https://api.minimax.io/anthropic).
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+    ],
 )
 
 slack = ast.Channel(

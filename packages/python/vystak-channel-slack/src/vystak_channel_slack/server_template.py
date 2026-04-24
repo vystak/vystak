@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -162,6 +163,73 @@ async def _forward_to_agent(agent_name: str, text: str, session_id: str) -> str:
     )
 
 
+_FENCE_RE = re.compile(r"```[\\s\\S]*?```|`[^`]*`")
+_HEADING_RE = re.compile(r"^\\s{0,3}#{1,6}\\s+(.+?)\\s*#*\\s*$", re.MULTILINE)
+_BOLD_RE = re.compile(r"\\*\\*(.+?)\\*\\*", re.DOTALL)
+_UNDERSCORE_BOLD_RE = re.compile(r"__(.+?)__", re.DOTALL)
+_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
+_LINK_RE = re.compile(r"\\[([^\\]]+?)\\]\\(([^)]+?)\\)")
+_BULLET_RE = re.compile(r"^(\\s*)[*+-]\\s+", re.MULTILINE)
+
+
+def _to_slack_mrkdwn(text: str) -> str:
+    """Convert the agent's GitHub-flavored Markdown reply to Slack mrkdwn.
+
+    Slack's mrkdwn differs from GFM in enough ways that posting raw GFM
+    renders as literal syntax ("# Hello", "**bold**"). This converter
+    handles the common cases:
+
+    - # / ## / ### headings -> *bold* (Slack has no heading syntax)
+    - **bold** / __bold__     -> *bold*
+    - bare *italic* / _italic_ -> _italic_
+    - ~~strike~~              -> ~strike~
+    - [text](url)             -> <url|text>
+    - - / * / + bullet        -> • bullet (U+2022)
+    - Fenced ``` blocks and inline `code` pass through unchanged
+      (Slack renders them natively).
+
+    Code regions are masked before other conversions so inline markers
+    inside code (e.g. `**literal**`) don't get rewritten.
+    """
+    # 1. Mask code regions with placeholders so other passes skip them.
+    masks: list[str] = []
+
+    def _stash(m):
+        masks.append(m.group(0))
+        return f"\\x00CODE{len(masks) - 1}\\x00"
+
+    out = _FENCE_RE.sub(_stash, text)
+
+    # 2. Headings -> *bold* line
+    out = _HEADING_RE.sub(r"*\\1*", out)
+
+    # 3. Bold: ** ** and __ __ -> * *
+    out = _BOLD_RE.sub(r"*\\1*", out)
+    out = _UNDERSCORE_BOLD_RE.sub(r"*\\1*", out)
+
+    # 4. Italic is NOT converted — GFM `*x*` (italic) and Slack `*x*`
+    #    (bold) share syntax, so any rewrite here would swap
+    #    bold/italic where the agent used GFM italic. GFM `_x_` already
+    #    renders as Slack italic as-is. The tradeoff: GFM `*italic*`
+    #    reaches Slack as bold, which reads fine in practice.
+
+    # 5. Strikethrough: ~~x~~ -> ~x~
+    out = _STRIKE_RE.sub(r"~\\1~", out)
+
+    # 6. Links: [text](url) -> <url|text>
+    out = _LINK_RE.sub(r"<\\2|\\1>", out)
+
+    # 7. Bullets: "- item" / "* item" / "+ item" -> "• item"
+    _BULLET = "\\u2022"  # Unicode BULLET; not using re replacement \\uXXXX
+    out = _BULLET_RE.sub(r"\\1" + _BULLET + " ", out)
+
+    # 8. Unmask code regions.
+    for i, original in enumerate(masks):
+        out = out.replace(f"\\x00CODE{i}\\x00", original)
+
+    return out
+
+
 @slack_app.event("app_mention")
 async def on_mention(event, say):
     channel = event.get("channel", "")
@@ -177,7 +245,7 @@ async def on_mention(event, say):
         event.get("user"),
     )
     text = event.get("text", "")
-    reply = await _forward_to_agent(agent_name, text, session_id)
+    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
     await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
 
 
@@ -203,7 +271,7 @@ async def on_message(event, say):
         event.get("user"),
     )
     text = event.get("text", "")
-    reply = await _forward_to_agent(agent_name, text, session_id)
+    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
     await say(text=reply)
 
 
