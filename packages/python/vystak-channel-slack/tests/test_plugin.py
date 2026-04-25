@@ -2,12 +2,26 @@
 
 import json
 
-from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.agent import Agent
+from vystak.schema.channel import Channel, SlackChannelOverride
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
+from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 from vystak.schema.secret import Secret
 from vystak_channel_slack import SlackChannelPlugin
+
+
+def _model():
+    return Model(
+        name="claude",
+        model_name="claude-sonnet-4-20250514",
+        provider=Provider(name="anthropic", type="anthropic"),
+    )
+
+
+def _agent(name: str) -> Agent:
+    return Agent(name=name, model=_model(), provider=Provider(name="docker", type="docker"))
 
 
 def _platform():
@@ -20,10 +34,8 @@ def _channel(**overrides):
         "name": "slack-main",
         "type": ChannelType.SLACK,
         "platform": _platform(),
-        "routes": [
-            RouteRule(match={"slack_channel": "C0123"}, agent="weather-agent"),
-            RouteRule(match={"dm": True}, agent="dm-agent"),
-        ],
+        "agents": [_agent("weather-agent"), _agent("support-agent")],
+        "default_agent": _agent("weather-agent"),
         "secrets": [
             Secret(name="SLACK_BOT_TOKEN"),
             Secret(name="SLACK_APP_TOKEN"),
@@ -56,7 +68,7 @@ class TestSlackChannelPlugin:
             "Dockerfile",
             "requirements.txt",
             "routes.json",
-            "rules.json",
+            "channel_config.json",
         }
 
     def test_routes_baked(self):
@@ -71,20 +83,50 @@ class TestSlackChannelPlugin:
         routes = json.loads(code.files["routes.json"])
         assert routes == resolved
 
-    def test_rules_preserve_match_shape(self):
+    def test_channel_config_agents(self):
         plugin = SlackChannelPlugin()
         code = plugin.generate_code(_channel(), {})
-        rules = json.loads(code.files["rules.json"])
-        assert len(rules) == 2
-        assert rules[0]["match"] == {"slack_channel": "C0123"}
-        assert rules[0]["agent"] == "weather-agent"
-        assert rules[1]["match"] == {"dm": True}
-        assert rules[1]["agent"] == "dm-agent"
+        cfg = json.loads(code.files["channel_config.json"])
+        assert cfg["agents"] == ["weather-agent", "support-agent"]
+
+    def test_channel_config_default_agent(self):
+        plugin = SlackChannelPlugin()
+        code = plugin.generate_code(_channel(), {})
+        cfg = json.loads(code.files["channel_config.json"])
+        assert cfg["default_agent"] == "weather-agent"
+
+    def test_channel_config_state_sqlite(self):
+        plugin = SlackChannelPlugin()
+        code = plugin.generate_code(_channel(), {})
+        cfg = json.loads(code.files["channel_config.json"])
+        assert cfg["state"] is not None
+        assert cfg["state"]["type"] == "sqlite"
+
+    def test_channel_config_channel_overrides(self):
+        plugin = SlackChannelPlugin()
+        ov = SlackChannelOverride(name="ov1", agent=_agent("support-agent"), system_prompt="Help!")
+        ch = _channel(channel_overrides={"C12345678": ov})
+        code = plugin.generate_code(ch, {})
+        cfg = json.loads(code.files["channel_config.json"])
+        assert "C12345678" in cfg["channel_overrides"]
+        assert cfg["channel_overrides"]["C12345678"]["agent"] == "support-agent"
+        assert cfg["channel_overrides"]["C12345678"]["system_prompt"] == "Help!"
+
+    def test_channel_config_no_rules_json(self):
+        """rules.json must be absent — replaced by channel_config.json."""
+        plugin = SlackChannelPlugin()
+        code = plugin.generate_code(_channel(), {})
+        assert "rules.json" not in code.files
 
     def test_requirements_include_slack_bolt(self):
         plugin = SlackChannelPlugin()
         code = plugin.generate_code(_channel(), {})
         assert "slack-bolt" in code.files["requirements.txt"]
+
+    def test_requirements_include_psycopg(self):
+        plugin = SlackChannelPlugin()
+        code = plugin.generate_code(_channel(), {})
+        assert "psycopg" in code.files["requirements.txt"]
 
     def test_thread_name_in_channel(self):
         plugin = SlackChannelPlugin()
@@ -151,6 +193,33 @@ class TestServerTemplateTransportBootstrap:
         # Single-line migration-state warning log.
         assert "routes.json fallback" in SERVER_PY
 
+    def test_channel_config_loaded(self):
+        """server.py must load channel_config.json at startup."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "channel_config.json" in SERVER_PY
+        assert "channel_config" in SERVER_PY
+
+    def test_resolver_used_in_server(self):
+        """server.py must use the resolver module."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "vystak_channel_slack.resolver" in SERVER_PY or "_resolve" in SERVER_PY
+
+    def test_slash_command_handler_present(self):
+        """server.py must register a /vystak slash command handler."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "/vystak" in SERVER_PY
+        assert "handle_command" in SERVER_PY
+
+    def test_member_joined_handler_present(self):
+        """server.py must handle member_joined_channel events."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "member_joined_channel" in SERVER_PY
+        assert "on_member_joined" in SERVER_PY
+
     def test_vystak_packages_not_in_requirements(self):
         """vystak + vystak_transport_http are bundled as source by
         DockerChannelNode; they must NOT appear in requirements.txt."""
@@ -158,3 +227,9 @@ class TestServerTemplateTransportBootstrap:
 
         assert "vystak>=" not in REQUIREMENTS
         assert "vystak-transport-http" not in REQUIREMENTS
+
+    def test_dockerfile_creates_data_dir(self):
+        """Dockerfile must create /data for SQLite to write."""
+        from vystak_channel_slack.server_template import DOCKERFILE
+
+        assert "mkdir -p /data" in DOCKERFILE

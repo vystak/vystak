@@ -7,7 +7,7 @@ def render_welcome(*, template: str, agents: list[str]) -> str:
     return template.replace("{agent_mentions}", agent_mentions)
 
 
-def on_member_joined(
+async def on_member_joined(
     *,
     bot_user_id: str,
     joined_user_id: str,
@@ -26,6 +26,9 @@ def on_member_joined(
     user: record the inviter, post welcome, and (if exactly one agent is
     routable) auto-bind the channel to it so the user doesn't have to run
     /vystak route for the trivial case.
+
+    ``slack`` must be an object with an async-compatible ``chat_postMessage``
+    coroutine (e.g. slack-bolt's ``AsyncWebClient``).
     """
     if joined_user_id != bot_user_id:
         return
@@ -34,7 +37,7 @@ def on_member_joined(
         store.record_inviter(team, channel, inviter_id)
 
     text = render_welcome(template=welcome_template, agents=agents)
-    slack.chat_postMessage(channel=channel, text=text)
+    await slack.chat_postMessage(channel=channel, text=text)
 
     if single_agent_auto_bind and len(agents) == 1:
         store.set_channel_binding(team, channel, agents[0], inviter_id)

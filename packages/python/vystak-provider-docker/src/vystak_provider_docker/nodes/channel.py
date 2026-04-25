@@ -103,7 +103,18 @@ class DockerChannelNode(Provisionable):
             import vystak_transport_http
             import vystak_transport_nats
 
-            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
+            _bundle_mods = [vystak, vystak_transport_http, vystak_transport_nats]
+
+            # For Slack channels also bundle vystak_channel_slack so the runtime
+            # can import store, resolver, commands, and welcome at startup.
+            from vystak.schema.common import ChannelType
+
+            if self._channel.type == ChannelType.SLACK:
+                import vystak_channel_slack
+
+                _bundle_mods.append(vystak_channel_slack)
+
+            for _mod in _bundle_mods:
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():

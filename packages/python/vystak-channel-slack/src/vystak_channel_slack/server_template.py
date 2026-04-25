@@ -24,7 +24,7 @@ from slack_bolt.async_app import AsyncApp
 logger = logging.getLogger("vystak.channel.slack")
 
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
-RULES_PATH = Path(os.environ.get("RULES_PATH", "/app/rules.json"))
+CHANNEL_CONFIG_PATH = Path(os.environ.get("CHANNEL_CONFIG_PATH", "/app/channel_config.json"))
 
 
 def _load_routes_raw() -> dict:
@@ -84,39 +84,54 @@ ROUTES: dict[str, str] = {
 }
 
 
+def _load_channel_config() -> dict:
+    if CHANNEL_CONFIG_PATH.exists():
+        return json.loads(CHANNEL_CONFIG_PATH.read_text())
+    return {}
+
+
+_channel_config: dict = _load_channel_config()
+
+# --- Store bootstrap ---
+from vystak.schema.service import Sqlite as _Sqlite  # noqa: E402
+from vystak_channel_slack.store import make_store as _make_store  # noqa: E402
+from vystak_channel_slack.resolver import ResolverConfig as _ResolverConfig  # noqa: E402
+from vystak_channel_slack.resolver import resolve as _resolve  # noqa: E402
+from vystak_channel_slack.resolver import Event as _Event  # noqa: E402
+from vystak_channel_slack import commands as _commands  # noqa: E402
+from vystak_channel_slack import welcome as _welcome  # noqa: E402
+
+_state_cfg = _channel_config.get("state") or {"type": "sqlite", "path": "/data/channel-state.db"}
+_store = _make_store(_Sqlite(**{k: v for k, v in _state_cfg.items() if k in ("name", "path", "type")}) if _state_cfg.get("type") == "sqlite" else __import__("vystak.schema.service", fromlist=["Postgres"]).Postgres(**_state_cfg))
+_store.migrate()
+
+
+def _build_resolver_config() -> _ResolverConfig:
+    cfg = _channel_config
+    return _ResolverConfig(
+        agents=cfg.get("agents", []),
+        group_policy=cfg.get("group_policy", "open"),
+        dm_policy=cfg.get("dm_policy", "open"),
+        allow_from=cfg.get("allow_from", []),
+        allow_bots=cfg.get("allow_bots", False),
+        channel_overrides=cfg.get("channel_overrides", {}),
+        default_agent=cfg.get("default_agent"),
+        ai_fallback=None,
+    )
+
+
+_resolver_cfg: _ResolverConfig = _build_resolver_config()
+
+
 def _load_json(path: Path, default):
     if not path.exists():
         return default
     return json.loads(path.read_text())
 
 
-RULES: list[dict] = _load_json(RULES_PATH, [])
-
-
-def _match_rule(slack_channel: str | None, is_dm: bool) -> str | None:
-    """Return agent name for the first matching rule, or None."""
-    for rule in RULES:
-        match = rule.get("match") or {}
-
-        if match.get("dm") is True and is_dm:
-            return rule.get("agent")
-        if "slack_channel" in match and match["slack_channel"] == slack_channel:
-            return rule.get("agent")
-        if not match:
-            return rule.get("agent")
-    return None
-
-
-def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:
-    if channel is None and user:
-        return f"slack:dm:{user}"
-    if thread_ts:
-        return f"slack:{channel}:{thread_ts}"
-    return f"slack:{channel}:{ts}"
-
-
 BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
+BOT_USER_ID = os.environ.get("SLACK_BOT_USER_ID", "")
 
 slack_app = AsyncApp(token=BOT_TOKEN)
 
@@ -161,6 +176,14 @@ async def _forward_to_agent(agent_name: str, text: str, session_id: str) -> str:
         text,
         metadata={"sessionId": session_id},
     )
+
+
+def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:
+    if channel is None and user:
+        return f"slack:dm:{user}"
+    if thread_ts:
+        return f"slack:{channel}:{thread_ts}"
+    return f"slack:{channel}:{ts}"
 
 
 _FENCE_RE = re.compile(r"```[\\s\\S]*?```|`[^`]*`")
@@ -233,16 +256,32 @@ def _to_slack_mrkdwn(text: str) -> str:
 @slack_app.event("app_mention")
 async def on_mention(event, say):
     channel = event.get("channel", "")
+    channel_name = event.get("channel_name") or channel
+    user = event.get("user", "")
     is_dm = event.get("channel_type") == "im"
-    agent_name = _match_rule(channel, is_dm)
+    is_bot = bool(event.get("bot_id"))
+
+    ev = _Event(
+        team=event.get("team", ""),
+        channel=channel,
+        user=user,
+        text=event.get("text", ""),
+        is_dm=is_dm,
+        is_bot=is_bot,
+        channel_name=channel_name,
+    )
+    agent_name = _resolve(ev, _resolver_cfg, _store)
     if agent_name is None or agent_name not in ROUTES:
+        # TODO: if cfg.welcome_on_invite and channel not yet welcomed, post
+        # welcome message here (on_member_joined covers the explicit-invite
+        # case; this is the fallback for channels where the bot was pre-invited).
         return
 
     session_id = _session_id(
         channel,
         event.get("thread_ts"),
         event.get("ts"),
-        event.get("user"),
+        user,
     )
     text = event.get("text", "")
     reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
@@ -255,12 +294,23 @@ async def on_message(event, say):
         return
 
     channel = event.get("channel", "")
+    channel_name = event.get("channel_name") or channel
+    user = event.get("user", "")
     is_dm = event.get("channel_type") == "im"
 
     if not is_dm:
         return  # mentions are already handled by on_mention
 
-    agent_name = _match_rule(None, is_dm=True)
+    ev = _Event(
+        team=event.get("team", ""),
+        channel=channel,
+        user=user,
+        text=event.get("text", ""),
+        is_dm=True,
+        is_bot=False,
+        channel_name=channel_name,
+    )
+    agent_name = _resolve(ev, _resolver_cfg, _store)
     if agent_name is None or agent_name not in ROUTES:
         return
 
@@ -268,11 +318,51 @@ async def on_message(event, say):
         None,
         event.get("thread_ts"),
         event.get("ts"),
-        event.get("user"),
+        user,
     )
     text = event.get("text", "")
     reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
     await say(text=reply)
+
+
+@slack_app.event("member_joined_channel")
+async def on_member_joined(event, client):
+    await _welcome.on_member_joined(
+        bot_user_id=BOT_USER_ID,
+        joined_user_id=event.get("user", ""),
+        inviter_id=event.get("inviter"),
+        team=event.get("team", ""),
+        channel=event.get("channel", ""),
+        agents=_resolver_cfg.agents,
+        single_agent_auto_bind=len(_resolver_cfg.agents) == 1,
+        welcome_template=_channel_config.get("welcome_message") or "Hello! I can route your messages to: {agent_mentions}",
+        slack=client,
+        store=_store,
+    )
+
+
+@slack_app.command("/vystak")
+async def on_slash_command(ack, body, client):
+    await ack()
+    team = body.get("team_id", "")
+    channel = body.get("channel_id", "")
+    user = body.get("user_id", "")
+    text = body.get("text", "")
+    cmd = body.get("command", "/vystak")
+    try:
+        result = _commands.handle_command(
+            cmd=cmd,
+            args=text,
+            team=team,
+            channel=channel,
+            user=user,
+            agents=_resolver_cfg.agents,
+            route_authority=_channel_config.get("route_authority", "inviter"),
+            store=_store,
+        )
+        await client.chat_postEphemeral(channel=channel, user=user, text=result.message)
+    except _commands.NotAuthorized as exc:
+        await client.chat_postEphemeral(channel=channel, user=user, text=str(exc))
 
 
 health_app = FastAPI(title="vystak-channel-slack")
@@ -282,8 +372,7 @@ health_app = FastAPI(title="vystak-channel-slack")
 async def health():
     return {
         "status": "ok",
-        "agents": list(ROUTES.keys()),
-        "rules": len(RULES),
+        "agents": _resolver_cfg.agents,
         "socket_mode": bool(BOT_TOKEN and APP_TOKEN),
     }
 
@@ -312,6 +401,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /data
 COPY . .
 CMD ["python", "server.py"]
 """
@@ -331,4 +421,5 @@ pydantic>=2.0
 pyyaml>=6.0
 aiosqlite>=0.20
 nats-py>=2.6
+psycopg[binary]>=3.0
 """
