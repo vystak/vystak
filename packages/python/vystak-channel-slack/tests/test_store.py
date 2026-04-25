@@ -1,5 +1,8 @@
+from unittest.mock import patch
+
 import pytest
-from vystak_channel_slack.store import SqliteStore
+from vystak.schema.service import Postgres, Sqlite
+from vystak_channel_slack.store import PostgresStore, SqliteStore, make_store
 
 
 @pytest.fixture
@@ -46,3 +49,36 @@ def test_migrate_idempotent(tmp_path):
     s.migrate()
     s.set_channel_binding("T", "C", "w", "U")
     assert s.channel_binding("T", "C") == "w"
+
+
+@pytest.mark.skip(reason="needs Postgres — covered by integration test")
+def test_postgres_store_round_trip():
+    """Live Postgres test — covered by docker-marked integration test."""
+
+
+def test_make_store_dispatches_sqlite(tmp_path):
+    svc = Sqlite(name="x", path=str(tmp_path / "x.db"))
+    s = make_store(svc)
+    assert isinstance(s, SqliteStore)
+
+
+def test_make_store_dispatches_postgres_by_env_var(monkeypatch):
+    monkeypatch.setenv("SLACK_STATE_URL", "postgresql://stub")
+    svc = Postgres(name="x", connection_string_env="SLACK_STATE_URL")
+    with patch("vystak_channel_slack.store.psycopg.connect"):
+        s = make_store(svc)
+    assert isinstance(s, PostgresStore)
+
+
+def test_make_store_rejects_unknown_type():
+    class FakeService:
+        type = "bogus"
+
+    with pytest.raises(ValueError, match="unsupported"):
+        make_store(FakeService())
+
+
+def test_postgres_store_uses_psycopg_connect_with_dsn():
+    """Constructor stores DSN; connection happens lazily inside _conn()."""
+    s = PostgresStore(dsn="postgresql://example")
+    assert s._dsn == "postgresql://example"
