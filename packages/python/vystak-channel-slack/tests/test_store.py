@@ -82,3 +82,56 @@ def test_postgres_store_uses_psycopg_connect_with_dsn():
     """Constructor stores DSN; connection happens lazily inside _conn()."""
     s = PostgresStore(dsn="postgresql://example")
     assert s._dsn == "postgresql://example"
+
+
+def test_set_and_get_thread_binding(store):
+    store.set_thread_binding("T1", "C1", "1700.111", "weather-agent")
+    assert store.thread_binding("T1", "C1", "1700.111") == "weather-agent"
+
+
+def test_unknown_thread_returns_none(store):
+    assert store.thread_binding("T1", "C1", "1700.999") is None
+
+
+def test_overwrite_thread_binding(store):
+    store.set_thread_binding("T1", "C1", "1700.111", "weather-agent")
+    store.set_thread_binding("T1", "C1", "1700.111", "support-agent")
+    assert store.thread_binding("T1", "C1", "1700.111") == "support-agent"
+
+
+def test_unbind_thread(store):
+    store.set_thread_binding("T1", "C1", "1700.111", "weather-agent")
+    store.unbind_thread("T1", "C1", "1700.111")
+    assert store.thread_binding("T1", "C1", "1700.111") is None
+
+
+def test_thread_bindings_isolated_by_channel_and_team(store):
+    store.set_thread_binding("T1", "C1", "1700.111", "weather-agent")
+    # Different channel, same thread_ts
+    assert store.thread_binding("T1", "C2", "1700.111") is None
+    # Different team, same channel + thread_ts
+    assert store.thread_binding("T2", "C1", "1700.111") is None
+
+
+def test_migrate_creates_thread_bindings_table(tmp_path):
+    """Re-uses the existing idempotent migration test pattern."""
+    import sqlite3
+
+    from vystak_channel_slack.store import SqliteStore
+
+    db = tmp_path / "state.db"
+    s = SqliteStore(path=str(db))
+    s.migrate()
+    s.migrate()  # idempotent
+
+    conn = sqlite3.connect(str(db))
+    try:
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    assert "thread_bindings" in names
