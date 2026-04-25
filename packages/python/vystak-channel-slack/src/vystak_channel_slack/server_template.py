@@ -258,25 +258,45 @@ def _to_slack_mrkdwn(text: str) -> str:
 
 
 _PLACEHOLDER_TEXT = "_Responding..._"
-_REACTION_THINKING = "hourglass_flowing_sand"
-_REACTION_DONE = "white_check_mark"
-_REACTION_ERROR = "warning"
+
+_THREAD_HISTORY_LIMIT = 50
 
 
-async def _react(client, channel: str, ts: str, name: str) -> None:
-    """Best-effort reactions.add — never raises into the main flow."""
+async def _fetch_thread_history(
+    client, channel: str, thread_ts: str, current_ts: str
+) -> str:
+    """Fetch prior messages in a Slack thread via conversations.replies.
+
+    Returns a plain-text transcript ("user U123: hi\\nbot: ...") covering
+    every message in the thread that arrived before ``current_ts``. Bot
+    replies are labeled "bot" so the agent can tell its own past turns
+    apart from user input. Empty string when the event is the first
+    message in the thread or the API call fails — the agent still gets
+    the live text either way.
+
+    https://docs.slack.dev/reference/methods/conversations.replies/
+    """
     try:
-        await client.reactions_add(channel=channel, timestamp=ts, name=name)
+        resp = await client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=_THREAD_HISTORY_LIMIT,
+        )
     except Exception as exc:
-        logger.debug("reactions.add %s failed: %s", name, exc)
+        logger.debug(
+            "conversations.replies failed channel=%s thread_ts=%s: %s",
+            channel, thread_ts, exc,
+        )
+        return ""
 
-
-async def _unreact(client, channel: str, ts: str, name: str) -> None:
-    """Best-effort reactions.remove — never raises into the main flow."""
-    try:
-        await client.reactions_remove(channel=channel, timestamp=ts, name=name)
-    except Exception as exc:
-        logger.debug("reactions.remove %s failed: %s", name, exc)
+    msgs = resp.get("messages", []) or []
+    lines: list[str] = []
+    for m in msgs:
+        if (m.get("ts") or "") == current_ts:
+            continue
+        speaker = "bot" if m.get("bot_id") else f"user {m.get('user', '?')}"
+        body = (m.get("text") or "").strip()
+        if body:
+            lines.append(f"{speaker}: {body}")
+    return "\\n".join(lines)
 
 
 async def _post_placeholder(say, *, thread_ts: str | None) -> dict | None:
@@ -395,16 +415,12 @@ async def on_mention(event, say, client):
     )
     text = event.get("text", "")
     reply_thread_ts = event.get("thread_ts") or event.get("ts")
-    origin_ts = event.get("ts")
-    await _react(client, channel, origin_ts, _REACTION_THINKING)
     placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_ERROR)
         await _finalize(
             client, say, placeholder,
             text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
@@ -415,13 +431,9 @@ async def on_mention(event, say, client):
     reply = _to_slack_mrkdwn(raw_reply)
     try:
         await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_DONE)
         logger.info("mention posted ok")
     except Exception as exc:
         logger.exception("mention post failed: %s", exc)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_ERROR)
 
 
 @slack_app.event("message")
@@ -491,33 +503,26 @@ async def on_message(event, say, client):
         user,
     )
     text = event.get("text", "")
-    origin_ts = event.get("ts")
-    await _react(client, channel, origin_ts, _REACTION_THINKING)
-    placeholder = await _post_placeholder(say, thread_ts=None)
+    reply_thread_ts = event.get("thread_ts") or event.get("ts")
+    placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
     logger.info("dm forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_ERROR)
         await _finalize(
             client, say, placeholder,
             text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
-            thread_ts=None,
+            thread_ts=reply_thread_ts,
         )
         return
     logger.info("dm reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
     reply = _to_slack_mrkdwn(raw_reply)
     try:
-        await _finalize(client, say, placeholder, text=reply, thread_ts=None)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_DONE)
+        await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
         logger.info("dm posted ok")
     except Exception as exc:
         logger.exception("dm post failed: %s", exc)
-        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
-        await _react(client, channel, origin_ts, _REACTION_ERROR)
 
 
 @slack_app.event("member_joined_channel")
