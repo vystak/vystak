@@ -102,6 +102,7 @@ from vystak_channel_slack.store import make_store as _make_store  # noqa: E402
 from vystak_channel_slack.resolver import ResolverConfig as _ResolverConfig  # noqa: E402
 from vystak_channel_slack.resolver import resolve as _resolve  # noqa: E402
 from vystak_channel_slack.resolver import Event as _Event  # noqa: E402
+from vystak_channel_slack.threads import route_thread_message  # noqa: E402
 from vystak_channel_slack import commands as _commands  # noqa: E402
 from vystak_channel_slack import welcome as _welcome  # noqa: E402
 
@@ -383,7 +384,19 @@ async def on_mention(event, say, client):
         is_bot=is_bot,
         channel_name=channel_name,
     )
-    agent_name = _resolve(ev, _resolver_cfg, _store)
+    # Sticky binding: if this thread is already bound, the binding wins
+    # over whatever the resolver would return. Skipped at thread root
+    # (thread_ts == ts) since no binding can exist yet.
+    incoming_thread_ts = event.get("thread_ts")
+    bound_agent = None
+    if incoming_thread_ts and incoming_thread_ts != event.get("ts"):
+        bound_agent = _store.thread_binding(
+            event.get("team", ""), channel, incoming_thread_ts,
+        )
+    if bound_agent is not None:
+        agent_name = bound_agent
+    else:
+        agent_name = _resolve(ev, _resolver_cfg, _store)
     logger.info(
         "mention resolve channel=%s user=%s text=%r -> agent=%s known_routes=%s",
         channel, user, ev.text[:80], agent_name, list(ROUTES.keys()),
@@ -460,6 +473,17 @@ async def on_mention(event, say, client):
         logger.info("mention posted ok")
     except Exception as exc:
         logger.exception("mention post failed: %s", exc)
+        return
+    # Reply succeeded — claim this thread for the agent so subsequent
+    # non-mention messages in it route here without re-mention.
+    thread_key_ts = event.get("thread_ts") or event.get("ts")
+    if thread_key_ts:
+        _store.set_thread_binding(
+            team=event.get("team", ""),
+            channel=channel,
+            thread_ts=thread_key_ts,
+            agent=agent_name,
+        )
 
 
 @slack_app.event("message")
@@ -477,8 +501,69 @@ async def on_message(event, say, client):
     is_dm = event.get("channel_type") == "im"
 
     if not is_dm:
-        logger.debug("message ignored: not a DM (channel_type=%s)", event.get("channel_type"))
-        return  # mentions are already handled by on_mention
+        agent_name = route_thread_message(
+            is_dm=False,
+            require_explicit_mention=_THREAD_REQUIRE_EXPLICIT_MENTION,
+            team=event.get("team", ""),
+            channel=channel,
+            thread_ts=event.get("thread_ts"),
+            text=event.get("text", ""),
+            bot_user_id=BOT_USER_ID,
+            store=_store,
+        )
+        if agent_name is None:
+            logger.debug(
+                "channel message ignored channel=%s thread_ts=%s: no thread binding",
+                channel, event.get("thread_ts"),
+            )
+            return
+        if agent_name not in ROUTES:
+            logger.warning(
+                "thread message misrouted: agent=%s bound but not in transport routes %s",
+                agent_name, list(ROUTES.keys()),
+            )
+            await say(
+                text=(
+                    f"Agent `{agent_name}` is bound to this thread but isn't reachable "
+                    f"on the transport. Known routes: "
+                    + (", ".join(f"`{a}`" for a in ROUTES) or "_none_")
+                ),
+                thread_ts=event.get("thread_ts"),
+            )
+            return
+        session_id = _session_id(
+            channel, event.get("thread_ts"), event.get("ts"), user,
+        )
+        text = event.get("text", "")
+        reply_thread_ts = event.get("thread_ts")
+        placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
+        logger.info(
+            "thread-follow forward agent=%s session=%s",
+            agent_name, session_id,
+        )
+        try:
+            raw_reply = await _forward_to_agent(agent_name, text, session_id)
+        except Exception as exc:
+            logger.exception("thread-follow forward failed agent=%s: %s", agent_name, exc)
+            await _finalize(
+                client, say, placeholder,
+                text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+                thread_ts=reply_thread_ts,
+            )
+            return
+        logger.info(
+            "thread-follow reply len=%d preview=%r",
+            len(raw_reply or ""), (raw_reply or "")[:120],
+        )
+        reply = _to_slack_mrkdwn(raw_reply)
+        try:
+            await _finalize(
+                client, say, placeholder, text=reply, thread_ts=reply_thread_ts,
+            )
+            logger.info("thread-follow posted ok")
+        except Exception as exc:
+            logger.exception("thread-follow post failed: %s", exc)
+        return
 
     ev = _Event(
         team=event.get("team", ""),
