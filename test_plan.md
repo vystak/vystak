@@ -107,6 +107,9 @@ section below expands each into concrete commands.
 | **V7 Transport** | For stream tests, `docker exec vystak-nats nats sub 'vystak.>'` (or equivalent) shows the message pass through. For http, agent access logs show the inbound request. |
 | **V8 Rotation** | Change a secret value in `.env` (default) or push via `vystak secrets set NAME=V` (vault). Restart the container. Verify new value is present via V3. |
 | **V9 Destroy** | `vystak destroy` exits 0. For default-path, `.vystak/env/` and `.vystak/ssh/` cleaned. For vault-path, state preserved unless `--delete-vault`. No orphan containers/volumes/apps. |
+| **V13 Subagent codegen** | If the agent declares `subagents:`, the generated `.vystak/<agent>/agent.py` contains one `async def ask_<peer>(question, config: RunnableConfig)` per peer, imports `ask_agent` from `vystak.transport`, propagates `config.configurable.thread_id` as `metadata.sessionId`, and the docstring is the peer's `instructions` first paragraph (≤200 chars). Verify by reading the generated file. |
+| **V14 Restrictive routing** | `docker exec vystak-<caller> env \| grep VYSTAK_ROUTES_JSON` (or ACA equivalent) shows ONLY the caller's declared subagents — not all project agents. For an agent with no subagents, the table is empty (`{}`). Calling `ask_agent("undeclared", ...)` from inside the container raises an "unknown peer" error from the transport client. |
+| **V15 Session continuity** | From a single chat or Slack session, ask the coordinator two questions that delegate to the same peer (e.g., "weather in Tokyo?" then "what about Osaka?"). Inspect `docker logs vystak-<peer>` — both inbound calls carry the same `sessionId` in the A2A envelope's `metadata`. The peer's LangGraph checkpointer threads the messages under one id, so the second call sees the first as part of its own (peer-private) history. The coordinator's session does NOT contain the peer's chain of thought. |
 
 ---
 
@@ -371,6 +374,39 @@ release:
 **Channel routing** — one agent serving multiple channels, one channel
 fanning to multiple agents. Add to integration runs of A3/A4.
 
+**Multi-agent (subagents)** — orthogonal dimension. The `Agent.subagents:
+list[Agent]` field auto-generates one `ask_<peer>` LangChain tool per
+declared peer, restricts the caller's `VYSTAK_ROUTES_JSON` to its declared
+subagents (so unauthorised peer calls fail at the transport client), and
+propagates the active LangGraph `thread_id` as A2A `metadata.sessionId`
+across hops. Test once per **stack** and once per **transport**:
+
+- **D-multi-http**: D1 + multi-agent (docker × default × chat × http × multi).
+  Three agents: `assistant-agent` with `subagents: [weather-agent, time-agent]`,
+  the two specialists with no subagents. Chat channel routes to all three.
+- **D-multi-nats**: D4 + multi-agent (docker × default × chat × stream × multi).
+  Same topology, NATS transport — exercises sessionId propagation over NATS
+  subjects rather than HTTP.
+- **A-multi-http**: A1 + multi-agent (azure × default × chat × http × multi).
+  Same topology on ACA. Per-agent UAMI on the keyvault path is out of scope
+  here (covered separately when ACA multi-container plumbing lands — see
+  Known gap #1).
+
+Each multi cell adds **V13–V15** to the V1–V9 checklist.
+
+**Canary — collision detection.** A regression-prevention micro-test you
+should run once on each stack: declare `subagents: [weather-agent]` AND
+drop a `tools/ask_weather_agent.py` next to `vystak.yaml`. Expect
+`vystak apply` to fail at codegen time with a clear `ValueError: Tool
+name conflict: ['ask_weather_agent'] are auto-generated for subagents
+but also defined as user tools.` If this passes silently, the collision
+guard in `vystak-adapter-langchain/templates.py` regressed.
+
+**Reference example:** `examples/multi-agent/vystak.yaml` is the canonical
+shape — three agents in one multi-document YAML, coordinator declaring
+`subagents: [weather-agent, time-agent]`, shared `tools/` directory with
+`get_weather.py` and `get_time.py` (no manual `ask_*_agent.py` files).
+
 ---
 
 ## Known gaps (tests to defer)
@@ -465,3 +501,9 @@ dated markdown under `docs/test-plans/YYYY-MM-DD-results.md`.
 - **2026-04-23** — Initial plan written alongside the secret-manager
   simplification merge. Covers post-merge state: default path works
   on both docker and azure; vault path preserved as opt-in.
+- **2026-04-25** — Added multi-agent (subagents) as an orthogonal
+  dimension. New verification rows V13 (subagent codegen), V14
+  (restrictive routing), V15 (session continuity). Three recommended
+  multi-agent cells (D-multi-http, D-multi-nats, A-multi-http) plus a
+  collision-detection canary. Reference example:
+  `examples/multi-agent/vystak.yaml`.
