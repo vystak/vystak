@@ -21,6 +21,10 @@ from fastapi import FastAPI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
+logging.basicConfig(
+    level=os.environ.get("VYSTAK_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger("vystak.channel.slack")
 
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
@@ -253,6 +257,24 @@ def _to_slack_mrkdwn(text: str) -> str:
     return out
 
 
+# Catch-all middleware: log every event Slack delivers so missing
+# subscriptions / scopes are visible in the container logs without
+# needing to enable trace-level Bolt logging.
+@slack_app.middleware
+async def _log_event_type(req, next_):
+    body = req.body or {}
+    payload = body.get("event") or {}
+    logger.info(
+        "slack event=%s subtype=%s channel=%s channel_type=%s user=%s",
+        payload.get("type") or body.get("type") or "?",
+        payload.get("subtype") or "-",
+        payload.get("channel") or "-",
+        payload.get("channel_type") or "-",
+        payload.get("user") or "-",
+    )
+    await next_()
+
+
 @slack_app.event("app_mention")
 async def on_mention(event, say):
     channel = event.get("channel", "")
@@ -271,10 +293,18 @@ async def on_mention(event, say):
         channel_name=channel_name,
     )
     agent_name = _resolve(ev, _resolver_cfg, _store)
+    logger.info(
+        "mention resolve channel=%s user=%s text=%r -> agent=%s known_routes=%s",
+        channel, user, ev.text[:80], agent_name, list(ROUTES.keys()),
+    )
     if agent_name is None or agent_name not in ROUTES:
         # TODO: if cfg.welcome_on_invite and channel not yet welcomed, post
         # welcome message here (on_member_joined covers the explicit-invite
         # case; this is the fallback for channels where the bot was pre-invited).
+        logger.warning(
+            "mention dropped: agent_name=%s in_routes=%s",
+            agent_name, agent_name in ROUTES if agent_name else False,
+        )
         return
 
     session_id = _session_id(
@@ -284,13 +314,32 @@ async def on_mention(event, say):
         user,
     )
     text = event.get("text", "")
-    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
-    await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
+    logger.info("mention forward agent=%s session=%s", agent_name, session_id)
+    try:
+        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+    except Exception as exc:
+        logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
+        await say(
+            text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+            thread_ts=event.get("thread_ts") or event.get("ts"),
+        )
+        return
+    logger.info("mention reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
+    reply = _to_slack_mrkdwn(raw_reply)
+    try:
+        await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
+        logger.info("mention posted ok")
+    except Exception as exc:
+        logger.exception("mention post failed: %s", exc)
 
 
 @slack_app.event("message")
 async def on_message(event, say):
     if event.get("bot_id") or event.get("subtype"):
+        logger.debug(
+            "message ignored: bot_id=%s subtype=%s",
+            event.get("bot_id"), event.get("subtype"),
+        )
         return
 
     channel = event.get("channel", "")
@@ -299,6 +348,7 @@ async def on_message(event, say):
     is_dm = event.get("channel_type") == "im"
 
     if not is_dm:
+        logger.debug("message ignored: not a DM (channel_type=%s)", event.get("channel_type"))
         return  # mentions are already handled by on_mention
 
     ev = _Event(
@@ -311,7 +361,15 @@ async def on_message(event, say):
         channel_name=channel_name,
     )
     agent_name = _resolve(ev, _resolver_cfg, _store)
+    logger.info(
+        "dm resolve user=%s text=%r -> agent=%s known_routes=%s",
+        user, ev.text[:80], agent_name, list(ROUTES.keys()),
+    )
     if agent_name is None or agent_name not in ROUTES:
+        logger.warning(
+            "dm dropped: agent_name=%s in_routes=%s",
+            agent_name, agent_name in ROUTES if agent_name else False,
+        )
         return
 
     session_id = _session_id(
@@ -321,8 +379,20 @@ async def on_message(event, say):
         user,
     )
     text = event.get("text", "")
-    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
-    await say(text=reply)
+    logger.info("dm forward agent=%s session=%s", agent_name, session_id)
+    try:
+        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+    except Exception as exc:
+        logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
+        await say(text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`")
+        return
+    logger.info("dm reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
+    reply = _to_slack_mrkdwn(raw_reply)
+    try:
+        await say(text=reply)
+        logger.info("dm posted ok")
+    except Exception as exc:
+        logger.exception("dm post failed: %s", exc)
 
 
 @slack_app.event("member_joined_channel")
