@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from vystak_channel_slack.resolver import Event, ResolverConfig, resolve
 
 
