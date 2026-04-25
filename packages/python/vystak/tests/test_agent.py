@@ -177,3 +177,59 @@ class TestAgentServices:
         restored = Agent.model_validate(data)
         assert restored.sessions is not None
         assert restored.sessions.name == "sessions"
+
+
+def test_agent_subagents_defaults_to_empty_list():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="solo",
+        model=Model(
+            name="m",
+            provider=Provider(name="p", type="anthropic"),
+            model_name="claude-sonnet-4-20250514",
+        ),
+    )
+    assert agent.subagents == []
+
+
+def test_agent_subagents_accepts_agent_list():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)
+    assistant = Agent(name="assistant-agent", model=m, subagents=[weather])
+    assert len(assistant.subagents) == 1
+    assert assistant.subagents[0].name == "weather-agent"
+
+
+def test_agent_subagent_self_reference_rejected():
+    import pytest
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    a = Agent(name="solo", model=m)
+    with pytest.raises(ValueError, match="cannot list itself"):
+        Agent(name="solo", model=m, subagents=[a])
+
+
+def test_agent_subagent_duplicate_names_rejected():
+    import pytest
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather1 = Agent(name="weather-agent", model=m)
+    weather2 = Agent(name="weather-agent", model=m)
+    with pytest.raises(ValueError, match="duplicate"):
+        Agent(name="assistant", model=m, subagents=[weather1, weather2])

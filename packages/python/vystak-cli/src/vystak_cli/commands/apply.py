@@ -203,7 +203,7 @@ def _run_provider_apply(
         ):
             try:
                 plugin = get_transport_plugin(agent.platform.transport.type)
-                peer_routes = build_routes_json(list(agents), plugin, agent.platform)
+                peer_routes = build_routes_json(agent.subagents, plugin, agent.platform)
             except (KeyError, Exception):
                 pass
 

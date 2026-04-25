@@ -42,6 +42,8 @@ class Agent(NamedModel):
     # Deprecated: kept for backward compatibility
     resources: list[Resource] = []
 
+    subagents: list["Agent"] = []
+
     @property
     def canonical_name(self) -> str:
         ns = self.platform.namespace if self.platform else "default"
@@ -54,3 +56,22 @@ class Agent(NamedModel):
         if self.memory and not self.memory.name:
             self.memory.name = "memory"
         return self
+
+    @model_validator(mode="after")
+    def _validate_subagents(self) -> Self:
+        names = [s.name for s in self.subagents]
+        if self.name in names:
+            raise ValueError(
+                f"Agent '{self.name}' cannot list itself in subagents."
+            )
+        seen: set[str] = set()
+        for n in names:
+            if n in seen:
+                raise ValueError(
+                    f"Agent '{self.name}' has duplicate subagent name '{n}'."
+                )
+            seen.add(n)
+        return self
+
+
+Agent.model_rebuild()
