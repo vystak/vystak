@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Self
 
-from pydantic import model_validator
+from pydantic import BaseModel, model_validator
 
 from vystak.schema.agent import Agent
 from vystak.schema.common import ChannelType, NamedModel, RuntimeMode
@@ -19,6 +19,7 @@ __all__ = [
     "ChannelType",
     "Policy",
     "SlackChannelOverride",
+    "SlackThreadConfig",
 ]
 
 
@@ -28,6 +29,18 @@ class Policy(StrEnum):
     OPEN = "open"
     ALLOWLIST = "allowlist"
     DISABLED = "disabled"
+
+
+class SlackThreadConfig(BaseModel):
+    """Per-channel thread behaviour. Mirrors openclaw's ``channels.slack.thread.*``.
+
+    See: https://docs.openclaw.ai/channels/slack
+    """
+
+    history_scope: str = "thread"   # "thread" | "off" — what context to fetch
+    initial_history_limit: int = 20  # 0 disables fetching on cold-start
+    inherit_parent: bool = False     # carry parent-channel session into thread
+    require_explicit_mention: bool = False  # suppress implicit thread mentions
 
 
 class SlackChannelOverride(NamedModel):
@@ -66,6 +79,10 @@ class Channel(NamedModel):
     allow_bots: bool = False
     dangerously_allow_name_matching: bool = False
     reply_to_mode: str = "first"
+    reply_to_mode_by_chat_type: dict[str, str] = {}   # "direct"|"group"|"channel" -> mode
+    thread: SlackThreadConfig = SlackThreadConfig()
+    # Legacy alias kept so existing callers don't break; new code should use
+    # `thread.require_explicit_mention`.
     thread_require_explicit_mention: bool = False
     channel_overrides: dict[str, SlackChannelOverride] = {}
     state: Service | None = None

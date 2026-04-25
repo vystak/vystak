@@ -259,7 +259,14 @@ def _to_slack_mrkdwn(text: str) -> str:
 
 _PLACEHOLDER_TEXT = "_Responding..._"
 
-_THREAD_HISTORY_LIMIT = 50
+# Thread behaviour — driven by channel_config.json["thread"]. Mirrors
+# openclaw\\'s channels.slack.thread.* knobs.
+_thread_cfg: dict = _channel_config.get("thread") or {}
+_THREAD_HISTORY_SCOPE = _thread_cfg.get("history_scope", "thread")
+_THREAD_HISTORY_LIMIT = int(_thread_cfg.get("initial_history_limit", 20))
+_THREAD_REQUIRE_EXPLICIT_MENTION = bool(
+    _thread_cfg.get("require_explicit_mention", False)
+)
 
 
 async def _fetch_thread_history(
@@ -270,12 +277,15 @@ async def _fetch_thread_history(
     Returns a plain-text transcript ("user U123: hi\\nbot: ...") covering
     every message in the thread that arrived before ``current_ts``. Bot
     replies are labeled "bot" so the agent can tell its own past turns
-    apart from user input. Empty string when the event is the first
-    message in the thread or the API call fails — the agent still gets
-    the live text either way.
+    apart from user input. Empty string when ``thread.history_scope`` is
+    ``"off"``, ``thread.initial_history_limit`` is 0, the event is the
+    first message in the thread, or the API call fails — the agent
+    still gets the live text either way.
 
     https://docs.slack.dev/reference/methods/conversations.replies/
     """
+    if _THREAD_HISTORY_SCOPE != "thread" or _THREAD_HISTORY_LIMIT <= 0:
+        return ""
     try:
         resp = await client.conversations_replies(
             channel=channel, ts=thread_ts, limit=_THREAD_HISTORY_LIMIT,

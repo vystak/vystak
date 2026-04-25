@@ -72,7 +72,17 @@ class SlackChannelPlugin(ChannelPlugin):
             "welcome_on_invite": channel.welcome_on_invite,
             "welcome_message": channel.welcome_message,
             "reply_to_mode": channel.reply_to_mode,
-            "thread_require_explicit_mention": channel.thread_require_explicit_mention,
+            "reply_to_mode_by_chat_type": dict(channel.reply_to_mode_by_chat_type),
+            "thread": {
+                "history_scope": channel.thread.history_scope,
+                "initial_history_limit": channel.thread.initial_history_limit,
+                "inherit_parent": channel.thread.inherit_parent,
+                # Per-channel knob wins; fall back to legacy top-level alias.
+                "require_explicit_mention": (
+                    channel.thread.require_explicit_mention
+                    or channel.thread_require_explicit_mention
+                ),
+            },
             "state": state_cfg,
         }
 
