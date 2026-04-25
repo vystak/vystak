@@ -724,3 +724,23 @@ def test_no_subagents_no_codegen_change():
     code = generate_agent_py(bare)
     assert "ask_agent" not in code
     assert "from vystak.transport" not in code
+
+
+def test_subagent_tool_name_collision_with_user_tool_raises():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)
+    assistant = Agent(name="assistant", model=m, subagents=[weather])
+
+    # User has a real tool that shadows the auto-generated subagent tool name.
+    with pytest.raises(ValueError, match="ask_weather_agent"):
+        generate_agent_py(
+            assistant,
+            found_tool_names=["ask_weather_agent"],
+            stub_tool_names=[],
+        )

@@ -234,6 +234,15 @@ def generate_agent_py(
     tool_stubs = _generate_tool_stubs(stub_tool_names)
     subagent_tool_code = _generate_subagent_tools(agent)
     subagent_tool_names = _subagent_tool_names(agent)
+
+    collisions = set(subagent_tool_names) & set(found_tool_names + stub_tool_names)
+    if collisions:
+        raise ValueError(
+            f"Tool name conflict: {sorted(collisions)} are auto-generated "
+            f"for subagents but also defined as user tools. "
+            f"Remove the user tool or rename it."
+        )
+
     all_tool_names = found_tool_names + stub_tool_names + subagent_tool_names
     tools_list = ", ".join(all_tool_names) if all_tool_names else ""
 
