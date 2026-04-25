@@ -132,9 +132,6 @@ class TestLoadMultiYamlChannels:
                     "type": "slack",
                     "platform": "local",
                     "config": {"bot_token_secret": "SLACK_TOKEN"},
-                    "routes": [
-                        {"match": {"slack_channel": "C0123"}, "agent": "weather-agent"},
-                    ],
                 },
             ],
         }
@@ -144,8 +141,6 @@ class TestLoadMultiYamlChannels:
         assert ch.name == "slack-main"
         assert ch.type == ChannelType.SLACK
         assert ch.platform.namespace == "prod"
-        assert len(ch.routes) == 1
-        assert ch.routes[0].agent == "weather-agent"
         assert ch.canonical_name == "slack-main.channels.prod"
 
     def test_unknown_platform_raises(self):

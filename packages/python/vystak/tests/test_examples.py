@@ -131,3 +131,24 @@ def test_docker_workspace_nodejs_example_loads():
     # and vice versa.
     assert "STRIPE_API_KEY" not in agent_secret_names
     assert "ANTHROPIC_API_KEY" not in workspace_secret_names
+
+
+def test_docker_slack_example_loads():
+    """`examples/docker-slack/vystak.yaml` — Slack channel with self-serve routing."""
+    path = _examples_dir() / "docker-slack" / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
+
+    data = yaml.safe_load(path.read_text())
+    agents, channels, _vault = load_multi_yaml(data)
+
+    assert len(agents) == 1
+    assert agents[0].name == "weather-agent"
+    assert len(channels) == 1
+    ch = channels[0]
+    assert ch.type.value == "slack"
+    # Single routable agent — channel will auto-bind on invite.
+    assert [a.name for a in ch.agents] == ["weather-agent"]
+    # state defaults applied at load time
+    assert ch.state is not None
+    assert ch.state.type == "sqlite"
+    assert ch.state.path == "/data/channel-state.db"

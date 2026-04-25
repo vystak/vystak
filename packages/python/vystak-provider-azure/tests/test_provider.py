@@ -247,7 +247,7 @@ class TestAzureProviderConfigHelpers:
 
 def _make_channel(name="chat", channel_type=None):
     """Build a real Channel (not MagicMock) so hash_channel works."""
-    from vystak.schema.channel import Channel, RouteRule
+    from vystak.schema.channel import Channel
     from vystak.schema.common import ChannelType
     from vystak.schema.platform import Platform
     from vystak.schema.provider import Provider
@@ -259,7 +259,6 @@ def _make_channel(name="chat", channel_type=None):
         name=name,
         type=channel_type or ChannelType.CHAT,
         platform=platform,
-        routes=[RouteRule(match={}, agent="test-agent")],
         secrets=[Secret(name="TEST_SECRET")],
     )
 
@@ -354,7 +353,7 @@ class TestAzureChannelApply:
         assert mock_graph.add.call_count == 5
 
     def test_apply_channel_unknown_plugin(self):
-        from vystak.schema.channel import Channel, RouteRule
+        from vystak.schema.channel import Channel
         from vystak.schema.common import ChannelType
         from vystak.schema.platform import Platform
         from vystak.schema.provider import Provider
@@ -367,7 +366,6 @@ class TestAzureChannelApply:
             name="voice",
             type=ChannelType.VOICE,
             platform=platform,
-            routes=[RouteRule(agent="x")],
         )
 
         provider = AzureProvider()

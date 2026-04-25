@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.channel import Channel, Policy, SlackChannelOverride
 from vystak.schema.common import ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
@@ -17,7 +17,6 @@ class TestChannel:
         ch = Channel(name="rest", type=ChannelType.API, platform=platform)
         assert ch.type == ChannelType.API
         assert ch.config == {}
-        assert ch.routes == []
         assert ch.runtime_mode is None
 
     def test_with_config(self, platform):
@@ -29,18 +28,14 @@ class TestChannel:
         )
         assert ch.config["bot_token_secret"] == "SLACK_TOKEN"
 
-    def test_with_routes(self, platform):
-        ch = Channel(
-            name="slack",
-            type=ChannelType.SLACK,
-            platform=platform,
-            routes=[
-                RouteRule(match={"slack_channel": "C0123"}, agent="weather-agent"),
-                RouteRule(match={"slack_channel": "C0456"}, agent="time-agent"),
-            ],
-        )
-        assert len(ch.routes) == 2
-        assert ch.routes[0].agent == "weather-agent"
+    def test_routes_rejected(self, platform):
+        with pytest.raises(ValidationError, match="routes.*deprecated"):
+            Channel(
+                name="slack",
+                type=ChannelType.SLACK,
+                platform=platform,
+                routes=[{"match": {"slack_channel": "C0123"}, "agent": "weather-agent"}],
+            )
 
     def test_canonical_name(self, platform):
         ch = Channel(name="slack", type=ChannelType.SLACK, platform=platform)
@@ -69,23 +64,36 @@ class TestChannel:
             type=ChannelType.API,
             platform=platform,
             config={"cors": True},
-            routes=[RouteRule(match={}, agent="bot")],
         )
         data = ch.model_dump()
         restored = Channel.model_validate(data)
         assert restored == ch
 
+    def test_group_policy_default(self, platform):
+        ch = Channel(name="slack", type=ChannelType.SLACK, platform=platform)
+        assert ch.group_policy is Policy.OPEN
 
-class TestRouteRule:
+    def test_dm_policy_default(self, platform):
+        ch = Channel(name="slack", type=ChannelType.SLACK, platform=platform)
+        assert ch.dm_policy is Policy.OPEN
+
+    def test_slack_state_auto_set(self, platform):
+        ch = Channel(name="slack", type=ChannelType.SLACK, platform=platform)
+        assert ch.state is not None
+        assert ch.state.type == "sqlite"
+
+    def test_non_slack_state_not_set(self, platform):
+        ch = Channel(name="api", type=ChannelType.API, platform=platform)
+        assert ch.state is None
+
+
+class TestSlackChannelOverride:
     def test_minimal(self):
-        rule = RouteRule(agent="bot")
-        assert rule.agent == "bot"
-        assert rule.match == {}
+        override = SlackChannelOverride()
+        assert override.name == ""
+        assert override.agent is None
+        assert override.require_mention is False
 
-    def test_with_match(self):
-        rule = RouteRule(match={"slack_channel": "C0123"}, agent="weather-agent")
-        assert rule.match["slack_channel"] == "C0123"
-
-    def test_agent_required(self):
-        with pytest.raises(ValidationError):
-            RouteRule(match={"x": "y"})
+    def test_with_system_prompt(self):
+        override = SlackChannelOverride(system_prompt="Be concise.")
+        assert override.system_prompt == "Be concise."

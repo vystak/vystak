@@ -136,7 +136,7 @@ class TestLoadDefinitions:
                     "name": "slack",
                     "type": "slack",
                     "platform": "local",
-                    "routes": [{"match": {}, "agent": "bot"}],
+                    "agents": ["bot"],
                 },
             ],
         }

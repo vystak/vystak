@@ -21,10 +21,14 @@ from fastapi import FastAPI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
+logging.basicConfig(
+    level=os.environ.get("VYSTAK_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger("vystak.channel.slack")
 
 ROUTES_PATH = Path(os.environ.get("ROUTES_PATH", "/app/routes.json"))
-RULES_PATH = Path(os.environ.get("RULES_PATH", "/app/rules.json"))
+CHANNEL_CONFIG_PATH = Path(os.environ.get("CHANNEL_CONFIG_PATH", "/app/channel_config.json"))
 
 
 def _load_routes_raw() -> dict:
@@ -84,39 +88,54 @@ ROUTES: dict[str, str] = {
 }
 
 
+def _load_channel_config() -> dict:
+    if CHANNEL_CONFIG_PATH.exists():
+        return json.loads(CHANNEL_CONFIG_PATH.read_text())
+    return {}
+
+
+_channel_config: dict = _load_channel_config()
+
+# --- Store bootstrap ---
+from vystak.schema.service import Sqlite as _Sqlite  # noqa: E402
+from vystak_channel_slack.store import make_store as _make_store  # noqa: E402
+from vystak_channel_slack.resolver import ResolverConfig as _ResolverConfig  # noqa: E402
+from vystak_channel_slack.resolver import resolve as _resolve  # noqa: E402
+from vystak_channel_slack.resolver import Event as _Event  # noqa: E402
+from vystak_channel_slack import commands as _commands  # noqa: E402
+from vystak_channel_slack import welcome as _welcome  # noqa: E402
+
+_state_cfg = _channel_config.get("state") or {"type": "sqlite", "path": "/data/channel-state.db"}
+_store = _make_store(_Sqlite(**{k: v for k, v in _state_cfg.items() if k in ("name", "path", "type")}) if _state_cfg.get("type") == "sqlite" else __import__("vystak.schema.service", fromlist=["Postgres"]).Postgres(**_state_cfg))
+_store.migrate()
+
+
+def _build_resolver_config() -> _ResolverConfig:
+    cfg = _channel_config
+    return _ResolverConfig(
+        agents=cfg.get("agents", []),
+        group_policy=cfg.get("group_policy", "open"),
+        dm_policy=cfg.get("dm_policy", "open"),
+        allow_from=cfg.get("allow_from", []),
+        allow_bots=cfg.get("allow_bots", False),
+        channel_overrides=cfg.get("channel_overrides", {}),
+        default_agent=cfg.get("default_agent"),
+        ai_fallback=None,
+    )
+
+
+_resolver_cfg: _ResolverConfig = _build_resolver_config()
+
+
 def _load_json(path: Path, default):
     if not path.exists():
         return default
     return json.loads(path.read_text())
 
 
-RULES: list[dict] = _load_json(RULES_PATH, [])
-
-
-def _match_rule(slack_channel: str | None, is_dm: bool) -> str | None:
-    """Return agent name for the first matching rule, or None."""
-    for rule in RULES:
-        match = rule.get("match") or {}
-
-        if match.get("dm") is True and is_dm:
-            return rule.get("agent")
-        if "slack_channel" in match and match["slack_channel"] == slack_channel:
-            return rule.get("agent")
-        if not match:
-            return rule.get("agent")
-    return None
-
-
-def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:
-    if channel is None and user:
-        return f"slack:dm:{user}"
-    if thread_ts:
-        return f"slack:{channel}:{thread_ts}"
-    return f"slack:{channel}:{ts}"
-
-
 BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
+BOT_USER_ID = os.environ.get("SLACK_BOT_USER_ID", "")
 
 slack_app = AsyncApp(token=BOT_TOKEN)
 
@@ -161,6 +180,14 @@ async def _forward_to_agent(agent_name: str, text: str, session_id: str) -> str:
         text,
         metadata={"sessionId": session_id},
     )
+
+
+def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:
+    if channel is None and user:
+        return f"slack:dm:{user}"
+    if thread_ts:
+        return f"slack:{channel}:{thread_ts}"
+    return f"slack:{channel}:{ts}"
 
 
 _FENCE_RE = re.compile(r"```[\\s\\S]*?```|`[^`]*`")
@@ -230,49 +257,338 @@ def _to_slack_mrkdwn(text: str) -> str:
     return out
 
 
+_PLACEHOLDER_TEXT = "_Responding..._"
+
+# Thread behaviour — driven by channel_config.json["thread"]. Mirrors
+# openclaw\\'s channels.slack.thread.* knobs.
+_thread_cfg: dict = _channel_config.get("thread") or {}
+_THREAD_HISTORY_SCOPE = _thread_cfg.get("history_scope", "thread")
+_THREAD_HISTORY_LIMIT = int(_thread_cfg.get("initial_history_limit", 20))
+_THREAD_REQUIRE_EXPLICIT_MENTION = bool(
+    _thread_cfg.get("require_explicit_mention", False)
+)
+
+
+async def _fetch_thread_history(
+    client, channel: str, thread_ts: str, current_ts: str
+) -> str:
+    """Fetch prior messages in a Slack thread via conversations.replies.
+
+    Returns a plain-text transcript ("user U123: hi\\nbot: ...") covering
+    every message in the thread that arrived before ``current_ts``. Bot
+    replies are labeled "bot" so the agent can tell its own past turns
+    apart from user input. Empty string when ``thread.history_scope`` is
+    ``"off"``, ``thread.initial_history_limit`` is 0, the event is the
+    first message in the thread, or the API call fails — the agent
+    still gets the live text either way.
+
+    https://docs.slack.dev/reference/methods/conversations.replies/
+    """
+    if _THREAD_HISTORY_SCOPE != "thread" or _THREAD_HISTORY_LIMIT <= 0:
+        return ""
+    try:
+        resp = await client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=_THREAD_HISTORY_LIMIT,
+        )
+    except Exception as exc:
+        logger.debug(
+            "conversations.replies failed channel=%s thread_ts=%s: %s",
+            channel, thread_ts, exc,
+        )
+        return ""
+
+    msgs = resp.get("messages", []) or []
+    lines: list[str] = []
+    for m in msgs:
+        if (m.get("ts") or "") == current_ts:
+            continue
+        speaker = "bot" if m.get("bot_id") else f"user {m.get('user', '?')}"
+        body = (m.get("text") or "").strip()
+        if body:
+            lines.append(f"{speaker}: {body}")
+    return "\\n".join(lines)
+
+
+async def _post_placeholder(say, *, thread_ts: str | None) -> dict | None:
+    """Post a 'Responding...' placeholder, returning {channel, ts} or None on failure.
+
+    Slack's chat.update needs both channel and ts to edit a message. say()
+    returns the AsyncSlackResponse from chat.postMessage which carries both
+    in its payload. If the post fails for any reason we still want to send
+    the eventual reply, so the caller falls back to a fresh say() in that case.
+    """
+    try:
+        kwargs = {"text": _PLACEHOLDER_TEXT}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        resp = await say(**kwargs)
+        ts = resp.get("ts") if hasattr(resp, "get") else None
+        ch = resp.get("channel") if hasattr(resp, "get") else None
+        if ts and ch:
+            return {"channel": ch, "ts": ts}
+        logger.warning("placeholder post returned no ts/channel; falling back")
+        return None
+    except Exception as exc:
+        logger.warning("placeholder post failed: %s; falling back", exc)
+        return None
+
+
+async def _finalize(client, say, placeholder, *, text: str, thread_ts: str | None) -> None:
+    """Replace the placeholder with the final text, or post fresh if no placeholder."""
+    if placeholder is not None:
+        await client.chat_update(
+            channel=placeholder["channel"],
+            ts=placeholder["ts"],
+            text=text,
+        )
+        return
+    kwargs = {"text": text}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    await say(**kwargs)
+
+
+# Catch-all middleware: log every event Slack delivers so missing
+# subscriptions / scopes are visible in the container logs without
+# needing to enable trace-level Bolt logging.
+@slack_app.middleware
+async def _log_event_type(req, next_):
+    body = req.body or {}
+    payload = body.get("event") or {}
+    logger.info(
+        "slack event=%s subtype=%s channel=%s channel_type=%s user=%s",
+        payload.get("type") or body.get("type") or "?",
+        payload.get("subtype") or "-",
+        payload.get("channel") or "-",
+        payload.get("channel_type") or "-",
+        payload.get("user") or "-",
+    )
+    await next_()
+
+
 @slack_app.event("app_mention")
-async def on_mention(event, say):
+async def on_mention(event, say, client):
     channel = event.get("channel", "")
+    channel_name = event.get("channel_name") or channel
+    user = event.get("user", "")
     is_dm = event.get("channel_type") == "im"
-    agent_name = _match_rule(channel, is_dm)
-    if agent_name is None or agent_name not in ROUTES:
+    is_bot = bool(event.get("bot_id"))
+
+    ev = _Event(
+        team=event.get("team", ""),
+        channel=channel,
+        user=user,
+        text=event.get("text", ""),
+        is_dm=is_dm,
+        is_bot=is_bot,
+        channel_name=channel_name,
+    )
+    agent_name = _resolve(ev, _resolver_cfg, _store)
+    logger.info(
+        "mention resolve channel=%s user=%s text=%r -> agent=%s known_routes=%s",
+        channel, user, ev.text[:80], agent_name, list(ROUTES.keys()),
+    )
+    if agent_name is None:
+        logger.warning(
+            "mention unrouted: no binding for channel=%s, no default_agent",
+            channel,
+        )
+        await say(
+            text=(
+                "No agent is bound to this channel yet. Run "
+                "`/vystak route <agent>` to pick one. Available agents: "
+                + (", ".join(f"`{a}`" for a in _resolver_cfg.agents) or "_none declared_")
+            ),
+            thread_ts=event.get("thread_ts") or event.get("ts"),
+        )
+        return
+    if agent_name not in ROUTES:
+        logger.warning(
+            "mention misrouted: agent=%s declared but not in transport routes %s",
+            agent_name, list(ROUTES.keys()),
+        )
+        await say(
+            text=(
+                f"Agent `{agent_name}` is bound to this channel but isn't reachable "
+                f"on the transport. Known routes: "
+                + (", ".join(f"`{a}`" for a in ROUTES) or "_none_")
+            ),
+            thread_ts=event.get("thread_ts") or event.get("ts"),
+        )
         return
 
     session_id = _session_id(
         channel,
         event.get("thread_ts"),
         event.get("ts"),
-        event.get("user"),
+        user,
     )
     text = event.get("text", "")
-    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
-    await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
+    reply_thread_ts = event.get("thread_ts") or event.get("ts")
+    placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
+    # When the mention lands in an existing thread, fetch prior turns so the
+    # agent has context. Skipped when this is the thread root (thread_ts is
+    # None or equals the live message ts) or when the call fails.
+    incoming_thread_ts = event.get("thread_ts")
+    if incoming_thread_ts and incoming_thread_ts != event.get("ts"):
+        history = await _fetch_thread_history(
+            client, channel, incoming_thread_ts, event.get("ts", ""),
+        )
+        if history:
+            text = (
+                f"<thread_history>\\n{history}\\n</thread_history>\\n\\n{text}"
+            )
+            logger.info(
+                "mention thread_history thread_ts=%s lines=%d",
+                incoming_thread_ts, history.count("\\n") + 1,
+            )
+    logger.info("mention forward agent=%s session=%s", agent_name, session_id)
+    try:
+        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+    except Exception as exc:
+        logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
+        await _finalize(
+            client, say, placeholder,
+            text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+            thread_ts=reply_thread_ts,
+        )
+        return
+    logger.info("mention reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
+    reply = _to_slack_mrkdwn(raw_reply)
+    try:
+        await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
+        logger.info("mention posted ok")
+    except Exception as exc:
+        logger.exception("mention post failed: %s", exc)
 
 
 @slack_app.event("message")
-async def on_message(event, say):
+async def on_message(event, say, client):
     if event.get("bot_id") or event.get("subtype"):
+        logger.debug(
+            "message ignored: bot_id=%s subtype=%s",
+            event.get("bot_id"), event.get("subtype"),
+        )
         return
 
     channel = event.get("channel", "")
+    channel_name = event.get("channel_name") or channel
+    user = event.get("user", "")
     is_dm = event.get("channel_type") == "im"
 
     if not is_dm:
+        logger.debug("message ignored: not a DM (channel_type=%s)", event.get("channel_type"))
         return  # mentions are already handled by on_mention
 
-    agent_name = _match_rule(None, is_dm=True)
-    if agent_name is None or agent_name not in ROUTES:
+    ev = _Event(
+        team=event.get("team", ""),
+        channel=channel,
+        user=user,
+        text=event.get("text", ""),
+        is_dm=True,
+        is_bot=False,
+        channel_name=channel_name,
+    )
+    agent_name = _resolve(ev, _resolver_cfg, _store)
+    logger.info(
+        "dm resolve user=%s text=%r -> agent=%s known_routes=%s",
+        user, ev.text[:80], agent_name, list(ROUTES.keys()),
+    )
+    if agent_name is None:
+        logger.warning(
+            "dm unrouted: no user pref, no default_agent (user=%s)", user,
+        )
+        await say(
+            text=(
+                "No default agent is configured for DMs. Either an admin "
+                "needs to set `default_agent=<agent>` on the Channel "
+                "declaration, or you can pick one yourself with "
+                "`/vystak prefer <agent>`. Available agents: "
+                + (", ".join(f"`{a}`" for a in _resolver_cfg.agents) or "_none declared_")
+            ),
+        )
+        return
+    if agent_name not in ROUTES:
+        logger.warning(
+            "dm misrouted: agent=%s declared but not in transport routes %s",
+            agent_name, list(ROUTES.keys()),
+        )
+        await say(
+            text=(
+                f"Agent `{agent_name}` is set as your DM target but isn't reachable "
+                f"on the transport. Known routes: "
+                + (", ".join(f"`{a}`" for a in ROUTES) or "_none_")
+            ),
+        )
         return
 
     session_id = _session_id(
         None,
         event.get("thread_ts"),
         event.get("ts"),
-        event.get("user"),
+        user,
     )
     text = event.get("text", "")
-    reply = _to_slack_mrkdwn(await _forward_to_agent(agent_name, text, session_id))
-    await say(text=reply)
+    reply_thread_ts = event.get("thread_ts") or event.get("ts")
+    placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
+    logger.info("dm forward agent=%s session=%s", agent_name, session_id)
+    try:
+        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+    except Exception as exc:
+        logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
+        await _finalize(
+            client, say, placeholder,
+            text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+            thread_ts=reply_thread_ts,
+        )
+        return
+    logger.info("dm reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
+    reply = _to_slack_mrkdwn(raw_reply)
+    try:
+        await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
+        logger.info("dm posted ok")
+    except Exception as exc:
+        logger.exception("dm post failed: %s", exc)
+
+
+@slack_app.event("member_joined_channel")
+async def on_member_joined(event, client):
+    await _welcome.on_member_joined(
+        bot_user_id=BOT_USER_ID,
+        joined_user_id=event.get("user", ""),
+        inviter_id=event.get("inviter"),
+        team=event.get("team", ""),
+        channel=event.get("channel", ""),
+        agents=_resolver_cfg.agents,
+        single_agent_auto_bind=len(_resolver_cfg.agents) == 1,
+        welcome_template=_channel_config.get("welcome_message") or "Hello! I can route your messages to: {agent_mentions}",
+        slack=client,
+        store=_store,
+    )
+
+
+@slack_app.command("/vystak")
+async def on_slash_command(ack, body, client):
+    await ack()
+    team = body.get("team_id", "")
+    channel = body.get("channel_id", "")
+    user = body.get("user_id", "")
+    text = body.get("text", "")
+    cmd = body.get("command", "/vystak")
+    try:
+        result = _commands.handle_command(
+            cmd=cmd,
+            args=text,
+            team=team,
+            channel=channel,
+            user=user,
+            agents=_resolver_cfg.agents,
+            route_authority=_channel_config.get("route_authority", "inviter"),
+            store=_store,
+        )
+        await client.chat_postEphemeral(channel=channel, user=user, text=result.message)
+    except _commands.NotAuthorized as exc:
+        await client.chat_postEphemeral(channel=channel, user=user, text=str(exc))
 
 
 health_app = FastAPI(title="vystak-channel-slack")
@@ -282,8 +598,7 @@ health_app = FastAPI(title="vystak-channel-slack")
 async def health():
     return {
         "status": "ok",
-        "agents": list(ROUTES.keys()),
-        "rules": len(RULES),
+        "agents": _resolver_cfg.agents,
         "socket_mode": bool(BOT_TOKEN and APP_TOKEN),
     }
 
@@ -312,6 +627,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /data
 COPY . .
 CMD ["python", "server.py"]
 """
@@ -331,4 +647,5 @@ pydantic>=2.0
 pyyaml>=6.0
 aiosqlite>=0.20
 nats-py>=2.6
+psycopg[binary]>=3.0
 """

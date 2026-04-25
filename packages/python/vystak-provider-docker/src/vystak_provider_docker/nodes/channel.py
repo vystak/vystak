@@ -103,7 +103,18 @@ class DockerChannelNode(Provisionable):
             import vystak_transport_http
             import vystak_transport_nats
 
-            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
+            _bundle_mods = [vystak, vystak_transport_http, vystak_transport_nats]
+
+            # For Slack channels also bundle vystak_channel_slack so the runtime
+            # can import store, resolver, commands, and welcome at startup.
+            from vystak.schema.common import ChannelType
+
+            if self._channel.type == ChannelType.SLACK:
+                import vystak_channel_slack
+
+                _bundle_mods.append(vystak_channel_slack)
+
+            for _mod in _bundle_mods:
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():
@@ -143,6 +154,18 @@ class DockerChannelNode(Provisionable):
                     "bind": "/shared",
                     "mode": "ro",
                 }
+
+            # Slack channels get a named state volume at /data so that the
+            # SQLite runtime bindings database (channel-state.db) persists
+            # across container restarts. The volume is created lazily on
+            # first provision if it doesn't already exist.
+            if self._channel.type == ChannelType.SLACK:
+                state_volume_name = f"vystak-{self._channel.name}-state"
+                try:
+                    self._client.volumes.get(state_volume_name)
+                except docker.errors.NotFound:
+                    self._client.volumes.create(name=state_volume_name)
+                volumes[state_volume_name] = {"bind": "/data", "mode": "rw"}
 
             self._client.containers.run(
                 image_tag,

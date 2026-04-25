@@ -16,6 +16,7 @@ from vystak.providers.base import (
 from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.common import ChannelType
 
 
 class _LateBoundUnsealNode(Provisionable):
@@ -1012,6 +1013,16 @@ class DockerProvider(PlatformProvider):
             channel_extra_env: dict[str, str] = {
                 "VYSTAK_ROUTES_JSON": json.dumps(resolved_routes, separators=(",", ":")),
             }
+            # Default-path secrets delivery: channel nodes read os.environ
+            # at provision time, but `vystak apply --env-file` only loads
+            # values into self._env_values, not the process env. Inject
+            # declared secrets directly so the channel container sees them
+            # at start (Vault path bypasses this and uses /shared/secrets.env).
+            if self._vault is None:
+                env_vals = self._env_values or {}
+                for secret in channel.secrets:
+                    if secret.name in env_vals:
+                        channel_extra_env[secret.name] = env_vals[secret.name]
             transport = channel.platform.transport if channel.platform else None
             if transport and transport.type == "nats":
                 graph.add(NatsServerNode(self._client))
@@ -1075,11 +1086,19 @@ class DockerProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def destroy_channel(self, channel: Channel) -> None:
+    def destroy_channel(
+        self, channel: Channel, *, delete_channel_data: bool = False
+    ) -> None:
         container = self._get_channel_container(channel.name)
         if container is not None:
             container.stop()
             container.remove()
+        if delete_channel_data and channel.type == ChannelType.SLACK:
+            import contextlib
+
+            state_volume = f"vystak-{channel.name}-state"
+            with contextlib.suppress(docker.errors.NotFound):
+                self._client.volumes.get(state_volume).remove()
 
     def channel_status(self, channel: Channel) -> AgentStatus:
         container = self._get_channel_container(channel.name)

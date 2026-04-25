@@ -24,6 +24,7 @@ class AgentHashTree:
     memory: str
     services: str
     transport: str
+    subagents: str
     # v1 Secret Manager additions
     workspace_identity: str
     grants: str
@@ -107,6 +108,18 @@ def _hash_transport(agent: Agent) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def _hash_subagents(agent: Agent) -> str:
+    """Contribute declared subagent identities to the agent hash.
+
+    Order-insensitive (sorted) — declaring [weather, time] and [time, weather]
+    produces the same hash. Uses canonical_name so namespace changes propagate.
+    """
+    if not agent.subagents:
+        return _hash_str(None)
+    names = sorted(peer.canonical_name for peer in agent.subagents)
+    return hashlib.sha256("|".join(names).encode()).hexdigest()
+
+
 def hash_agent(agent: Agent) -> AgentHashTree:
     """Compute the full hash tree for an agent definition."""
     brain = hash_model(agent.model)
@@ -119,6 +132,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
     memory = _hash_optional(agent.memory)
     services = _hash_list(agent.services)
     transport = _hash_transport(agent)
+    subagents = _hash_subagents(agent)
 
     workspace_identity = (
         hash_workspace(agent.workspace).identity
@@ -139,6 +153,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
             memory,
             services,
             transport,
+            subagents,
             workspace_identity,
             grants,
         ]
@@ -156,6 +171,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         memory=memory,
         services=services,
         transport=transport,
+        subagents=subagents,
         workspace_identity=workspace_identity,
         grants=grants,
         root=root,
@@ -165,7 +181,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
 def hash_channel(channel: Channel) -> ChannelHashTree:
     """Compute the full hash tree for a channel definition."""
     config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()
-    routes = _hash_list(channel.routes)
+    routes = _hash_list(channel.agents)
     mode = channel.runtime_mode.value if channel.runtime_mode else "default"
     runtime = _hash_str(f"{channel.type.value}|{mode}")
     secrets = _hash_list(channel.secrets)

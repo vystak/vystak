@@ -75,6 +75,42 @@ def _generate_tool_stubs(stub_tool_names: list[str]) -> str:
     return "\n\n".join(tools)
 
 
+def _docstring_from_instructions(peer: Agent) -> str:
+    """Derive a tool docstring from the peer agent's instructions field."""
+    instructions = peer.instructions or ""
+    first_para = instructions.split("\n\n", 1)[0].strip()
+    if not first_para:
+        return f"Delegate to the {peer.name} agent."
+    if len(first_para) > 200:
+        return first_para[:200].rstrip() + "…"
+    return first_para
+
+
+def _generate_subagent_tools(agent: Agent) -> str:
+    """Emit one async @tool wrapper per declared subagent."""
+    if not agent.subagents:
+        return ""
+    blocks = []
+    for peer in agent.subagents:
+        tool_name = f"ask_{peer.name.replace('-', '_')}"
+        docstring = _docstring_from_instructions(peer).replace('"""', '\\"\\"\\"')
+        block = (
+            "@tool\n"
+            f"async def {tool_name}(question: str, config: RunnableConfig) -> str:\n"
+            f'    """{docstring}"""\n'
+            f"    session_id = (config.get('configurable') or {{}}).get('thread_id')\n"
+            "    metadata = {'sessionId': session_id} if session_id else {}\n"
+            f"    return await ask_agent({peer.name!r}, question, metadata=metadata)"
+        )
+        blocks.append(block)
+    return "\n\n\n".join(blocks)
+
+
+def _subagent_tool_names(agent: Agent) -> list[str]:
+    """Tool function names that the subagent codegen emits."""
+    return [f"ask_{p.name.replace('-', '_')}" for p in agent.subagents]
+
+
 def _collect_system_prompt(agent: Agent) -> str:
     """Collect system prompt from agent instructions, skill prompts, and memory instructions."""
     prompts = []
@@ -196,7 +232,18 @@ def generate_agent_py(
         stub_tool_names = []
 
     tool_stubs = _generate_tool_stubs(stub_tool_names)
-    all_tool_names = found_tool_names + stub_tool_names
+    subagent_tool_code = _generate_subagent_tools(agent)
+    subagent_tool_names = _subagent_tool_names(agent)
+
+    collisions = set(subagent_tool_names) & set(found_tool_names + stub_tool_names)
+    if collisions:
+        raise ValueError(
+            f"Tool name conflict: {sorted(collisions)} are auto-generated "
+            f"for subagents but also defined as user tools. "
+            f"Remove the user tool or rename it."
+        )
+
+    all_tool_names = found_tool_names + stub_tool_names + subagent_tool_names
     tools_list = ", ".join(all_tool_names) if all_tool_names else ""
 
     # When a workspace is declared, the built-in tool wrappers in
@@ -216,8 +263,11 @@ def generate_agent_py(
     lines.append(f"{model_import}")
 
     # Import tool decorator if needed (stub tools or memory tools)
-    if stub_tool_names or session_store:
+    if stub_tool_names or session_store or subagent_tool_code:
         lines.append("from langchain_core.tools import tool")
+
+    if subagent_tool_code:
+        lines.append("from langchain_core.runnables import RunnableConfig")
 
     if session_store and session_store.engine == "postgres":
         lines.append("import os")
@@ -231,6 +281,9 @@ def generate_agent_py(
         lines.append("from langgraph.checkpoint.memory import MemorySaver")
 
     lines.append("from langgraph.prebuilt import create_react_agent")
+    if subagent_tool_code:
+        lines.append("")
+        lines.append("from vystak.transport import ask_agent")
     if has_mcp:
         lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
         lines.append(_generate_mcp_config(agent))
@@ -271,6 +324,13 @@ def generate_agent_py(
         lines.append("")
         lines.append("# Tool stubs (no implementation found)")
         lines.append(tool_stubs)
+
+    if subagent_tool_code:
+        lines.append("")
+        lines.append("")
+        lines.append("# Auto-generated subagent delegation tools")
+        lines.append(subagent_tool_code)
+        lines.append("")
 
     if has_workspace:
         lines.append("")

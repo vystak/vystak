@@ -1,26 +1,29 @@
-"""Docker + Slack channel example.
+"""Docker + Slack channel example — self-serve routing.
 
-One agent (`weather-agent`) plus one `ChannelType.SLACK` channel that forwards
-Slack events to the agent via A2A.
+One agent (`weather-agent`) plus one `ChannelType.SLACK` channel. With a
+single agent declared, the channel auto-binds on bot invite — no slash
+commands needed for the trivial case. With multiple agents, users pick
+one per channel via `/vystak route <agent>`.
 
 Prereqs:
 - Slack app with Socket Mode enabled
 - Bot token (`SLACK_BOT_TOKEN`, starts with `xoxb-`)
 - App-level token (`SLACK_APP_TOKEN`, starts with `xapp-`)
-- Replace the placeholder channel IDs below with your real Slack channel IDs (Cxxxx)
+- The bot's Slack app needs:
+    * `app_mentions:read`, `chat:write`, `commands` scopes
+    * a `/vystak` slash command pointing at the bot
+    * Event subscriptions: `app_mention`, `member_joined_channel`, `message.channels`, `message.im`
 
 Run:
 
-    export ANTHROPIC_API_KEY=sk-ant-...
-    export SLACK_BOT_TOKEN=xoxb-...
-    export SLACK_APP_TOKEN=xapp-...
-
+    cp .env.example .env  # then edit
     cd examples/docker-slack
     vystak apply
 
-Mention the bot in your Slack workspace:
+Then in Slack, invite the bot to a channel — it'll post a welcome message
+and (since this example has only one agent) auto-bind the channel.
 
-    @weather-agent hi
+    @weather-bot hi
 """
 
 import vystak as ast
@@ -49,14 +52,8 @@ weather_agent = ast.Agent(
     platform=platform,
     skills=[ast.Skill(name="weather", tools=[])],
     # Secrets must be declared on the agent for the Docker provider to
-    # wire them into the container env. The model's api_keys field is
-    # informational — it tells the adapter which env var the LLM client
-    # will read, but the provider's secret-delivery loop iterates
-    # agent.secrets, not model.api_keys.
-    #
-    # Add ANTHROPIC_API_URL here if you're routing to a non-default
-    # endpoint (e.g. MiniMax's Anthropic-compatible API at
-    # https://api.minimax.io/anthropic).
+    # wire them into the container env. Add ANTHROPIC_API_URL here if
+    # you're routing to a non-default Anthropic-compatible endpoint.
     secrets=[
         ast.Secret(name="ANTHROPIC_API_KEY"),
     ],
@@ -70,16 +67,17 @@ slack = ast.Channel(
         ast.Secret(name="SLACK_BOT_TOKEN"),
         ast.Secret(name="SLACK_APP_TOKEN"),
     ],
-    routes=[
-        # Replace "C0000000000" with your real Slack channel ID
-        ast.RouteRule(
-            match={"slack_channel": "C0000000000"},
-            agent="weather-agent",
-        ),
-        # Catch DMs to the bot
-        ast.RouteRule(
-            match={"dm": True},
-            agent="weather-agent",
-        ),
-    ],
+    # Routable agents. With one entry, the channel auto-binds on invite.
+    # With multiple, users run `/vystak route <agent>` per channel.
+    agents=[weather_agent],
+    # Optional: pin specific Slack channel IDs at deploy time. Useful when
+    # config-as-code matters (audit, reproducibility) more than self-serve UX.
+    # channel_overrides={
+    #     "C12345678": ast.SlackChannelOverride(
+    #         agent=weather_agent,
+    #         system_prompt="In #weather, always cite a source.",
+    #     ),
+    # },
+    # state defaults to SQLite at /data/channel-state.db (provider mounts
+    # the named volume vystak-slack-main-state automatically).
 )

@@ -58,6 +58,16 @@ from vystak_cli.provider_factory import get_provider
         "during iteration when only the agent container needs recycling."
     ),
 )
+@click.option(
+    "--delete-channel-data",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also remove the vystak-<channel>-state volume on Slack channel "
+        "containers, deleting all runtime channel bindings and user "
+        "preferences. Unrecoverable."
+    ),
+)
 def destroy(
     files,
     file_path,
@@ -68,6 +78,7 @@ def destroy(
     keep_sidecars,
     delete_workspace_data,
     keep_workspace,
+    delete_channel_data,
 ):
     """Stop and remove deployed agents and channels."""
     if agent_name and not files and not file_path:
@@ -111,7 +122,9 @@ def destroy(
         click.echo(f"Destroying channel: {channel.name}")
         provider = get_provider(channel)
         try:
-            provider.destroy_channel(channel)
+            provider.destroy_channel(
+                channel, delete_channel_data=delete_channel_data
+            )
             click.echo("  OK")
         except NotImplementedError as e:
             click.echo(f"  Skipped: {e}")

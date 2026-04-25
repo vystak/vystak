@@ -1,0 +1,38 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+    api_keys: {name: ANTHROPIC_API_KEY}
+
+agents:
+  - name: weather-agent
+    instructions: You are a weather specialist. Answer concisely.
+    model: sonnet
+    platform: local
+    skills:
+      - {name: weather, tools: []}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [weather-agent]
+    # Optional deploy-time pin + behavior overrides:
+    # channel_overrides:
+    #   C12345678:
+    #     agent: weather-agent
+    #     system_prompt: "In #weather, always cite a source."
+    # state defaults to {type: sqlite, path: /data/channel-state.db}.

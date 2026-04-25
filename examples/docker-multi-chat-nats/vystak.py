@@ -1,13 +1,18 @@
 """Docker multi-agent + chat channel example (NATS transport).
 
 Mirror of examples/docker-multi-chat, but with Transport(type="nats") declared
-on the platform. Same two agents (weather, time) + same chat channel — A2A
-traffic flows over NATS JetStream queue-group subscriptions instead of HTTP.
-Point any OpenAI-compatible client at http://localhost:18080 and switch agents
-via the `model` field:
+on the platform. Same three agents (weather, time, coordinator) + same chat
+channel — A2A traffic flows over NATS JetStream queue-group subscriptions
+instead of HTTP. Point any OpenAI-compatible client at http://localhost:18080
+and switch agents via the `model` field:
 
-    model="vystak/weather-agent"  -> routed to the weather agent (over NATS)
-    model="vystak/time-agent"     -> routed to the time agent (over NATS)
+    model="vystak/weather-agent"   -> routed to the weather agent (over NATS)
+    model="vystak/time-agent"      -> routed to the time agent (over NATS)
+    model="vystak/assistant-agent" -> routed to the coordinator (over NATS)
+
+The coordinator declares `subagents=[weather_agent, time_agent]` so its
+generated server gets `ask_weather_agent` and `ask_time_agent` tools that
+delegate via Vystak's transport — no manual ask_*_agent.py files needed.
 
 Reads from env (with defaults that target the MiniMax Anthropic-compat
 endpoint):
@@ -74,9 +79,8 @@ time_agent = ast.Agent(
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 
-# Coordinator agent. Calls time-agent and weather-agent via A2A (over NATS).
-# Its tools use vystak.transport.ask_agent() — a 3-line replacement for the
-# ~50 lines of httpx + JSON-RPC boilerplate the pre-transport examples used.
+# Coordinator declares its peers via subagents — the langchain adapter
+# auto-generates ask_weather_agent and ask_time_agent tools.
 assistant_agent = ast.Agent(
     name="assistant-agent",
     instructions=(
@@ -87,12 +91,7 @@ assistant_agent = ast.Agent(
     ),
     model=sonnet,
     platform=platform,
-    skills=[
-        ast.Skill(
-            name="coordinator",
-            tools=["ask_time_agent", "ask_weather_agent"],
-        ),
-    ],
+    subagents=[weather_agent, time_agent],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 
@@ -101,9 +100,5 @@ chat = ast.Channel(
     type=ast.ChannelType.CHAT,
     platform=platform,
     config={"port": 18080},
-    routes=[
-        ast.RouteRule(match={}, agent="weather-agent"),
-        ast.RouteRule(match={}, agent="time-agent"),
-        ast.RouteRule(match={}, agent="assistant-agent"),
-    ],
+    agents=[weather_agent, time_agent, assistant_agent],
 )
