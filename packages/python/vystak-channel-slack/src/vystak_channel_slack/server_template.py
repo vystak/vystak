@@ -416,6 +416,22 @@ async def on_mention(event, say, client):
     text = event.get("text", "")
     reply_thread_ts = event.get("thread_ts") or event.get("ts")
     placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
+    # When the mention lands in an existing thread, fetch prior turns so the
+    # agent has context. Skipped when this is the thread root (thread_ts is
+    # None or equals the live message ts) or when the call fails.
+    incoming_thread_ts = event.get("thread_ts")
+    if incoming_thread_ts and incoming_thread_ts != event.get("ts"):
+        history = await _fetch_thread_history(
+            client, channel, incoming_thread_ts, event.get("ts", ""),
+        )
+        if history:
+            text = (
+                f"<thread_history>\\n{history}\\n</thread_history>\\n\\n{text}"
+            )
+            logger.info(
+                "mention thread_history thread_ts=%s lines=%d",
+                incoming_thread_ts, history.count("\\n") + 1,
+            )
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
