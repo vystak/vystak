@@ -24,7 +24,7 @@ def load_agent(path: str | Path) -> Agent:
     else:
         raise ValueError(f"Unsupported file format: {suffix}. Use .yaml, .yml, or .json")
 
-    if isinstance(data, dict) and "subagents" in data:
+    if isinstance(data, dict) and data.get("subagents"):
         raise ValueError(
             "subagents requires the multi-document YAML layout "
             "(top-level providers/platforms/models/agents/channels). "
