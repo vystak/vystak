@@ -57,5 +57,21 @@ class Agent(NamedModel):
             self.memory.name = "memory"
         return self
 
+    @model_validator(mode="after")
+    def _validate_subagents(self) -> Self:
+        names = [s.name for s in self.subagents]
+        if self.name in names:
+            raise ValueError(
+                f"Agent '{self.name}' cannot list itself in subagents."
+            )
+        seen: set[str] = set()
+        for n in names:
+            if n in seen:
+                raise ValueError(
+                    f"Agent '{self.name}' has duplicate subagent name '{n}'."
+                )
+            seen.add(n)
+        return self
+
 
 Agent.model_rebuild()
