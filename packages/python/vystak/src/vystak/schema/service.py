@@ -34,6 +34,7 @@ class Sqlite(Service):
 
     type: Literal["sqlite"] = "sqlite"
     engine: str = "sqlite"
+    path: str | None = None
 
 
 class Redis(Service):

@@ -1,37 +1,104 @@
 """Channel model — top-level deployable I/O adapter for agent communication."""
 
-from pydantic import BaseModel
+from __future__ import annotations
 
+from enum import StrEnum
+from typing import Self
+
+from pydantic import model_validator
+
+from vystak.schema.agent import Agent
 from vystak.schema.common import ChannelType, NamedModel, RuntimeMode
 from vystak.schema.platform import Platform
 from vystak.schema.secret import Secret
+from vystak.schema.service import Service, Sqlite
+
+# Re-export ChannelType so callers can do `from vystak.schema.channel import ChannelType`
+__all__ = [
+    "Channel",
+    "ChannelType",
+    "Policy",
+    "SlackChannelOverride",
+]
 
 
-class RouteRule(BaseModel):
-    """Deploy-time routing policy: match channel-native criteria, dispatch to agent by name.
+class Policy(StrEnum):
+    """Access policy for a Slack channel gate."""
 
-    `match` is opaque at the core level — each channel plugin defines its own shape
-    (e.g. {"slack_channel": "C0123"} or {"phone_number": "+15551234"}). The agent
-    name is resolved via DNS at runtime using Agent.canonical_name.
-    """
+    OPEN = "open"
+    ALLOWLIST = "allowlist"
+    DISABLED = "disabled"
 
-    match: dict = {}
-    agent: str
+
+class SlackChannelOverride(NamedModel):
+    """Per Slack-channel configuration override pinned to a specific agent."""
+
+    name: str = ""
+    agent: Agent | None = None
+    require_mention: bool = False
+    users: list[str] = []
+    system_prompt: str | None = None
+    tools: list[str] | None = None
+    skills: list[str] | None = None
 
 
 class Channel(NamedModel):
     """A top-level channel deployable — sibling of Agent.
 
-    Channels own their own platform, runtime, and routing policy. Agents do not
-    declare channels; channels declare which agents they route to via `routes`.
+    Channels own their own platform, runtime, and routing policy.  Agents do
+    not declare channels; channels declare which agents they route to.
+
+    The legacy ``routes`` field (deploy-time RouteRule list) has been removed.
+    Use ``agents`` + ``channel_overrides`` for self-serve routing instead.
     """
 
     type: ChannelType
     platform: Platform
     config: dict = {}
     runtime_mode: RuntimeMode | None = None
-    routes: list[RouteRule] = []
     secrets: list[Secret] = []
+
+    # Self-serve routing fields
+    agents: list[Agent] = []
+    group_policy: Policy = Policy.OPEN
+    dm_policy: Policy = Policy.OPEN
+    allow_from: list[str] = []
+    allow_bots: bool = False
+    dangerously_allow_name_matching: bool = False
+    reply_to_mode: str = "first"
+    thread_require_explicit_mention: bool = False
+    channel_overrides: dict[str, SlackChannelOverride] = {}
+    state: Service | None = None
+    route_authority: str = "inviter"
+    default_agent: Agent | None = None
+    ai_fallback: dict | None = None
+    welcome_on_invite: bool = True
+    welcome_message: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_routes(cls, values: dict) -> dict:
+        if isinstance(values, dict) and "routes" in values:
+            raise ValueError(
+                "routes is deprecated — use agents + channel_overrides for self-serve routing. "
+                "See docs/superpowers/specs/2026-04-24-slack-self-serve-routing-design.md"
+            )
+        return values
+
+    @model_validator(mode="after")
+    def _apply_state_default(self) -> Self:
+        if self.type is ChannelType.SLACK and self.state is None:
+            self.state = Sqlite(
+                name=f"{self.name}-state",
+                path="/data/channel-state.db",
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_default_agent(self) -> Self:
+        if self.default_agent is not None and self.default_agent not in self.agents:
+            raise ValueError("default_agent must be in agents list")
+        return self
 
     @property
     def canonical_name(self) -> str:

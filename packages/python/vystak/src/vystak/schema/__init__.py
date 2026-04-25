@@ -1,7 +1,7 @@
 """Vystak schema models — all seven concepts plus supporting types."""
 
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.channel import Channel, Policy, SlackChannelOverride
 from vystak.schema.common import (
     AgentProtocol,
     ChannelType,
@@ -81,7 +81,8 @@ __all__ = [
     "Queue",
     "Redis",
     "Resource",
-    "RouteRule",
+    "Policy",
+    "SlackChannelOverride",
     "RuntimeMode",
     "Secret",
     "Service",

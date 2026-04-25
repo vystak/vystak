@@ -1,6 +1,6 @@
 from vystak.hash.tree import hash_agent, hash_channel
 from vystak.schema.agent import Agent
-from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.channel import Channel
 from vystak.schema.common import ChannelType, McpTransport, RuntimeMode, WorkspaceType
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
@@ -135,18 +135,20 @@ class TestChannelHashTree:
         tree2 = hash_channel(ch)
         assert tree1.root == tree2.root
 
-    def test_routes_change_detected(self):
+    def test_agents_change_detected(self):
+        agent_a = make_agent(name="agent-a")
+        agent_b = make_agent(name="agent-b")
         ch1 = Channel(
             name="slack",
             type=ChannelType.SLACK,
             platform=make_platform(),
-            routes=[RouteRule(match={"slack_channel": "C1"}, agent="a")],
+            agents=[agent_a],
         )
         ch2 = Channel(
             name="slack",
             type=ChannelType.SLACK,
             platform=make_platform(),
-            routes=[RouteRule(match={"slack_channel": "C2"}, agent="b")],
+            agents=[agent_b],
         )
         tree1 = hash_channel(ch1)
         tree2 = hash_channel(ch2)

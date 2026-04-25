@@ -165,7 +165,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
 def hash_channel(channel: Channel) -> ChannelHashTree:
     """Compute the full hash tree for a channel definition."""
     config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()
-    routes = _hash_list(channel.routes)
+    routes = _hash_list(channel.agents)
     mode = channel.runtime_mode.value if channel.runtime_mode else "default"
     runtime = _hash_str(f"{channel.type.value}|{mode}")
     secrets = _hash_list(channel.secrets)
