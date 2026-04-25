@@ -12,7 +12,7 @@ Slack channel with **self-serve runtime routing**. Deploys:
 
 1. Create a Slack app (https://api.slack.com/apps) with:
    - **Socket Mode** enabled
-   - **Bot scopes**: `app_mentions:read`, `chat:write`, `commands`, `im:history`, `im:read`, `im:write`, `channels:read`, `groups:read`
+   - **Bot scopes**: `app_mentions:read`, `chat:write`, `commands`, `im:history`, `im:read`, `im:write`, `channels:read`, `groups:read`, `reactions:write`
    - **Event subscriptions** (Socket Mode): `app_mention`, `message.channels`, `message.im`, `member_joined_channel`
    - **Slash command** `/vystak` with usage hint `route <agent> | prefer <agent> | status | unroute | unprefer`
    - A bot token (`xoxb-...`) and an app-level token (`xapp-...`)

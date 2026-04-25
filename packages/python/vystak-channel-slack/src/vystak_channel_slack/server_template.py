@@ -258,6 +258,25 @@ def _to_slack_mrkdwn(text: str) -> str:
 
 
 _PLACEHOLDER_TEXT = "_Responding..._"
+_REACTION_THINKING = "hourglass_flowing_sand"
+_REACTION_DONE = "white_check_mark"
+_REACTION_ERROR = "warning"
+
+
+async def _react(client, channel: str, ts: str, name: str) -> None:
+    """Best-effort reactions.add — never raises into the main flow."""
+    try:
+        await client.reactions_add(channel=channel, timestamp=ts, name=name)
+    except Exception as exc:
+        logger.debug("reactions.add %s failed: %s", name, exc)
+
+
+async def _unreact(client, channel: str, ts: str, name: str) -> None:
+    """Best-effort reactions.remove — never raises into the main flow."""
+    try:
+        await client.reactions_remove(channel=channel, timestamp=ts, name=name)
+    except Exception as exc:
+        logger.debug("reactions.remove %s failed: %s", name, exc)
 
 
 async def _post_placeholder(say, *, thread_ts: str | None) -> dict | None:
@@ -376,12 +395,16 @@ async def on_mention(event, say, client):
     )
     text = event.get("text", "")
     reply_thread_ts = event.get("thread_ts") or event.get("ts")
+    origin_ts = event.get("ts")
+    await _react(client, channel, origin_ts, _REACTION_THINKING)
     placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_ERROR)
         await _finalize(
             client, say, placeholder,
             text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
@@ -392,9 +415,13 @@ async def on_mention(event, say, client):
     reply = _to_slack_mrkdwn(raw_reply)
     try:
         await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_DONE)
         logger.info("mention posted ok")
     except Exception as exc:
         logger.exception("mention post failed: %s", exc)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_ERROR)
 
 
 @slack_app.event("message")
@@ -464,12 +491,16 @@ async def on_message(event, say, client):
         user,
     )
     text = event.get("text", "")
+    origin_ts = event.get("ts")
+    await _react(client, channel, origin_ts, _REACTION_THINKING)
     placeholder = await _post_placeholder(say, thread_ts=None)
     logger.info("dm forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_ERROR)
         await _finalize(
             client, say, placeholder,
             text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
@@ -480,9 +511,13 @@ async def on_message(event, say, client):
     reply = _to_slack_mrkdwn(raw_reply)
     try:
         await _finalize(client, say, placeholder, text=reply, thread_ts=None)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_DONE)
         logger.info("dm posted ok")
     except Exception as exc:
         logger.exception("dm post failed: %s", exc)
+        await _unreact(client, channel, origin_ts, _REACTION_THINKING)
+        await _react(client, channel, origin_ts, _REACTION_ERROR)
 
 
 @slack_app.event("member_joined_channel")
