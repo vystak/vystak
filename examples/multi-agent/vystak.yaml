@@ -1,0 +1,50 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist agent. When asked about weather,
+      use the get_weather tool to fetch real data. Return concise,
+      factual weather reports. You serve other agents via A2A protocol.
+    model: minimax
+    platform: local
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist agent. When asked about time,
+      use the get_time tool. Return concise, factual responses.
+    model: minimax
+    platform: local
+    skills:
+      - {name: time, tools: [get_time]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+
+  - name: assistant-agent
+    instructions: |
+      You are a helpful general-purpose assistant.
+      When the user asks about weather, use ask_weather_agent.
+      When the user asks about time, use ask_time_agent.
+      If the user asks about BOTH weather and time, call BOTH tools at the same time.
+    model: minimax
+    platform: local
+    subagents: [weather-agent, time-agent]
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
