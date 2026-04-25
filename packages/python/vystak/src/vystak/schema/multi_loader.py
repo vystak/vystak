@@ -25,6 +25,48 @@ def _validate_vault_provider_pairing(vault: Vault) -> None:
         )
 
 
+def _lookup_agent(by_name: dict, name: str, field: str, ctx: str) -> object:
+    if name not in by_name:
+        raise KeyError(
+            f"Unknown agent '{name}' in channel '{ctx}' field '{field}'. "
+            f"Defined agents: {', '.join(sorted(by_name))}"
+        )
+    return by_name[name]
+
+
+def _resolve_channel_agent_refs(
+    channel_data: dict,
+    agents_by_name: dict,
+) -> dict:
+    """Resolve string agent references in a Slack channel block."""
+    if channel_data.get("type") != "slack":
+        return channel_data
+    data = dict(channel_data)
+    if "agents" in data:
+        data["agents"] = [
+            _lookup_agent(agents_by_name, name, "agents", channel_data["name"])
+            for name in data["agents"]
+        ]
+    if "default_agent" in data and isinstance(data["default_agent"], str):
+        data["default_agent"] = _lookup_agent(
+            agents_by_name, data["default_agent"],
+            "default_agent", channel_data["name"],
+        )
+    if "channel_overrides" in data:
+        new_ov = {}
+        for cid, ov in data["channel_overrides"].items():
+            ov = dict(ov)
+            if isinstance(ov.get("agent"), str):
+                ov["agent"] = _lookup_agent(
+                    agents_by_name, ov["agent"],
+                    f"channel_overrides[{cid}].agent",
+                    channel_data["name"],
+                )
+            new_ov[cid] = ov
+        data["channel_overrides"] = new_ov
+    return data
+
+
 def load_multi_yaml(
     data: dict,
 ) -> tuple[list[Agent], list[Channel], Vault | None]:
@@ -104,6 +146,8 @@ def load_multi_yaml(
 
         agents.append(agent)
 
+    agents_by_name = {a.name: a for a in agents}
+
     channels: list[Channel] = []
     for channel_data in data.get("channels", []):
         channel_data = dict(channel_data)
@@ -118,6 +162,7 @@ def load_multi_yaml(
                 )
             channel_data["platform"] = platforms[platform_ref]
 
+        channel_data = _resolve_channel_agent_refs(channel_data, agents_by_name)
         channels.append(Channel.model_validate(channel_data))
 
     return agents, channels, vault
