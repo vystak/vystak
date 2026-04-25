@@ -42,6 +42,8 @@ class Agent(NamedModel):
     # Deprecated: kept for backward compatibility
     resources: list[Resource] = []
 
+    subagents: list["Agent"] = []
+
     @property
     def canonical_name(self) -> str:
         ns = self.platform.namespace if self.platform else "default"
@@ -54,3 +56,6 @@ class Agent(NamedModel):
         if self.memory and not self.memory.name:
             self.memory.name = "memory"
         return self
+
+
+Agent.model_rebuild()
