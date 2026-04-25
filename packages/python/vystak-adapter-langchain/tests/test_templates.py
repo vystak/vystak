@@ -622,3 +622,102 @@ class TestTransportBootstrap:
         # Ensure the streaming methods are NOT ``async def``.
         assert "async def dispatch_a2a_stream(" not in source
         assert "async def dispatch_responses_create_stream(" not in source
+
+
+def test_subagents_generates_ask_tool_per_peer():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(
+        name="weather-agent",
+        instructions="Weather specialist. Use get_weather for real data.",
+        model=m,
+    )
+    time = Agent(name="time-agent", instructions="Time specialist.", model=m)
+    assistant = Agent(
+        name="assistant-agent",
+        model=m,
+        subagents=[weather, time],
+    )
+
+    code = generate_agent_py(assistant)
+    assert "async def ask_weather_agent(" in code
+    assert "async def ask_time_agent(" in code
+    # Imports
+    assert "from vystak.transport import ask_agent" in code
+    assert "from langchain_core.runnables import RunnableConfig" in code
+    # Session-id propagation
+    assert "thread_id" in code
+    assert "'sessionId': session_id" in code or '"sessionId": session_id' in code
+    # Wired into the react agent
+    assert "ask_weather_agent" in code.split("create_react_agent")[-1]
+
+
+def test_subagents_docstring_pulled_from_instructions():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(
+        name="weather-agent",
+        instructions="Weather specialist. Use get_weather for real data.",
+        model=m,
+    )
+    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    code = generate_agent_py(assistant)
+    assert "Weather specialist." in code
+
+
+def test_subagents_docstring_first_paragraph_only():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(
+        name="weather-agent",
+        instructions="First paragraph here.\n\nSecond paragraph not in docstring.",
+        model=m,
+    )
+    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    code = generate_agent_py(assistant)
+    assert "First paragraph here." in code
+    assert "Second paragraph" not in code
+
+
+def test_subagents_docstring_fallback_when_instructions_empty():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)  # no instructions
+    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    code = generate_agent_py(assistant)
+    assert "Delegate to the weather-agent agent." in code
+
+
+def test_no_subagents_no_codegen_change():
+    """If subagents is empty, no ask_ tool is emitted and no extra imports added."""
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak_adapter_langchain.templates import generate_agent_py
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    bare = Agent(name="solo", model=m)
+    code = generate_agent_py(bare)
+    assert "ask_agent" not in code
+    assert "from vystak.transport" not in code
