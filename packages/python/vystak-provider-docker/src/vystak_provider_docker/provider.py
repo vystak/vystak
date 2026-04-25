@@ -16,6 +16,7 @@ from vystak.providers.base import (
 from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.common import ChannelType
 
 
 class _LateBoundUnsealNode(Provisionable):
@@ -1075,11 +1076,19 @@ class DockerProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def destroy_channel(self, channel: Channel) -> None:
+    def destroy_channel(
+        self, channel: Channel, *, delete_channel_data: bool = False
+    ) -> None:
         container = self._get_channel_container(channel.name)
         if container is not None:
             container.stop()
             container.remove()
+        if delete_channel_data and channel.type == ChannelType.SLACK:
+            import contextlib
+
+            state_volume = f"vystak-{channel.name}-state"
+            with contextlib.suppress(docker.errors.NotFound):
+                self._client.volumes.get(state_volume).remove()
 
     def channel_status(self, channel: Channel) -> AgentStatus:
         container = self._get_channel_container(channel.name)

@@ -92,10 +92,16 @@ class PlatformProvider(ABC):
             f"{type(self).__name__} does not support channel provisioning yet"
         )
 
-    def destroy_channel(self, channel: Channel) -> None:
+    def destroy_channel(
+        self, channel: Channel, *, delete_channel_data: bool = False
+    ) -> None:
         """Destroy a deployed channel. Implementations MUST read deployment
         context (subscription, resource group, etc.) from channel.platform —
-        NOT from any provider-level state that was set for agent lifecycles."""
+        NOT from any provider-level state that was set for agent lifecycles.
+
+        ``delete_channel_data`` (Slack only) also removes the runtime state
+        volume holding channel bindings + user prefs. Unrecoverable.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not support channel provisioning yet"
         )

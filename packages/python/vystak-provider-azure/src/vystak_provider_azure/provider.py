@@ -977,7 +977,9 @@ class AzureProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def destroy_channel(self, channel: Channel) -> None:
+    def destroy_channel(
+        self, channel: Channel, *, delete_channel_data: bool = False
+    ) -> None:
         """Delete the channel's Container App using its own platform context.
 
         Critical: reads subscription/RG from channel.platform rather than from

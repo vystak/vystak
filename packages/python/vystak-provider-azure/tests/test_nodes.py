@@ -421,7 +421,7 @@ class TestContainerAppNode:
 class TestAzureChannelAppNode:
     def _make_node(self, generated_code=None, platform_config=None):
         from vystak.providers.base import DeployPlan, GeneratedCode
-        from vystak.schema.channel import Channel, RouteRule
+        from vystak.schema.channel import Channel
         from vystak.schema.common import ChannelType
         from vystak.schema.platform import Platform
         from vystak.schema.provider import Provider
@@ -433,7 +433,6 @@ class TestAzureChannelAppNode:
             name="chat",
             type=ChannelType.CHAT,
             platform=platform,
-            routes=[RouteRule(agent="x")],
             secrets=[Secret(name="SLACK_BOT_TOKEN")],
             config={"port": 8080},
         )

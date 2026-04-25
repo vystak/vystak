@@ -253,22 +253,27 @@ def _run_provider_apply(
 
         agents_by_name = {a["name"]: a["agent"] for a in deployed_agents}
 
+        # Channels list their routable agents declaratively now (channel.agents).
+        # Resolve each one to a transport route entry so the channel container's
+        # AgentClient can dispatch to it. Channel-level pinning + runtime
+        # bindings are handled inside the container.
         resolved_routes: dict[str, dict[str, str]] = {}
-        for rule in channel.routes:
-            if rule.agent in agents_by_name:
-                peer_agent = agents_by_name[rule.agent]
+        target_names = [a.name for a in channel.agents]
+        for name in target_names:
+            if name in agents_by_name:
+                peer_agent = agents_by_name[name]
                 if peer_agent.platform is None:
                     continue
                 try:
                     plugin = get_transport_plugin(peer_agent.platform.transport.type)
-                    resolved_routes[rule.agent] = {
+                    resolved_routes[name] = {
                         "canonical": peer_agent.canonical_name,
                         "address": plugin.resolve_address_for(peer_agent, peer_agent.platform),
                     }
                 except (KeyError, Exception):
                     pass
 
-        missing = [rule.agent for rule in channel.routes if rule.agent not in resolved_routes]
+        missing = [n for n in target_names if n not in resolved_routes]
         if missing:
             click.echo(
                 f"  Warning: route targets not deployed: {', '.join(missing)}",

@@ -155,6 +155,18 @@ class DockerChannelNode(Provisionable):
                     "mode": "ro",
                 }
 
+            # Slack channels get a named state volume at /data so that the
+            # SQLite runtime bindings database (channel-state.db) persists
+            # across container restarts. The volume is created lazily on
+            # first provision if it doesn't already exist.
+            if self._channel.type == ChannelType.SLACK:
+                state_volume_name = f"vystak-{self._channel.name}-state"
+                try:
+                    self._client.volumes.get(state_volume_name)
+                except docker.errors.NotFound:
+                    self._client.volumes.create(name=state_volume_name)
+                volumes[state_volume_name] = {"bind": "/data", "mode": "rw"}
+
             self._client.containers.run(
                 image_tag,
                 name=container_name,

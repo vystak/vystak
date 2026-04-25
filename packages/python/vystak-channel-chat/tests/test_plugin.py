@@ -2,7 +2,7 @@
 
 import json
 
-from vystak.schema.channel import Channel, RouteRule
+from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
@@ -19,10 +19,6 @@ def _channel(**overrides):
         "name": "chat",
         "type": ChannelType.CHAT,
         "platform": _platform(),
-        "routes": [
-            RouteRule(match={}, agent="weather-agent"),
-            RouteRule(match={}, agent="time-agent"),
-        ],
     }
     base.update(overrides)
     return Channel(**base)
@@ -87,9 +83,9 @@ class TestChatChannelPlugin:
         assert "vystak>=" not in reqs
         assert "vystak-transport-http" not in reqs
 
-    def test_empty_routes_still_valid(self):
+    def test_no_resolved_routes_still_valid(self):
         plugin = ChatChannelPlugin()
-        code = plugin.generate_code(_channel(routes=[]), {})
+        code = plugin.generate_code(_channel(), {})
         assert json.loads(code.files["routes.json"]) == {}
 
     def test_dockerfile_uses_python_311(self):

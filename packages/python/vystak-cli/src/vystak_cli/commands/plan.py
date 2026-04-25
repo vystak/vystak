@@ -63,10 +63,15 @@ def plan(files, file_path):
         click.echo(f"  Type: {channel.type.value}")
         if channel.platform:
             click.echo(f"  Platform: {channel.platform.type} ({channel.platform.provider.type})")
-        if channel.routes:
-            click.echo(f"  Routes: {len(channel.routes)}")
-            for rule in channel.routes:
-                click.echo(f"    → {rule.agent}  match={rule.match}")
+        if channel.agents:
+            click.echo(f"  Agents: {', '.join(a.name for a in channel.agents)}")
+        if channel.default_agent:
+            click.echo(f"  Default agent: {channel.default_agent.name}")
+        if channel.channel_overrides:
+            click.echo(f"  Channel overrides: {len(channel.channel_overrides)}")
+            for cid, ov in channel.channel_overrides.items():
+                pin = f" → {ov.agent.name}" if ov.agent else ""
+                click.echo(f"    {cid}{pin}")
 
         try:
             provider = get_provider(channel)
