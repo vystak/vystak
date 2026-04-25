@@ -205,3 +205,51 @@ class TestChannelHashTree:
         tree2 = hash_channel(ch2)
         assert tree1.secrets != tree2.secrets
         assert tree1.root != tree2.root
+
+
+def test_adding_subagent_changes_caller_root_hash():
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)
+    bare = Agent(name="assistant-agent", model=m)
+    with_peer = Agent(name="assistant-agent", model=m, subagents=[weather])
+
+    assert hash_agent(bare).root != hash_agent(with_peer).root
+
+
+def test_reordering_subagents_does_not_change_caller_hash():
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)
+    time = Agent(name="time-agent", model=m)
+    a = Agent(name="assistant", model=m, subagents=[weather, time])
+    b = Agent(name="assistant", model=m, subagents=[time, weather])
+
+    assert hash_agent(a).root == hash_agent(b).root
+
+
+def test_peer_hash_unchanged_when_added_as_subagent():
+    """Adding a peer to a caller does not affect the peer's own hash."""
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="p", type="anthropic")
+    m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
+    weather = Agent(name="weather-agent", model=m)
+    weather_alone_root = hash_agent(weather).root
+
+    # Build a caller that references it; weather's own hash must not change.
+    _assistant = Agent(name="assistant", model=m, subagents=[weather])
+    assert hash_agent(weather).root == weather_alone_root
