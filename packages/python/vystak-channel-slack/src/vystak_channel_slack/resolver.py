@@ -36,7 +36,17 @@ def resolve(event: Event, cfg: ResolverConfig, store) -> str | None:
         return None
 
     if event.is_dm:
-        return store.user_pref(event.team, event.user) or cfg.default_agent
+        # Resolution order for DMs:
+        # 1. user preference set via `/vystak prefer <agent>`
+        # 2. configured default_agent
+        # 3. single-agent auto-bind — when there's exactly one declared
+        #    routable agent, it's unambiguous; mirrors the channel-side
+        #    auto-bind behavior in welcome.on_member_joined.
+        return (
+            store.user_pref(event.team, event.user)
+            or cfg.default_agent
+            or (cfg.agents[0] if len(cfg.agents) == 1 else None)
+        )
 
     ov = cfg.channel_overrides.get(event.channel)
     if ov is not None and ov.agent:
@@ -46,4 +56,7 @@ def resolve(event: Event, cfg: ResolverConfig, store) -> str | None:
         return binding
     if cfg.ai_fallback is not None:
         return cfg.ai_fallback.pick(event, cfg.agents)
+    # Channel-side single-agent auto-bind — same rationale as DM path.
+    if cfg.default_agent is None and len(cfg.agents) == 1:
+        return cfg.agents[0]
     return cfg.default_agent
