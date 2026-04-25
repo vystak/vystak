@@ -297,13 +297,32 @@ async def on_mention(event, say):
         "mention resolve channel=%s user=%s text=%r -> agent=%s known_routes=%s",
         channel, user, ev.text[:80], agent_name, list(ROUTES.keys()),
     )
-    if agent_name is None or agent_name not in ROUTES:
-        # TODO: if cfg.welcome_on_invite and channel not yet welcomed, post
-        # welcome message here (on_member_joined covers the explicit-invite
-        # case; this is the fallback for channels where the bot was pre-invited).
+    if agent_name is None:
         logger.warning(
-            "mention dropped: agent_name=%s in_routes=%s",
-            agent_name, agent_name in ROUTES if agent_name else False,
+            "mention unrouted: no binding for channel=%s, no default_agent",
+            channel,
+        )
+        await say(
+            text=(
+                "No agent is bound to this channel yet. Run "
+                "`/vystak route <agent>` to pick one. Available agents: "
+                + (", ".join(f"`{a}`" for a in _resolver_cfg.agents) or "_none declared_")
+            ),
+            thread_ts=event.get("thread_ts") or event.get("ts"),
+        )
+        return
+    if agent_name not in ROUTES:
+        logger.warning(
+            "mention misrouted: agent=%s declared but not in transport routes %s",
+            agent_name, list(ROUTES.keys()),
+        )
+        await say(
+            text=(
+                f"Agent `{agent_name}` is bound to this channel but isn't reachable "
+                f"on the transport. Known routes: "
+                + (", ".join(f"`{a}`" for a in ROUTES) or "_none_")
+            ),
+            thread_ts=event.get("thread_ts") or event.get("ts"),
         )
         return
 
@@ -365,10 +384,31 @@ async def on_message(event, say):
         "dm resolve user=%s text=%r -> agent=%s known_routes=%s",
         user, ev.text[:80], agent_name, list(ROUTES.keys()),
     )
-    if agent_name is None or agent_name not in ROUTES:
+    if agent_name is None:
         logger.warning(
-            "dm dropped: agent_name=%s in_routes=%s",
-            agent_name, agent_name in ROUTES if agent_name else False,
+            "dm unrouted: no user pref, no default_agent (user=%s)", user,
+        )
+        await say(
+            text=(
+                "No default agent is configured for DMs. Either an admin "
+                "needs to set `default_agent=<agent>` on the Channel "
+                "declaration, or you can pick one yourself with "
+                "`/vystak prefer <agent>`. Available agents: "
+                + (", ".join(f"`{a}`" for a in _resolver_cfg.agents) or "_none declared_")
+            ),
+        )
+        return
+    if agent_name not in ROUTES:
+        logger.warning(
+            "dm misrouted: agent=%s declared but not in transport routes %s",
+            agent_name, list(ROUTES.keys()),
+        )
+        await say(
+            text=(
+                f"Agent `{agent_name}` is set as your DM target but isn't reachable "
+                f"on the transport. Known routes: "
+                + (", ".join(f"`{a}`" for a in ROUTES) or "_none_")
+            ),
         )
         return
 
