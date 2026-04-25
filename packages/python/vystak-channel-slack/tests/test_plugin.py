@@ -233,3 +233,47 @@ class TestServerTemplateTransportBootstrap:
         from vystak_channel_slack.server_template import DOCKERFILE
 
         assert "mkdir -p /data" in DOCKERFILE
+
+
+class TestServerTemplateThreadBindings:
+    """Slack agent threads — server.py wires up thread_bindings."""
+
+    def test_imports_route_thread_message(self):
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "from vystak_channel_slack.threads import route_thread_message" in SERVER_PY
+
+    def test_on_mention_writes_binding_after_finalize(self):
+        """After _finalize succeeds, on_mention persists the binding."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "_store.set_thread_binding(" in SERVER_PY
+
+    def test_on_mention_sticky_check_uses_binding(self):
+        """If a binding exists, on_mention must use it instead of resolving."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        # Sticky check looks up the binding before _resolve().
+        assert "_store.thread_binding(" in SERVER_PY
+
+    def test_on_message_calls_route_thread_message(self):
+        """The non-DM branch in on_message must consult the policy."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "route_thread_message(" in SERVER_PY
+
+    def test_on_message_no_longer_blanket_returns_for_non_dm(self):
+        """The 'mentions are already handled by on_mention' early-return
+        must be gone — replaced by the policy call."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "mentions are already handled by on_mention" not in SERVER_PY
+
+    def test_require_explicit_mention_is_consulted(self):
+        """The opt-out flag is passed to the policy."""
+        from vystak_channel_slack.server_template import SERVER_PY
+
+        assert "_THREAD_REQUIRE_EXPLICIT_MENTION" in SERVER_PY
+        # Ensure it's no longer a dead variable: it's read after the
+        # 'require_explicit_mention=' kwarg in the policy call.
+        assert "require_explicit_mention=_THREAD_REQUIRE_EXPLICIT_MENTION" in SERVER_PY

@@ -42,6 +42,21 @@ class RoutesStore(ABC):
     @abstractmethod
     def inviter(self, team: str, channel: str) -> str | None: ...
 
+    @abstractmethod
+    def thread_binding(
+        self, team: str, channel: str, thread_ts: str
+    ) -> str | None: ...
+
+    @abstractmethod
+    def set_thread_binding(
+        self, team: str, channel: str, thread_ts: str, agent: str
+    ) -> None: ...
+
+    @abstractmethod
+    def unbind_thread(
+        self, team: str, channel: str, thread_ts: str
+    ) -> None: ...
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS channel_bindings (
@@ -57,6 +72,11 @@ CREATE TABLE IF NOT EXISTS inviters (
     team_id TEXT NOT NULL, channel_id TEXT NOT NULL,
     user_id TEXT NOT NULL, joined_at INTEGER NOT NULL,
     PRIMARY KEY (team_id, channel_id));
+CREATE TABLE IF NOT EXISTS thread_bindings (
+    team_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+    thread_ts TEXT NOT NULL, agent_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, channel_id, thread_ts));
 """
 
 
@@ -174,6 +194,47 @@ class SqliteStore(RoutesStore):
         finally:
             conn.close()
 
+    def thread_binding(
+        self, team: str, channel: str, thread_ts: str
+    ) -> str | None:
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT agent_name FROM thread_bindings "
+                "WHERE team_id=? AND channel_id=? AND thread_ts=?",
+                (team, channel, thread_ts),
+            ).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_thread_binding(
+        self, team: str, channel: str, thread_ts: str, agent: str
+    ) -> None:
+        conn = self._conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO thread_bindings "
+                "(team_id, channel_id, thread_ts, agent_name, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (team, channel, thread_ts, agent, int(time.time())),
+            )
+        finally:
+            conn.close()
+
+    def unbind_thread(
+        self, team: str, channel: str, thread_ts: str
+    ) -> None:
+        conn = self._conn()
+        try:
+            conn.execute(
+                "DELETE FROM thread_bindings "
+                "WHERE team_id=? AND channel_id=? AND thread_ts=?",
+                (team, channel, thread_ts),
+            )
+        finally:
+            conn.close()
+
 
 _PG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS channel_bindings (
@@ -189,6 +250,11 @@ CREATE TABLE IF NOT EXISTS inviters (
     team_id TEXT NOT NULL, channel_id TEXT NOT NULL,
     user_id TEXT NOT NULL, joined_at BIGINT NOT NULL,
     PRIMARY KEY (team_id, channel_id));
+CREATE TABLE IF NOT EXISTS thread_bindings (
+    team_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+    thread_ts TEXT NOT NULL, agent_name TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (team_id, channel_id, thread_ts));
 """
 
 
@@ -286,6 +352,41 @@ class PostgresStore(RoutesStore):
                 (team, channel),
             ).fetchone()
             return row[0] if row else None
+
+    def thread_binding(
+        self, team: str, channel: str, thread_ts: str
+    ) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT agent_name FROM thread_bindings "
+                "WHERE team_id=%s AND channel_id=%s AND thread_ts=%s",
+                (team, channel, thread_ts),
+            ).fetchone()
+            return row[0] if row else None
+
+    def set_thread_binding(
+        self, team: str, channel: str, thread_ts: str, agent: str
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO thread_bindings "
+                "(team_id, channel_id, thread_ts, agent_name, created_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (team_id, channel_id, thread_ts) DO UPDATE SET "
+                "agent_name = EXCLUDED.agent_name, "
+                "created_at = EXCLUDED.created_at",
+                (team, channel, thread_ts, agent, int(time.time())),
+            )
+
+    def unbind_thread(
+        self, team: str, channel: str, thread_ts: str
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM thread_bindings "
+                "WHERE team_id=%s AND channel_id=%s AND thread_ts=%s",
+                (team, channel, thread_ts),
+            )
 
 
 def make_store(service) -> RoutesStore:
