@@ -1,56 +1,69 @@
 # docker-slack example
 
-Smoke test for the Slack channel plugin. Deploys:
+Slack channel with **self-serve runtime routing**. Deploys:
 
 - `weather-agent` — LangChain agent container on Docker
-- `slack-main` — Slack Socket Mode runner container routing `@weather-agent`
-  mentions and DMs to the agent via A2A
+- `slack-main` — Slack Socket Mode runner container that:
+  - greets each new channel with a welcome message + slash-command help
+  - persists `(team, channel) → agent` and `(team, user) → agent` bindings to a SQLite file at `/data/channel-state.db` on a named volume
+  - dispatches messages via the resolver chain: deploy-time channel override → runtime `/vystak route` binding → `default_agent`
 
 ## Prereqs
 
 1. Create a Slack app (https://api.slack.com/apps) with:
-   - Socket Mode enabled
-   - Bot scopes: `app_mentions:read`, `chat:write`, `im:history`,
-     `im:read`, `im:write`
-   - Event subscriptions (Socket Mode) for `app_mention` and `message.im`
+   - **Socket Mode** enabled
+   - **Bot scopes**: `app_mentions:read`, `chat:write`, `commands`, `im:history`, `im:read`, `im:write`, `channels:read`, `groups:read`
+   - **Event subscriptions** (Socket Mode): `app_mention`, `message.channels`, `message.im`, `member_joined_channel`
+   - **Slash command** `/vystak` with usage hint `route <agent> | prefer <agent> | status | unroute | unprefer`
    - A bot token (`xoxb-...`) and an app-level token (`xapp-...`)
-2. Install the app to your workspace
-3. Invite the bot into a channel, note its channel ID (`Cxxxx`)
-4. Replace `C0000000000` in `vystak.py` with the real ID
+2. Install the app to your workspace.
+3. Invite the bot to any channel — no channel IDs in the YAML are required.
 
 ## Run
 
-Put the tokens in an `.env` file alongside `vystak.py` (or pass `--env-file`
-pointing at your existing env file). `vystak apply` reads them from
-`--env-file` (defaults to `.env` in the current directory).
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-
-# Optional — only if you're routing the Anthropic SDK to a non-default
-# endpoint such as MiniMax. If set, also add
-# `ast.Secret(name="ANTHROPIC_API_URL")` to weather_agent.secrets in
-# vystak.py so the value reaches the container.
-# ANTHROPIC_API_URL=https://api.minimax.io/anthropic
-```
-
 ```bash
+cp .env.example .env  # then edit
 cd examples/docker-slack
 vystak apply
 ```
 
-Then mention the bot in Slack:
+In Slack, invite the bot to a channel. Because this example declares only one routable agent, the channel **auto-binds** on invite — the bot will post a welcome and start handling `@mention`s right away. With more than one agent, users run `/vystak route <agent>` to pick.
 
 ```
-@weather-agent what is the weather like?
+/vystak route weather-agent
+/vystak status
+@weather-agent what's the weather like?
 ```
 
-Or DM the bot directly.
+DMs use a per-user preference (`/vystak prefer weather-agent`); without one set, they fall through to `default_agent` (or the only declared agent when there's exactly one).
+
+## Configuration knobs (optional)
+
+In `vystak.py` / `vystak.yaml`:
+
+```python
+slack = ast.Channel(
+    ...,
+    agents=[weather_agent, support_agent],
+    default_agent=weather_agent,           # DM fallback
+    route_authority="inviter",             # | "admins" | "anyone"
+    welcome_on_invite=True,
+    welcome_message="...{agent_mentions}...",
+    channel_overrides={
+        "C12345678": ast.SlackChannelOverride(
+            agent=support_agent,
+            system_prompt="Triage first.",
+            tools=["create_ticket", "search_kb"],
+        ),
+    },
+    # state defaults to SQLite at /data/channel-state.db. Override:
+    # state=ast.Service(type="postgres", connection_string_env="SLACK_STATE_URL"),
+)
+```
 
 ## Tear down
 
 ```bash
-vystak destroy
+vystak destroy                            # preserves bindings
+vystak destroy --delete-channel-data      # also wipes the state volume
 ```
