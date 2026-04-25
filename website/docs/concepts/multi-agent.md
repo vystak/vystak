@@ -148,13 +148,20 @@ Sub-subagent calls (e.g., a peer that itself declares `subagents:`) inherit the 
 
 ### Escape hatch: hand-written delegation tools
 
-When the auto-generated docstring isn't right (e.g., per-caller customisation, parameter shaping, structured arguments beyond a single `question` string), drop a manual tool into `tools/` next to `vystak.yaml`:
+When the auto-generated docstring isn't right (e.g., per-caller customisation, parameter shaping, structured arguments beyond a single `question` string), bypass auto-generation and write the tool yourself.
+
+The langchain adapter raises a `ValueError` at codegen time if a user tool name collides with an auto-generated `ask_<peer>` name — that protects you from accidental shadowing but also means you cannot simply drop a `tools/ask_weather_agent.py` alongside `subagents: [weather-agent]` and expect it to override. The two are mutually exclusive: either Vystak generates the tool, or you do.
+
+To take ownership of the delegation tool:
+
+1. **Remove the peer from `subagents:`** so codegen no longer emits `ask_<peer>`.
+2. **Write the manual tool** in `tools/`. The transport routes are still scoped by what's left in `subagents:`, so you'll need to keep the peer there OR use a different routing approach. The simplest path is to keep the peer in `subagents:` and rename your tool to avoid the auto-generated name (e.g., `ask_weather_with_region`):
 
 ```python
-# tools/ask_weather_agent.py
+# tools/ask_weather_with_region.py
 from vystak.transport import ask_agent
 
-async def ask_weather_agent(question: str, region: str = "global") -> str:
+async def ask_weather_with_region(question: str, region: str = "global") -> str:
     """Ask the weather specialist, scoped to a region."""
     return await ask_agent(
         "weather-agent",
@@ -162,10 +169,7 @@ async def ask_weather_agent(question: str, region: str = "global") -> str:
     )
 ```
 
-The user-defined tool wins for that name. Two constraints to know:
-
-1. **Subagent declaration is still required.** Restrictive routing means `ask_agent("weather-agent", ...)` only succeeds when the caller has `weather-agent` in its `subagents:` list. The auto-generated tool is what gets *replaced* by your hand-written version; the routing authorisation is unchanged.
-2. **The langchain adapter raises if a user tool name collides with an auto-generated one** — that protects you from accidental shadowing. To override the auto-generated tool, drop it from `subagents:` and reference it manually via `ask_agent()` in your custom file (or rename your tool).
+This sits alongside the auto-generated `ask_weather_agent` (declared via `subagents: [weather-agent]`); both are available to the LLM, with their docstrings disambiguating intent. Restrictive routing is satisfied because `weather-agent` is in `subagents:`.
 
 ## Channel fan-out
 
