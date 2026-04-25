@@ -27,6 +27,15 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Channels',
+      items: [
+        'channels/overview',
+        'channels/slack',
+        'channels/chat',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Deploying',
       items: [
         'deploying/docker',

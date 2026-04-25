@@ -171,6 +171,7 @@ A pure function evaluated per inbound event:
    - return user_pref(team, user) ?? default_agent
 
 3. Channel message
+   - thread_binding(team, channel, thread_ts) → use it (sticky thread)
    - channel_overrides[<channel_id>].agent  → use it (deploy-time pin)
    - runtime channel_binding(team, channel) → use it (/vystak route)
    - ai_fallback                            → ask the router LLM
@@ -179,7 +180,7 @@ A pure function evaluated per inbound event:
 4. None of the above → post welcome_message + drop
 ```
 
-Thread session continuity is **not** routing. Once an agent answers in a thread, subsequent replies inside that thread stay with the same agent via the session key `agent:<id>:slack:channel:<channel_id>:thread:<thread_ts>`, regardless of what step 3 returns.
+Thread bindings are sticky: once an agent has replied in a thread, that thread is bound to the same agent (`team`, `channel`, `thread_ts`) → `agent_name`. The binding is consulted before resolving any later mention in the thread, and is also the gate that lets non-mention messages in the thread route to the bound agent (see [Thread context](#thread-context)). The session key is `slack:<channel>:<thread_ts>`, so memory stays scoped to the thread regardless of how the agent was first chosen.
 
 ## Slash commands
 
@@ -235,7 +236,7 @@ thread:
 
 ## State and persistence
 
-The Slack channel container ships with `VOLUME /data`. The Docker provider mounts a named volume `vystak-<channel>-state` there automatically. SQLite tables (`channel_bindings`, `user_prefs`, `inviters`) are migrated on startup.
+The Slack channel container ships with `VOLUME /data`. The Docker provider mounts a named volume `vystak-<channel>-state` there automatically. SQLite tables (`channel_bindings`, `user_prefs`, `inviters`, `thread_bindings`) are migrated on startup.
 
 Override the location:
 
@@ -337,7 +338,7 @@ Useful filter:
 
 ```bash
 docker logs -f vystak-channel-slack-main 2>&1 | \
-  grep -E "mention|dm |thread_history|welcome|member_joined|forward|resolve|command"
+  grep -E "mention|dm |thread_history|thread-follow|welcome|member_joined|forward|resolve|command"
 ```
 
 ## Known limitations
