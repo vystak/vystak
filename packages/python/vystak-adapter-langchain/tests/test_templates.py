@@ -652,7 +652,10 @@ def test_subagents_generates_ask_tool_per_peer():
     assert "from langchain_core.runnables import RunnableConfig" in code
     # Session-id propagation
     assert "thread_id" in code
-    assert "'sessionId': session_id" in code or '"sessionId": session_id' in code
+    assert (
+        "metadata = {'sessionId': session_id} if session_id else {}" in code
+        or 'metadata = {"sessionId": session_id} if session_id else {}' in code
+    )
     # Wired into the react agent
     assert "ask_weather_agent" in code.split("create_react_agent")[-1]
 

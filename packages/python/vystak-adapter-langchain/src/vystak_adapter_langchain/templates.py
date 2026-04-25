@@ -257,6 +257,9 @@ def generate_agent_py(
     if stub_tool_names or session_store or subagent_tool_code:
         lines.append("from langchain_core.tools import tool")
 
+    if subagent_tool_code:
+        lines.append("from langchain_core.runnables import RunnableConfig")
+
     if session_store and session_store.engine == "postgres":
         lines.append("import os")
         lines.append("")
@@ -270,7 +273,7 @@ def generate_agent_py(
 
     lines.append("from langgraph.prebuilt import create_react_agent")
     if subagent_tool_code:
-        lines.append("from langchain_core.runnables import RunnableConfig")
+        lines.append("")
         lines.append("from vystak.transport import ask_agent")
     if has_mcp:
         lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
@@ -315,8 +318,10 @@ def generate_agent_py(
 
     if subagent_tool_code:
         lines.append("")
+        lines.append("")
         lines.append("# Auto-generated subagent delegation tools")
         lines.append(subagent_tool_code)
+        lines.append("")
 
     if has_workspace:
         lines.append("")
