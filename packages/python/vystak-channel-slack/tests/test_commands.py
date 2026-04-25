@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
-from vystak_channel_slack.commands import handle_command, NotAuthorized, Result
+
+import pytest
+from vystak_channel_slack.commands import NotAuthorized, Result, handle_command
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def test_status_shows_current_binding(store):
 
 
 def test_unroute_removes_binding(store):
-    res = handle_command(
+    handle_command(
         cmd="/vystak", args="unroute",
         team="T", channel="C", user="U-inviter",
         agents=["weather-agent"],
@@ -67,7 +68,7 @@ def test_unroute_removes_binding(store):
 
 
 def test_prefer_sets_user_pref(store):
-    res = handle_command(
+    handle_command(
         cmd="/vystak", args="prefer weather-agent",
         team="T", channel="C", user="U-anyone",
         agents=["weather-agent"],
