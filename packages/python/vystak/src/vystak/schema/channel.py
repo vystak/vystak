@@ -95,6 +95,19 @@ class Channel(NamedModel):
         return self
 
     @model_validator(mode="after")
+    def _apply_single_agent_default(self) -> Self:
+        """When a Slack channel declares exactly one routable agent and no
+        explicit default_agent, fall back to that single agent. Without this,
+        DMs would resolve to None even though there's an obvious choice."""
+        if (
+            self.type is ChannelType.SLACK
+            and self.default_agent is None
+            and len(self.agents) == 1
+        ):
+            self.default_agent = self.agents[0]
+        return self
+
+    @model_validator(mode="after")
     def _validate_default_agent(self) -> Self:
         if self.default_agent is not None and self.default_agent not in self.agents:
             raise ValueError("default_agent must be in agents list")

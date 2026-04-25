@@ -95,6 +95,35 @@ def test_policy_enum_values():
     assert Policy.DISABLED.value == "disabled"
 
 
+def test_single_agent_implies_default_agent():
+    """Single-agent Slack channels auto-set default_agent so DMs route."""
+    weather = _make_agent("weather-agent")
+    ch = Channel(
+        name="slack-main",
+        type=ChannelType.SLACK,
+        platform=weather.platform,
+        secrets=[Secret(name="SLACK_BOT_TOKEN"),
+                 Secret(name="SLACK_APP_TOKEN")],
+        agents=[weather],
+    )
+    assert ch.default_agent is weather
+
+
+def test_multi_agent_does_not_auto_set_default_agent():
+    """Multi-agent channels need an explicit default_agent (or runtime binding)."""
+    weather = _make_agent("weather-agent")
+    support = _make_agent("support-agent")
+    ch = Channel(
+        name="slack-main",
+        type=ChannelType.SLACK,
+        platform=weather.platform,
+        secrets=[Secret(name="SLACK_BOT_TOKEN"),
+                 Secret(name="SLACK_APP_TOKEN")],
+        agents=[weather, support],
+    )
+    assert ch.default_agent is None
+
+
 def test_default_agent_must_be_in_agents_list():
     weather = _make_agent("weather-agent")
     other = _make_agent("other-agent")
