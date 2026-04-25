@@ -235,6 +235,11 @@ def _run_provider_apply(
         # Agent sidecar volume (created during the agent's apply()).
         if hasattr(provider, "set_vault"):
             provider.set_vault(vault)
+        # Channel secrets on the default (no-vault) path come from .env via
+        # _env_values. Without this, declared secrets like SLACK_BOT_TOKEN
+        # never reach the channel container's environment.
+        if hasattr(provider, "set_env_values"):
+            provider.set_env_values(env_values)
         try:
             current_hash = provider.get_channel_hash(channel)
             deploy_plan = provider.plan_channel(channel, current_hash)

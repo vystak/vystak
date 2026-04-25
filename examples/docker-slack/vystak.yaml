@@ -20,6 +20,7 @@ agents:
       - {name: weather, tools: []}
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
 
 channels:
   - name: slack-main

@@ -1013,6 +1013,16 @@ class DockerProvider(PlatformProvider):
             channel_extra_env: dict[str, str] = {
                 "VYSTAK_ROUTES_JSON": json.dumps(resolved_routes, separators=(",", ":")),
             }
+            # Default-path secrets delivery: channel nodes read os.environ
+            # at provision time, but `vystak apply --env-file` only loads
+            # values into self._env_values, not the process env. Inject
+            # declared secrets directly so the channel container sees them
+            # at start (Vault path bypasses this and uses /shared/secrets.env).
+            if self._vault is None:
+                env_vals = self._env_values or {}
+                for secret in channel.secrets:
+                    if secret.name in env_vals:
+                        channel_extra_env[secret.name] = env_vals[secret.name]
             transport = channel.platform.transport if channel.platform else None
             if transport and transport.type == "nats":
                 graph.add(NatsServerNode(self._client))
