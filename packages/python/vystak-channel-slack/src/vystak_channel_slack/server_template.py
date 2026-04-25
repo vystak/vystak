@@ -257,6 +257,48 @@ def _to_slack_mrkdwn(text: str) -> str:
     return out
 
 
+_PLACEHOLDER_TEXT = "_Responding..._"
+
+
+async def _post_placeholder(say, *, thread_ts: str | None) -> dict | None:
+    """Post a 'Responding...' placeholder, returning {channel, ts} or None on failure.
+
+    Slack's chat.update needs both channel and ts to edit a message. say()
+    returns the AsyncSlackResponse from chat.postMessage which carries both
+    in its payload. If the post fails for any reason we still want to send
+    the eventual reply, so the caller falls back to a fresh say() in that case.
+    """
+    try:
+        kwargs = {"text": _PLACEHOLDER_TEXT}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        resp = await say(**kwargs)
+        ts = resp.get("ts") if hasattr(resp, "get") else None
+        ch = resp.get("channel") if hasattr(resp, "get") else None
+        if ts and ch:
+            return {"channel": ch, "ts": ts}
+        logger.warning("placeholder post returned no ts/channel; falling back")
+        return None
+    except Exception as exc:
+        logger.warning("placeholder post failed: %s; falling back", exc)
+        return None
+
+
+async def _finalize(client, say, placeholder, *, text: str, thread_ts: str | None) -> None:
+    """Replace the placeholder with the final text, or post fresh if no placeholder."""
+    if placeholder is not None:
+        await client.chat_update(
+            channel=placeholder["channel"],
+            ts=placeholder["ts"],
+            text=text,
+        )
+        return
+    kwargs = {"text": text}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    await say(**kwargs)
+
+
 # Catch-all middleware: log every event Slack delivers so missing
 # subscriptions / scopes are visible in the container logs without
 # needing to enable trace-level Bolt logging.
@@ -276,7 +318,7 @@ async def _log_event_type(req, next_):
 
 
 @slack_app.event("app_mention")
-async def on_mention(event, say):
+async def on_mention(event, say, client):
     channel = event.get("channel", "")
     channel_name = event.get("channel_name") or channel
     user = event.get("user", "")
@@ -333,27 +375,30 @@ async def on_mention(event, say):
         user,
     )
     text = event.get("text", "")
+    reply_thread_ts = event.get("thread_ts") or event.get("ts")
+    placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
-        await say(
+        await _finalize(
+            client, say, placeholder,
             text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
-            thread_ts=event.get("thread_ts") or event.get("ts"),
+            thread_ts=reply_thread_ts,
         )
         return
     logger.info("mention reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
     reply = _to_slack_mrkdwn(raw_reply)
     try:
-        await say(text=reply, thread_ts=event.get("thread_ts") or event.get("ts"))
+        await _finalize(client, say, placeholder, text=reply, thread_ts=reply_thread_ts)
         logger.info("mention posted ok")
     except Exception as exc:
         logger.exception("mention post failed: %s", exc)
 
 
 @slack_app.event("message")
-async def on_message(event, say):
+async def on_message(event, say, client):
     if event.get("bot_id") or event.get("subtype"):
         logger.debug(
             "message ignored: bot_id=%s subtype=%s",
@@ -419,17 +464,22 @@ async def on_message(event, say):
         user,
     )
     text = event.get("text", "")
+    placeholder = await _post_placeholder(say, thread_ts=None)
     logger.info("dm forward agent=%s session=%s", agent_name, session_id)
     try:
         raw_reply = await _forward_to_agent(agent_name, text, session_id)
     except Exception as exc:
         logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
-        await say(text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`")
+        await _finalize(
+            client, say, placeholder,
+            text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+            thread_ts=None,
+        )
         return
     logger.info("dm reply len=%d preview=%r", len(raw_reply or ""), (raw_reply or "")[:120])
     reply = _to_slack_mrkdwn(raw_reply)
     try:
-        await say(text=reply)
+        await _finalize(client, say, placeholder, text=reply, thread_ts=None)
         logger.info("dm posted ok")
     except Exception as exc:
         logger.exception("dm post failed: %s", exc)
