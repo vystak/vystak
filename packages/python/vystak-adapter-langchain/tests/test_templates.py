@@ -794,3 +794,54 @@ class TestChatCompletionsUsesProcessTurn:
         src = self._server_py()
         # Verify the call site uses messages kwarg.
         assert "messages=messages" in src
+
+
+class TestCreateResponseSyncUsesProcessTurn:
+    """Sync (non-stream, non-background) /v1/responses delegates to process_turn."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_sync_create_response_calls_process_turn(self):
+        """At least one process_turn call must appear in the create method."""
+        import re
+        src = self._server_py()
+        # The sync branch is inside the `create` method of ResponsesHandler.
+        # Locate the method body — it's an async def inside a class (4-space indent).
+        match = re.search(
+            r"    async def create\(.*?\):\s*\n(.*?)(?=\n    async def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        assert match, "could not locate create method body"
+        body = match.group(1)
+        assert "await process_turn(" in body
+
+    def test_sync_create_response_no_longer_inlines_ainvoke(self):
+        """The non-streaming, non-background branch of create must not call _agent.ainvoke."""
+        import re
+        src = self._server_py()
+        pat = (
+            r"    async def create\(.*?\):\s*\n"
+            r"(.*?)(?=\n    async def _run_background|\n    async def |\nclass |\Z)"
+        )
+        match = re.search(pat, src, re.DOTALL)
+        assert match, "could not locate create method body"
+        body = match.group(1)
+        # Sync branch: no inlined ainvoke, no inlined handle_memory_actions
+        assert "_agent.ainvoke(" not in body
+        assert "handle_memory_actions(" not in body
