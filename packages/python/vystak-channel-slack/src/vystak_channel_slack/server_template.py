@@ -180,7 +180,9 @@ _FORWARD_RETRY_BACKOFF_S = float(os.environ.get("VYSTAK_FORWARD_RETRY_BACKOFF_S"
 
 
 async def _forward_to_agent(
-    agent_name: str, text: str, session_id: str, user_id: str | None = None,
+    agent_name: str, text: str, session_id: str,
+    user_id: str | None = None,
+    project_id: str | None = None,
 ) -> str:
     """Forward a Slack-side message to an agent over the configured transport.
 
@@ -198,6 +200,10 @@ async def _forward_to_agent(
         # Scope memory writes to the Slack user. Namespaced "slack:U..." so it
         # does not collide with user IDs from other channels in the same store.
         metadata["user_id"] = f"slack:{user_id}"
+    if project_id:
+        # Scope project memory to the Slack channel — every user/thread in
+        # the same channel shares one project memory namespace.
+        metadata["project_id"] = project_id
 
     transient = (
         _httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.ConnectError,
@@ -237,6 +243,34 @@ _UNDERSCORE_BOLD_RE = re.compile(r"__(.+?)__", re.DOTALL)
 _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
 _LINK_RE = re.compile(r"\\[([^\\]]+?)\\]\\(([^)]+?)\\)")
 _BULLET_RE = re.compile(r"^(\\s*)[*+-]\\s+", re.MULTILINE)
+# Markdown table rows like `| a | b | c |` (incl. separator `|---|---|`).
+_TABLE_ROW_RE = re.compile(r"^\\s*\\|.*\\|\\s*$", re.MULTILINE)
+# A separator row: cells contain only dashes / colons / whitespace.
+_TABLE_SEP_CELL_RE = re.compile(r"^[\\s:-]+$")
+
+
+def _convert_md_table_row(line: str) -> str:
+    """Turn a markdown table row into a Slack-friendly line.
+
+    Drops separator rows (`|---|---|`) entirely. For data rows, emits cells
+    joined by ' \\u2014 ' (em-dash). Empty rows (all blank cells) drop too.
+    Slack mrkdwn has no native table syntax; pipes render as literal text.
+    """
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    # Separator row?
+    if cells and all(_TABLE_SEP_CELL_RE.match(c or "-") for c in cells):
+        return ""
+    # Empty row?
+    if not any(cells):
+        return ""
+    # Drop empty leading/trailing cells (markdown's outer pipes generate them).
+    while cells and cells[-1] == "":
+        cells.pop()
+    while cells and cells[0] == "":
+        cells.pop(0)
+    if not cells:
+        return ""
+    return " \\u2014 ".join(cells)
 
 
 def _to_slack_mrkdwn(text: str) -> str:
@@ -266,6 +300,11 @@ def _to_slack_mrkdwn(text: str) -> str:
         return f"\\x00CODE{len(masks) - 1}\\x00"
 
     out = _FENCE_RE.sub(_stash, text)
+
+    # 2a. Markdown tables -> em-dash-joined lines (Slack has no table syntax).
+    out = _TABLE_ROW_RE.sub(lambda m: _convert_md_table_row(m.group(0)), out)
+    # Collapse the empty lines left behind by separator/empty rows.
+    out = re.sub(r"\\n{3,}", "\\n\\n", out)
 
     # 2. Headings -> *bold* line
     out = _HEADING_RE.sub(r"*\\1*", out)
@@ -495,8 +534,12 @@ async def on_mention(event, say, client):
                 incoming_thread_ts, history.count("\\n") + 1,
             )
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
+    project_id = f"slack:{event.get('team', '')}:{channel}" if channel else None
     try:
-        raw_reply = await _forward_to_agent(agent_name, text, session_id, user_id=user)
+        raw_reply = await _forward_to_agent(
+            agent_name, text, session_id,
+            user_id=user, project_id=project_id,
+        )
     except Exception as exc:
         logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
         await _finalize(
@@ -580,8 +623,12 @@ async def on_message(event, say, client):
             "thread-follow forward agent=%s session=%s",
             agent_name, session_id,
         )
+        project_id = f"slack:{event.get('team', '')}:{channel}" if channel else None
         try:
-            raw_reply = await _forward_to_agent(agent_name, text, session_id, user_id=user)
+            raw_reply = await _forward_to_agent(
+                agent_name, text, session_id,
+                user_id=user, project_id=project_id,
+            )
         except Exception as exc:
             logger.exception("thread-follow forward failed agent=%s: %s", agent_name, exc)
             await _finalize(
