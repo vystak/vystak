@@ -175,12 +175,51 @@ def _default_client() -> _AgentClient:
     return _vystak_client_module._default_client()
 
 
-async def _forward_to_agent(agent_name: str, text: str, session_id: str) -> str:
-    return await _default_client().send_task(
-        agent_name,
-        text,
-        metadata={"sessionId": session_id},
+_FORWARD_TIMEOUT_S = float(os.environ.get("VYSTAK_FORWARD_TIMEOUT_S", "180"))
+_FORWARD_RETRY_BACKOFF_S = float(os.environ.get("VYSTAK_FORWARD_RETRY_BACKOFF_S", "2"))
+
+
+async def _forward_to_agent(
+    agent_name: str, text: str, session_id: str, user_id: str | None = None,
+) -> str:
+    """Forward a Slack-side message to an agent over the configured transport.
+
+    Retries once on transient network/timeout errors (``httpx.ReadTimeout``,
+    ``httpx.ConnectError``, ``httpx.ConnectTimeout``). LLM upstreams behind
+    the agent can legitimately take a while when their own retries kick in,
+    so the per-call timeout is bumped to ``VYSTAK_FORWARD_TIMEOUT_S`` (default
+    180s) and a single retry covers the rare case where the first call
+    times out before the agent finishes.
+    """
+    import httpx as _httpx  # local import; httpx is already in requirements
+
+    metadata: dict = {"sessionId": session_id}
+    if user_id:
+        # Scope memory writes to the Slack user. Namespaced "slack:U..." so it
+        # does not collide with user IDs from other channels in the same store.
+        metadata["user_id"] = f"slack:{user_id}"
+
+    transient = (
+        _httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.ConnectError,
     )
+    for attempt in (1, 2):
+        try:
+            return await _default_client().send_task(
+                agent_name,
+                text,
+                metadata=metadata,
+                timeout=_FORWARD_TIMEOUT_S,
+            )
+        except transient as exc:
+            if attempt == 2:
+                raise
+            logger.warning(
+                "forward transient error agent=%s attempt=%d type=%s; retrying in %.1fs",
+                agent_name, attempt, type(exc).__name__, _FORWARD_RETRY_BACKOFF_S,
+            )
+            await asyncio.sleep(_FORWARD_RETRY_BACKOFF_S)
+    # unreachable — second attempt either returns or raises
+    raise RuntimeError("unreachable")
 
 
 def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:
@@ -457,7 +496,7 @@ async def on_mention(event, say, client):
             )
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     try:
-        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+        raw_reply = await _forward_to_agent(agent_name, text, session_id, user_id=user)
     except Exception as exc:
         logger.exception("mention forward failed agent=%s: %s", agent_name, exc)
         await _finalize(
@@ -542,7 +581,7 @@ async def on_message(event, say, client):
             agent_name, session_id,
         )
         try:
-            raw_reply = await _forward_to_agent(agent_name, text, session_id)
+            raw_reply = await _forward_to_agent(agent_name, text, session_id, user_id=user)
         except Exception as exc:
             logger.exception("thread-follow forward failed agent=%s: %s", agent_name, exc)
             await _finalize(
@@ -618,7 +657,7 @@ async def on_message(event, say, client):
     placeholder = await _post_placeholder(say, thread_ts=reply_thread_ts)
     logger.info("dm forward agent=%s session=%s", agent_name, session_id)
     try:
-        raw_reply = await _forward_to_agent(agent_name, text, session_id)
+        raw_reply = await _forward_to_agent(agent_name, text, session_id, user_id=user)
     except Exception as exc:
         logger.exception("dm forward failed agent=%s: %s", agent_name, exc)
         await _finalize(
