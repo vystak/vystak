@@ -13,8 +13,10 @@ A **`type: slack`** channel deploys a Slack Socket Mode runner that:
 - Dispatches messages via a single resolution function — thread binding → deploy-time channel pin → runtime `/vystak route` binding → user preference (DMs) → optional LLM router → `default_agent`
 - Follows threads after first reply: once an agent answers in a thread, every subsequent message in that thread routes to the same agent without re-mention
 - Treats each Slack thread as its own conversation session (`slack:<channel>:<thread_ts>`)
+- Scopes long-term memory per Slack user **and** per Slack channel — channel-shared facts (`scope="project"`) recall across users and threads in the same channel
 - Optionally pulls thread context via Slack's [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/) on cold-start mentions
 - Handles slash commands `/vystak route|prefer|status|unroute|unprefer` for self-serve runtime routing
+- Flattens GFM markdown tables into em-dash-joined lines so they render readably in Slack mrkdwn
 
 ## Quick start
 
@@ -236,6 +238,55 @@ thread:
   initial_history_limit: 5      # only fetch most recent 5 prior messages
 ```
 
+## Memory namespacing
+
+When the agent has `sessions:` and/or `memory:` configured, every message from Slack carries metadata that scopes memory writes/recall to the right namespace:
+
+| Metadata field | Slack value | Memory namespace |
+|---|---|---|
+| `sessionId` | `slack:<channel>:<thread_ts>` (thread) or `slack:dm:<user>` (DM) | LangGraph checkpointer thread ID — chat-history continuity within a single thread or DM |
+| `user_id` | `slack:<U_user>` | `("user", "slack:U...", "memories")` — personal facts (the user's name, role, preferences). Scoped to one Slack user across every channel and thread. |
+| `project_id` | `slack:<team>:<channel>` (channel messages only; `None` in DMs) | `("project", "slack:T...:C...", "memories")` — shared facts. Every member of the same Slack channel sees these on recall regardless of which thread or user is asking. |
+
+The agent's `save_memory` tool takes a `scope` argument (`"user"` / `"project"` / `"global"`) and the runtime routes each save into the matching namespace.
+
+**Example interaction:**
+
+```
+[in #engineering, thread A]
+@VyStack our deploy schedule is Tuesdays at 10am
+→ saves to ("project", "slack:T123:Cengineering", "memories")
+
+[in #engineering, thread B, different user]
+@VyStack when do we deploy?
+→ recalls "deploy schedule is Tuesdays at 10am" — the project memory
+  is shared across users and threads inside the same channel.
+
+[in #engineering, same user]
+@VyStack my name is Anatoly
+→ saves to ("user", "slack:UANATOLY", "memories")
+
+[any channel, same user]
+@VyStack do you know my name?
+→ recalls "Anatoly" — user memory follows the user across channels.
+```
+
+**Prompt nudge.** A capable model (Claude, MiniMax) chooses the right scope from the wording — "my X is Y" → user, "we / our / the team's X" → project. Make this explicit in the agent's `instructions:` to reduce variance:
+
+```yaml
+instructions: |
+  ...
+  When the user shares a personal fact about themselves, call save_memory
+  with scope="user". When they share a fact about the team, the channel
+  topic, conventions, deployment schedule, or anything the whole channel
+  should remember, use scope="project". Don't ask permission — just save
+  and confirm.
+```
+
+See `examples/docker-slack-multi-agent/` for a full working example with both scopes wired up.
+
+**DMs** carry no `project_id` — there is no shared "channel" in a DM, so saves with `scope="project"` will silently no-op when triggered from a DM. Use `scope="user"` in DMs.
+
 ## State and persistence
 
 The Slack channel container ships with `VOLUME /data`. The Docker provider mounts a named volume `vystak-<channel>-state` there automatically. SQLite tables (`channel_bindings`, `user_prefs`, `inviters`, `thread_bindings`) are migrated on startup.
@@ -356,6 +407,24 @@ and how about Berlin weather?
 ```
 
 The bot replies again — the thread is sticky-bound to `assistant-agent`. See [`examples/docker-slack-multi-agent/`](https://github.com/vystak/vystak/tree/main/examples/docker-slack-multi-agent) for the full working example, or [`examples/docker-slack/`](https://github.com/vystak/vystak/tree/main/examples/docker-slack) for a single-agent variant.
+
+To enable cross-thread memory on the assistant, add `sessions:` (and optionally `memory:`):
+
+```yaml
+  - name: assistant-agent
+    instructions: |
+      ...your instructions, including the user/project scope guidance from
+      "Memory namespacing" above...
+    sessions:
+      type: sqlite
+      provider: {name: docker, type: docker}
+    # Optional: postgres for long-term memory (see examples/memory-agent/).
+    # memory:
+    #   type: postgres
+    #   provider: {name: docker, type: docker}
+```
+
+With `sessions:` set, the LangChain adapter auto-generates `save_memory` and `forget_memory` tools, and the Slack runtime's `user_id` / `project_id` metadata routes each save into the right namespace.
 
 ## Health and observability
 
