@@ -1,0 +1,83 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist. When asked about weather, use the
+      get_weather tool to fetch real data and answer concisely.
+    model: minimax
+    platform: local
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist. Use the get_time tool to fetch the
+      current UTC time. Answer concisely.
+    model: minimax
+    platform: local
+    skills:
+      - {name: time, tools: [get_time]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: assistant-agent
+    instructions: |
+      You are a friendly general-purpose assistant.
+      When the user asks about weather, use ask_weather_agent.
+      When the user asks about time, use ask_time_agent.
+      If the user asks about BOTH weather and time, call BOTH tools at the same time.
+      Pass user questions through verbatim and return the agent reply without paraphrasing.
+
+      MEMORY RULES (non-negotiable):
+      - When the user shares any personal fact about themselves
+        (their name, role, preferences, projects, places they live,
+        anything they say "my X is Y"), you MUST call save_memory
+        immediately with scope="user". Do not ask permission. Do not
+        say "would you like me to remember" — just call the tool and
+        confirm you saved it.
+      - When the user asks "do you know my X" or anything that requires
+        recall, the relevant memories are already injected into your
+        context if they exist. If you don't see the fact, say you
+        don't know it yet — never invent or hallucinate a memory.
+      - When the user asks you to forget something, call forget_memory
+        with the corresponding memory_id from the recalled list.
+    model: minimax
+    platform: local
+    subagents: [weather-agent, time-agent]
+    sessions:
+      type: sqlite
+      provider: {name: docker, type: docker}
+    memory:
+      type: postgres
+      provider: {name: docker, type: docker}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
