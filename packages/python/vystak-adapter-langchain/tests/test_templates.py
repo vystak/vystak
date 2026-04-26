@@ -142,7 +142,9 @@ class TestGenerateServerPy:
         assert "response.created" in code
         assert "response.output_text.delta" in code
         assert "response.completed" in code
-        assert "response.function_call_arguments.delta" in code
+        # function_call.* streaming events dropped per option (a) — create_stream
+        # delegates to process_turn_streaming which exposes only text tokens.
+        assert "response.function_call_arguments.delta" not in code
 
     def test_responses_background(self, anthropic_agent):
         code = generate_server_py(anthropic_agent)
@@ -219,8 +221,10 @@ class TestGenerateResponsesHandlerCode:
         assert "response.output_text.delta" in code
         assert "response.output_text.done" in code
         assert "response.completed" in code
-        assert "response.function_call_arguments.delta" in code
-        assert "response.function_call_arguments.done" in code
+        # function_call.* streaming events dropped per option (a) — create_stream
+        # delegates to process_turn_streaming which exposes only text tokens.
+        assert "response.function_call_arguments.delta" not in code
+        assert "response.function_call_arguments.done" not in code
 
 
 class TestGenerateRequirementsTxt:
@@ -940,4 +944,49 @@ class TestStreamChatCompletionsUsesProcessTurnStreaming:
         body = match.group(1)
         assert "_agent.astream(" not in body
         assert "_agent.astream_events(" not in body
+
+
+class TestCreateStreamUsesProcessTurnStreaming:
+    """The /v1/responses streaming path delegates to process_turn_streaming."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_create_stream_calls_process_turn_streaming(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"    async def create_stream\(.*?\):\s*\n(.*?)(?=\n    async def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        assert match
+        body = match.group(1)
+        assert "process_turn_streaming(" in body
+
+    def test_create_stream_no_longer_inlines_astream(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"    async def create_stream\(.*?\):\s*\n(.*?)(?=\n    async def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert "_agent.astream(" not in body
+        assert "_agent.astream_events(" not in body
+        assert "handle_memory_actions(" not in body
         assert "handle_memory_actions(" not in body
