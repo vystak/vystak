@@ -263,3 +263,83 @@ class TestServerPyEmitsTurnCoreHelpers:
             "handle_memory_actions must be defined before process_turn so "
             "process_turn's reference resolves at call time"
         )
+
+
+class TestSharedTurnCoreInvariants:
+    """Acceptance criteria 1 and 2 from the spec.
+
+    Structural backstop: if a future change adds an _agent.ainvoke or
+    _agent.astream_events call outside the cores, these tests break and
+    the author notices before merge.
+
+    Refs: docs/superpowers/specs/2026-04-26-langchain-adapter-shared-turn-core-design.md
+    """
+
+    SRC_DIR = "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain"
+
+    def _grep_source(self, needle):
+        """Return list of "{file}:{lineno}: {line}" hits across the adapter source."""
+        import pathlib
+        # Test file lives at packages/python/vystak-adapter-langchain/tests/test_adapter.py
+        # so the repo root is parents[4]:
+        #   parents[0] = …/tests
+        #   parents[1] = …/vystak-adapter-langchain
+        #   parents[2] = …/python
+        #   parents[3] = …/packages
+        #   parents[4] = repo root (worktree root)
+        repo_root = pathlib.Path(__file__).resolve().parents[4]
+        root = repo_root / self.SRC_DIR
+        hits = []
+        for path in sorted(root.glob("*.py")):
+            text = path.read_text()
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if needle in line:
+                    hits.append(f"{path.name}:{lineno}: {line.strip()}")
+        return hits
+
+    def test_ainvoke_appears_only_inside_turn_core(self):
+        hits = self._grep_source("_agent.ainvoke(")
+        assert len(hits) == 1, (
+            "spec AC1 violated: expected 1 _agent.ainvoke site (inside "
+            "process_turn in turn_core.py); got:\n" + "\n".join(hits)
+        )
+        assert hits[0].startswith("turn_core.py:"), (
+            f"_agent.ainvoke must live in turn_core.py only; got: {hits[0]}"
+        )
+
+    def test_astream_events_appears_only_inside_turn_core(self):
+        hits = self._grep_source("_agent.astream_events(")
+        assert len(hits) == 1, (
+            "spec AC1 violated: expected 1 _agent.astream_events site "
+            "(inside process_turn_streaming in turn_core.py); got:\n" + "\n".join(hits)
+        )
+        assert hits[0].startswith("turn_core.py:"), (
+            f"_agent.astream_events must live in turn_core.py only; got: {hits[0]}"
+        )
+
+    def test_no_residual_astream_calls_outside_turn_core(self):
+        """No streaming protocol path should still inline its own _agent.astream(...) loop."""
+        hits = self._grep_source("_agent.astream(")
+        # NOTE: _agent.astream_events also matches _agent.astream as a substring,
+        # but we use the suffix "_events(" filter via separate test above. To
+        # check the bare astream form, search for the exact substring.
+        # An astream_events hit also contains the substring _agent.astream so
+        # filter those out.
+        bare = [h for h in hits if "astream_events(" not in h]
+        assert bare == [], (
+            "spec AC: expected zero _agent.astream(...) bare calls outside "
+            "turn_core.py; got:\n" + "\n".join(bare)
+        )
+
+    def test_handle_memory_actions_call_sites(self):
+        """handle_memory_actions is called from exactly 2 places (the two cores)."""
+        hits = self._grep_source("await handle_memory_actions(")
+        assert len(hits) == 2, (
+            "spec AC2 violated: expected 2 handle_memory_actions call "
+            "sites (both inside turn_core.py — process_turn and "
+            "process_turn_streaming); got:\n" + "\n".join(hits)
+        )
+        assert all(h.startswith("turn_core.py:") for h in hits), (
+            "All handle_memory_actions calls must originate in turn_core.py; got:\n"
+            + "\n".join(hits)
+        )
