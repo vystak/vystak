@@ -61,11 +61,16 @@ async def process_turn(
     *,
     resume_text: str | None = None,
     task_id: str | None = None,
+    messages: list | None = None,
 ) -> TurnResult:
     """Run one agent turn. Used by every one-shot protocol path.
 
     Cross-cutting concerns (memory persistence, interrupt detection)
     happen here so they cannot drift between protocols.
+
+    If ``messages`` is provided, it overrides ``text`` and is used directly
+    as the LangGraph input — useful for stateless multi-turn protocols
+    (OpenAI chat completions).
     """
     session_id = metadata.get("sessionId") or task_id or str(uuid.uuid4())
     user_id = metadata.get("user_id")
@@ -74,6 +79,8 @@ async def process_turn(
 
     if resume_text is not None:
         agent_input = Command(resume=resume_text)
+    elif messages is not None:
+        agent_input = {"messages": messages}
     else:
         agent_input = {"messages": [("user", text)]}
 
@@ -104,12 +111,17 @@ async def process_turn_streaming(
     *,
     resume_text: str | None = None,
     task_id: str | None = None,
+    messages: list | None = None,
 ):
     """Stream agent events. Used by every streaming protocol path.
 
     Yields ``TurnEvent`` values. Memory persistence runs after the
     stream completes — once tool messages are collected from
     ``on_tool_end`` events.
+
+    If ``messages`` is provided, it overrides ``text`` and is used directly
+    as the LangGraph input — useful for stateless multi-turn protocols
+    (OpenAI chat completions).
     """
     session_id = metadata.get("sessionId") or task_id or str(uuid.uuid4())
     user_id = metadata.get("user_id")
@@ -118,6 +130,8 @@ async def process_turn_streaming(
 
     if resume_text is not None:
         agent_input = Command(resume=resume_text)
+    elif messages is not None:
+        agent_input = {"messages": messages}
     else:
         agent_input = {"messages": [("user", text)]}
 

@@ -744,3 +744,53 @@ def test_subagent_tool_name_collision_with_user_tool_raises():
             found_tool_names=["ask_weather_agent"],
             stub_tool_names=[],
         )
+
+
+class TestChatCompletionsUsesProcessTurn:
+    """Non-streaming /v1/chat/completions delegates to process_turn."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_chat_completions_calls_process_turn(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def chat_completions\(.*?\):\s*\n(.*?)(?=\nasync def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        assert match
+        body = match.group(1)
+        assert "await process_turn(" in body
+
+    def test_chat_completions_no_longer_inlines_ainvoke(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def chat_completions\(.*?\):\s*\n(.*?)(?=\nasync def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert "_agent.ainvoke(" not in body
+        assert "handle_memory_actions(" not in body
+
+    def test_chat_completions_passes_messages_kwarg(self):
+        """Multi-turn history is passed via the messages kwarg, not flattened."""
+        src = self._server_py()
+        # Verify the call site uses messages kwarg.
+        assert "messages=messages" in src

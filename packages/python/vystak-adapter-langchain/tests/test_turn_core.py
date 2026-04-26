@@ -39,7 +39,7 @@ def test_emit_turn_core_defines_expected_names():
 
 
 def test_process_turn_signature():
-    """process_turn(text, metadata, *, resume_text=None, task_id=None)."""
+    """process_turn(text, metadata, *, resume_text=None, task_id=None, messages=None)."""
     from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
 
     src = emit_turn_core_helpers()
@@ -51,11 +51,11 @@ def test_process_turn_signature():
     arg_names = [a.arg for a in fn.args.args]
     kwonly = [a.arg for a in fn.args.kwonlyargs]
     assert arg_names == ["text", "metadata"]
-    assert kwonly == ["resume_text", "task_id"]
+    assert kwonly == ["resume_text", "task_id", "messages"]
 
 
 def test_process_turn_streaming_signature():
-    """process_turn_streaming(text, metadata, *, resume_text=None, task_id=None)."""
+    """process_turn_streaming(text, metadata, *, resume_text=None, task_id=None, messages=None)."""
     from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
 
     src = emit_turn_core_helpers()
@@ -67,7 +67,7 @@ def test_process_turn_streaming_signature():
     arg_names = [a.arg for a in fn.args.args]
     kwonly = [a.arg for a in fn.args.kwonlyargs]
     assert arg_names == ["text", "metadata"]
-    assert kwonly == ["resume_text", "task_id"]
+    assert kwonly == ["resume_text", "task_id", "messages"]
 
 
 def test_process_turn_calls_handle_memory_actions():
@@ -86,3 +86,29 @@ def test_process_turn_streaming_calls_handle_memory_actions():
     # handle_memory_actions appears twice in the emitted source — once
     # in process_turn, once in process_turn_streaming.
     assert src.count("await handle_memory_actions(") == 2
+
+
+def test_process_turn_signature_includes_messages_kwarg():
+    """process_turn(text, metadata, *, resume_text=None, task_id=None, messages=None)."""
+    from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+    src = emit_turn_core_helpers()
+    tree = ast.parse(src)
+    fn = next(
+        n for n in tree.body
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "process_turn"
+    )
+    arg_names = [a.arg for a in fn.args.args]
+    kwonly = [a.arg for a in fn.args.kwonlyargs]
+    assert arg_names == ["text", "metadata"]
+    assert kwonly == ["resume_text", "task_id", "messages"]
+
+
+def test_emitted_process_turn_uses_messages_when_provided():
+    """When messages kwarg is non-None, process_turn uses it as agent_input."""
+    from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+    src = emit_turn_core_helpers()
+    # The new branch: `elif messages is not None:` followed by agent_input assignment.
+    assert "elif messages is not None:" in src
+    assert 'agent_input = {"messages": messages}' in src
