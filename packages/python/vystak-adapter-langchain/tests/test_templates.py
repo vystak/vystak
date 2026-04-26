@@ -845,3 +845,54 @@ class TestCreateResponseSyncUsesProcessTurn:
         # Sync branch: no inlined ainvoke, no inlined handle_memory_actions
         assert "_agent.ainvoke(" not in body
         assert "handle_memory_actions(" not in body
+
+
+class TestRunBackgroundSyncUsesProcessTurn:
+    """The sync (non-stream) branch of _run_background delegates to process_turn."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_run_background_method_calls_process_turn(self):
+        """_run_background calls process_turn somewhere in its body."""
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"    async def _run_background\(.*?\):\s*\n(.*?)(?=\n    async def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        assert match, "could not locate _run_background method"
+        body = match.group(1)
+        assert "await process_turn(" in body
+
+    def test_run_background_sync_branch_no_longer_inlines_ainvoke(self):
+        """The sync (non-stream) branch within _run_background must not contain _agent.ainvoke.
+
+        Note: the streaming branch (`_agent.astream`) is still expected — Task 4.3 migrates that.
+        """
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"    async def _run_background\(.*?\):\s*\n(.*?)(?=\n    async def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        # Sync branch ainvoke is gone. Streaming branch (.astream) may still be present.
+        assert "_agent.ainvoke(" not in body, (
+            "the _run_background sync branch should delegate to process_turn"
+        )
