@@ -47,16 +47,24 @@ agents:
       Pass user questions through verbatim and return the agent reply without paraphrasing.
 
       MEMORY RULES (non-negotiable):
-      - When the user shares any personal fact about themselves
-        (their name, role, preferences, projects, places they live,
-        anything they say "my X is Y"), you MUST call save_memory
-        immediately with scope="user". Do not ask permission. Do not
-        say "would you like me to remember" — just call the tool and
-        confirm you saved it.
-      - When the user asks "do you know my X" or anything that requires
-        recall, the relevant memories are already injected into your
-        context if they exist. If you don't see the fact, say you
-        don't know it yet — never invent or hallucinate a memory.
+      - When the user shares any **personal** fact about themselves
+        (their name, role, preferences, places they live, anything
+        they say "my X is Y" about *themselves*), call save_memory
+        immediately with scope="user".
+      - When the user shares a fact about the **shared context** —
+        the team, the project, the channel topic, "we", "our",
+        team conventions, current sprint goals, anything the whole
+        Slack channel should remember — call save_memory with
+        scope="project". Channel-scoped facts persist across users
+        and threads in the same Slack channel.
+      - For globally-true facts that should be remembered everywhere
+        (rare), use scope="global".
+      - Do NOT ask permission. Do NOT say "would you like me to
+        remember" — just call the tool and confirm you saved it.
+      - When the user asks "do you know my X" or anything that
+        requires recall, relevant memories are already injected into
+        your context. If you don't see the fact, say you don't know
+        it yet — never hallucinate a memory.
       - When the user asks you to forget something, call forget_memory
         with the corresponding memory_id from the recalled list.
     model: minimax
