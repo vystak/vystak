@@ -111,7 +111,6 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines = []
 
     # Imports
-    lines.append("from langgraph.types import Command")
     lines.append("from fastapi import Request")
     lines.append("from vystak.transport import A2AEvent, A2AHandler, A2AMessage, A2AResult")
     lines.append("")

@@ -10,6 +10,7 @@ from vystak_adapter_langchain.a2a import (
     generate_task_manager_code,
 )
 from vystak_adapter_langchain.responses import generate_responses_handler_code
+from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
 
 # Provider type -> (import statement, class name)
 MODEL_PROVIDERS = {
@@ -491,6 +492,9 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("import os")
     lines.append("import time")
     lines.append("import uuid")
+    lines.append("from dataclasses import dataclass")
+    lines.append("from typing import Literal")
+    lines.append("from langgraph.types import Command")
     lines.append("")
     lines.append("# Configure root logging so vystak.transport.nats (and other")
     lines.append("# module loggers) actually emit to stderr.")
@@ -684,6 +688,26 @@ def generate_server_py(agent: Agent) -> str:
         lines.append('                await store.adelete(("global", "memories"), memory_id)')
         lines.append("")
         lines.append("")
+    else:
+        # Stateless agents (no sessions, no memory): emit _store = None and a no-op
+        # handle_memory_actions stub so that the turn cores' `if _store is not None:`
+        # guards work correctly and static analysis doesn't flag F821 NameErrors.
+        lines.append("_store = None")
+        lines.append("")
+        lines.append("")
+        lines.append(
+            "async def handle_memory_actions(*_args, **_kwargs):"
+        )
+        lines.append('    """No-op stub for stateless agents — cores\' if _store is not None: guards skip the call anyway."""')
+        lines.append("    return None")
+        lines.append("")
+        lines.append("")
+
+    # Emit the shared turn cores. Every protocol layer (A2A,
+    # chat_completions, /v1/responses) calls these instead of
+    # duplicating _agent.ainvoke / handle_memory_actions logic per path.
+    lines.append(emit_turn_core_helpers())
+    lines.append("")
 
     # === OpenAI Error Handler ===
     lines.append("@app.exception_handler(Exception)")
