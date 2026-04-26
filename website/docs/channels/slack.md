@@ -9,8 +9,10 @@ sidebar_position: 2
 A **`type: slack`** channel deploys a Slack Socket Mode runner that:
 
 - Greets each new channel with a welcome message naming the routable agents
-- Persists per-channel and per-user bindings to a SQLite file on a named volume (or external Postgres)
-- Dispatches messages via a single resolution function — deploy-time channel pin → runtime `/vystak route` binding → user preference (DMs) → optional LLM router → `default_agent`
+- Persists per-channel, per-user, and per-thread bindings to a SQLite file on a named volume (or external Postgres)
+- Dispatches messages via a single resolution function — thread binding → deploy-time channel pin → runtime `/vystak route` binding → user preference (DMs) → optional LLM router → `default_agent`
+- Follows threads after first reply: once an agent answers in a thread, every subsequent message in that thread routes to the same agent without re-mention
+- Treats each Slack thread as its own conversation session (`slack:<channel>:<thread_ts>`)
 - Optionally pulls thread context via Slack's [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/) on cold-start mentions
 - Handles slash commands `/vystak route|prefer|status|unroute|unprefer` for self-serve runtime routing
 
@@ -269,26 +271,39 @@ Mirrors `--delete-workspace-data` for workspace volumes.
 
 ## Multi-agent routing example
 
-Two agents, channel-pinned per use case, A2A delegation between agents:
+Three agents — a generalist `assistant-agent` that fans out to specialist `weather-agent` and `time-agent` peers via A2A. The `subagents` field auto-generates `ask_<peer>_agent` delegation tools — no `tools/ask_*.py` files required.
 
 ```yaml
 agents:
   - name: weather-agent
-    instructions: You are a weather specialist.
+    instructions: |
+      You are a weather specialist. Use get_weather to fetch real data.
     model: sonnet
     platform: local
-    skills: [{name: weather, tools: []}]
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+
+  - name: time-agent
+    instructions: You are a time specialist. Use get_time.
+    model: sonnet
+    platform: local
+    skills:
+      - {name: time, tools: [get_time]}
     secrets:
       - {name: ANTHROPIC_API_KEY}
 
   - name: assistant-agent
     instructions: |
-      Friendly general-purpose assistant. For weather questions call
-      ask_weather_agent and return the reply verbatim.
+      Friendly general-purpose assistant.
+      For weather questions call ask_weather_agent.
+      For time questions call ask_time_agent.
+      For mixed questions call BOTH in parallel.
+      Return each agent's reply verbatim.
     model: sonnet
     platform: local
-    skills:
-      - {name: general, tools: [ask_weather_agent]}
+    subagents: [weather-agent, time-agent]
     secrets:
       - {name: ANTHROPIC_API_KEY}
 
@@ -299,25 +314,48 @@ channels:
     secrets:
       - {name: SLACK_BOT_TOKEN}
       - {name: SLACK_APP_TOKEN}
-    agents: [weather-agent, assistant-agent]
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
 ```
 
-Add `tools/ask_weather_agent.py` next to `vystak.yaml`:
+Add the leaf agents' tools next to `vystak.yaml`:
 
 ```python
-"""Delegate a weather question to the peer weather-agent via A2A."""
+# tools/get_weather.py
+import json
+from urllib.request import urlopen
 
-from vystak.transport import ask_agent
-
-
-async def ask_weather_agent(question: str) -> str:
-    """Ask the weather specialist agent a question."""
-    return await ask_agent("weather-agent", question)
+def get_weather(city: str) -> str:
+    """Get current weather for a city via wttr.in (no API key needed)."""
+    with urlopen(f"https://wttr.in/{city}?format=j1") as r:
+        c = json.loads(r.read())["current_condition"][0]
+        return f"{city}: {c['weatherDesc'][0]['value']}, {c['temp_C']}°C"
 ```
 
-`vystak apply` builds both agents and the Slack channel, populates each agent's peer-route table (`VYSTAK_ROUTES_JSON`), and the LangChain adapter discovers `ask_weather_agent` from `tools/` and binds it as a `@tool` on assistant-agent. In Slack: `/vystak route assistant-agent` in any channel, then ask anything — weather questions transparently delegate to weather-agent.
+```python
+# tools/get_time.py
+from datetime import datetime, timezone
 
-See [`examples/docker-slack/`](https://github.com/vystak/vystak/tree/main/examples/docker-slack) for the full working example.
+def get_time(location: str = "UTC") -> str:
+    """Get the current UTC time."""
+    return f"Current UTC time: {datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S UTC}"
+```
+
+`vystak apply` builds all three agents and the Slack channel, populates each agent's peer-route table (`VYSTAK_ROUTES_JSON`), and binds `ask_weather_agent` / `ask_time_agent` as A2A delegation tools on `assistant-agent`. Because `default_agent: assistant-agent` is set, every Slack channel auto-binds to the assistant on bot invite.
+
+In Slack:
+
+```
+@<bot> what's the weather in Lisbon and the time?
+```
+
+The assistant calls both subagents in parallel and replies in a thread. Then in the same thread, no mention needed:
+
+```
+and how about Berlin weather?
+```
+
+The bot replies again — the thread is sticky-bound to `assistant-agent`. See [`examples/docker-slack-multi-agent/`](https://github.com/vystak/vystak/tree/main/examples/docker-slack-multi-agent) for the full working example, or [`examples/docker-slack/`](https://github.com/vystak/vystak/tree/main/examples/docker-slack) for a single-agent variant.
 
 ## Health and observability
 
