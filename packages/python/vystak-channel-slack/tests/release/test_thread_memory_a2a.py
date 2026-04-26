@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-pytestmark = pytest.mark.release_smoke
+pytestmark = [pytest.mark.release_smoke, pytest.mark.docker]
 
 # Test file path: packages/python/vystak-channel-slack/tests/release/test_thread_memory_a2a.py
 # Repo root is parents[5].
@@ -41,13 +41,37 @@ def _docker_available() -> bool:
         return False
 
 
+def _repo_root() -> Path:
+    """Return the main repo root (works in both worktrees and normal checkouts)."""
+    # `git rev-parse --git-common-dir` returns the common .git dir shared
+    # across worktrees; its parent is the main repo root.
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        capture_output=True, text=True, check=True,
+        cwd=str(Path(__file__).parent),
+    )
+    git_common = Path(result.stdout.strip()).resolve()
+    # git-common-dir is either ".git" (main) or "../.git/worktrees/<name>"
+    # Walk up until we're out of a .git subtree.
+    candidate = git_common
+    while candidate.name in (".git", "worktrees") or candidate.parent.name == "worktrees":
+        candidate = candidate.parent
+    return candidate
+
+
 def _vystak(args: list[str], cwd: Path):
     """Run a vystak CLI subcommand inside ``cwd``. Ensures .env is present."""
     env_path = cwd / ".env"
     if not env_path.exists():
-        repo_env = Path(__file__).resolve().parents[5] / ".env"
-        if repo_env.exists():
-            shutil.copy(repo_env, env_path)
+        # Try worktree root first, then the main repo root (handles worktrees
+        # where examples/.env is a symlink into the main repo root .env).
+        for candidate in (
+            Path(__file__).resolve().parents[5] / ".env",
+            _repo_root() / ".env",
+        ):
+            if candidate.exists():
+                shutil.copy(candidate, env_path)
+                break
     return subprocess.run(
         ["uv", "run", "vystak", *args],
         cwd=str(cwd),
