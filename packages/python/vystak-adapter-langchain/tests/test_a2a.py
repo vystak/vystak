@@ -124,10 +124,98 @@ class TestA2AHandlerCode:
         assert "jsonrpc" in code
 
     def test_has_interrupt_handling(self, sample_agent):
+        # interrupt handling is now inside process_turn_streaming (turn_core.py);
+        # the a2a handler code itself routes on the TurnEvent.type == "interrupt" emitted by it.
         code = generate_a2a_handler_code(sample_agent)
         assert "input_required" in code
-        assert "__interrupt__" in code
 
     def test_has_command_resume(self, sample_agent):
+        # Command(resume=...) is now emitted inside process_turn_streaming (turn_core.py);
+        # the a2a handler passes resume_text to it via the process_turn_streaming kwarg.
         code = generate_a2a_handler_code(sample_agent)
-        assert "Command" in code
+        assert "resume_text" in code
+
+
+class TestA2AOneShotUsesProcessTurn:
+    """The migrated _a2a_one_shot calls process_turn instead of inlining ainvoke."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_one_shot_calls_process_turn(self):
+        src = self._server_py()
+        assert "await process_turn(" in src
+
+    def test_one_shot_no_longer_inlines_ainvoke(self):
+        """Inside _a2a_one_shot, _agent.ainvoke must not appear (it lives in process_turn now)."""
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _a2a_one_shot\(.*?\)(?:\s*->\s*[^\n:]*)?:\s*\n(.*?)(?=\nasync def |\Z)",
+            src, re.DOTALL,
+        )
+        assert match, "could not locate _a2a_one_shot function in emitted server.py"
+        body = match.group(1)
+        assert "_agent.ainvoke(" not in body, (
+            "expected _a2a_one_shot to delegate to process_turn, "
+            "but found inlined _agent.ainvoke"
+        )
+        assert "handle_memory_actions(" not in body
+
+
+class TestA2AStreamingUsesProcessTurnStreaming:
+    """The streaming A2A path delegates to process_turn_streaming."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_a2a_streaming_calls_process_turn_streaming(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _a2a_streaming\(.*?\)(?:\s*->\s*[^\n:]*)?:\s*\n(.*?)(?=\nasync def |\Z)",
+            src, re.DOTALL,
+        )
+        assert match
+        body = match.group(1)
+        assert "process_turn_streaming(" in body
+
+    def test_a2a_streaming_no_longer_inlines_astream_events(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _a2a_streaming\(.*?\)(?:\s*->\s*[^\n:]*)?:\s*\n(.*?)(?=\nasync def |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert "_agent.astream_events(" not in body

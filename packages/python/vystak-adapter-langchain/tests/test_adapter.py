@@ -167,3 +167,179 @@ def test_no_workspace_no_builtin_tools():
     # Server should not have workspace bootstrap
     assert "WorkspaceRpcClient" not in code.files.get("server.py", "")
     assert "VYSTAK_WORKSPACE_HOST" not in code.files.get("server.py", "")
+
+
+def _minimal_agent_for_turn_core_test():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    p = Provider(name="anthropic", type="anthropic")
+    return Agent(
+        name="probe",
+        model=Model(name="m", model_name="claude-sonnet-4-20250514", provider=p),
+    )
+
+
+class TestServerPyEmitsTurnCoreHelpers:
+    """Phase 1.2: every generated server.py includes the shared cores."""
+
+    def _server_py(self):
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        agent = _minimal_agent_for_turn_core_test()
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_imports_dataclass(self):
+        assert "from dataclasses import dataclass" in self._server_py()
+
+    def test_imports_literal(self):
+        assert "from typing import Literal" in self._server_py()
+
+    def test_imports_command(self):
+        assert "from langgraph.types import Command" in self._server_py()
+
+    def test_emits_turn_result_dataclass(self):
+        assert "class TurnResult:" in self._server_py()
+
+    def test_emits_turn_event_dataclass(self):
+        assert "class TurnEvent:" in self._server_py()
+
+    def test_emits_flatten_message_content(self):
+        assert "def _flatten_message_content(" in self._server_py()
+
+    def test_emits_process_turn(self):
+        assert "async def process_turn(" in self._server_py()
+
+    def test_emits_process_turn_streaming(self):
+        assert "async def process_turn_streaming(" in self._server_py()
+
+    def test_server_py_is_syntactically_valid(self):
+        import ast
+
+        ast.parse(self._server_py())
+
+    def test_stateless_agent_emits_store_none_and_handle_memory_stub(self):
+        """Stateless agents need _store and handle_memory_actions in scope.
+
+        Without them the cores' ``if _store is not None:`` guards would raise NameError.
+        """
+        src = self._server_py()  # uses the stateless _minimal_agent_for_turn_core_test
+        assert "_store = None" in src
+        # The cores reference handle_memory_actions inside an `if _store is not None:` guard,
+        # but handle_memory_actions still needs to exist for static analyzers.
+        assert "async def handle_memory_actions(" in src
+
+    def test_persistent_agent_emits_handle_memory_actions_before_process_turn(self):
+        """In a persistent agent, handle_memory_actions must come BEFORE process_turn.
+
+        This ordering ensures process_turn's reference resolves at call time.
+        """
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak.schema.service import Sqlite
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+            sessions=Sqlite(name="probe-sessions", provider=d),
+        )
+        src = LangChainAdapter().generate(agent).files["server.py"]
+        # Both must be present.
+        assert "async def handle_memory_actions(" in src
+        assert "async def process_turn(" in src
+        # And in the right order.
+        idx_handle = src.index("async def handle_memory_actions(")
+        idx_proc = src.index("async def process_turn(")
+        assert idx_handle < idx_proc, (
+            "handle_memory_actions must be defined before process_turn so "
+            "process_turn's reference resolves at call time"
+        )
+
+
+class TestSharedTurnCoreInvariants:
+    """Acceptance criteria 1 and 2 from the spec.
+
+    Structural backstop: if a future change adds an _agent.ainvoke or
+    _agent.astream_events call outside the cores, these tests break and
+    the author notices before merge.
+
+    Refs: docs/superpowers/specs/2026-04-26-langchain-adapter-shared-turn-core-design.md
+    """
+
+    SRC_DIR = "packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain"
+
+    def _grep_source(self, needle):
+        """Return list of "{file}:{lineno}: {line}" hits across the adapter source."""
+        import pathlib
+        # Test file lives at packages/python/vystak-adapter-langchain/tests/test_adapter.py
+        # so the repo root is parents[4]:
+        #   parents[0] = …/tests
+        #   parents[1] = …/vystak-adapter-langchain
+        #   parents[2] = …/python
+        #   parents[3] = …/packages
+        #   parents[4] = repo root (worktree root)
+        repo_root = pathlib.Path(__file__).resolve().parents[4]
+        root = repo_root / self.SRC_DIR
+        hits = []
+        for path in sorted(root.glob("*.py")):
+            text = path.read_text()
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if needle in line:
+                    hits.append(f"{path.name}:{lineno}: {line.strip()}")
+        return hits
+
+    def test_ainvoke_appears_only_inside_turn_core(self):
+        hits = self._grep_source("_agent.ainvoke(")
+        assert len(hits) == 1, (
+            "spec AC1 violated: expected 1 _agent.ainvoke site (inside "
+            "process_turn in turn_core.py); got:\n" + "\n".join(hits)
+        )
+        assert hits[0].startswith("turn_core.py:"), (
+            f"_agent.ainvoke must live in turn_core.py only; got: {hits[0]}"
+        )
+
+    def test_astream_events_appears_only_inside_turn_core(self):
+        hits = self._grep_source("_agent.astream_events(")
+        assert len(hits) == 1, (
+            "spec AC1 violated: expected 1 _agent.astream_events site "
+            "(inside process_turn_streaming in turn_core.py); got:\n" + "\n".join(hits)
+        )
+        assert hits[0].startswith("turn_core.py:"), (
+            f"_agent.astream_events must live in turn_core.py only; got: {hits[0]}"
+        )
+
+    def test_no_residual_astream_calls_outside_turn_core(self):
+        """No streaming protocol path should still inline its own _agent.astream(...) loop."""
+        hits = self._grep_source("_agent.astream(")
+        # NOTE: _agent.astream_events also matches _agent.astream as a substring,
+        # but we use the suffix "_events(" filter via separate test above. To
+        # check the bare astream form, search for the exact substring.
+        # An astream_events hit also contains the substring _agent.astream so
+        # filter those out.
+        bare = [h for h in hits if "astream_events(" not in h]
+        assert bare == [], (
+            "spec AC: expected zero _agent.astream(...) bare calls outside "
+            "turn_core.py; got:\n" + "\n".join(bare)
+        )
+
+    def test_handle_memory_actions_call_sites(self):
+        """handle_memory_actions is called from exactly 2 places (the two cores)."""
+        hits = self._grep_source("await handle_memory_actions(")
+        assert len(hits) == 2, (
+            "spec AC2 violated: expected 2 handle_memory_actions call "
+            "sites (both inside turn_core.py — process_turn and "
+            "process_turn_streaming); got:\n" + "\n".join(hits)
+        )
+        assert all(h.startswith("turn_core.py:") for h in hits), (
+            "All handle_memory_actions calls must originate in turn_core.py; got:\n"
+            + "\n".join(hits)
+        )
