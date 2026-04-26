@@ -896,3 +896,48 @@ class TestRunBackgroundSyncUsesProcessTurn:
         assert "_agent.ainvoke(" not in body, (
             "the _run_background sync branch should delegate to process_turn"
         )
+
+
+class TestStreamChatCompletionsUsesProcessTurnStreaming:
+    """Streaming /v1/chat/completions delegates to process_turn_streaming."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_stream_chat_completions_calls_process_turn_streaming(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _stream_chat_completions\(.*?\):\s*\n(.*?)(?=\nasync def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        assert match
+        body = match.group(1)
+        assert "process_turn_streaming(" in body
+
+    def test_stream_chat_completions_no_longer_inlines_astream(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _stream_chat_completions\(.*?\):\s*\n(.*?)(?=\nasync def |\nclass |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert "_agent.astream(" not in body
+        assert "_agent.astream_events(" not in body
+        assert "handle_memory_actions(" not in body
