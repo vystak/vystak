@@ -493,6 +493,7 @@ def generate_server_py(agent: Agent) -> str:
     lines.append("import time")
     lines.append("import uuid")
     lines.append("from dataclasses import dataclass")
+    lines.append("from types import SimpleNamespace")
     lines.append("from typing import Literal")
     lines.append("from langgraph.types import Command")
     lines.append("")

@@ -112,3 +112,15 @@ def test_emitted_process_turn_uses_messages_when_provided():
     # The new branch: `elif messages is not None:` followed by agent_input assignment.
     assert "elif messages is not None:" in src
     assert 'agent_input = {"messages": messages}' in src
+
+
+def test_process_turn_streaming_wraps_bare_string_tool_outputs():
+    """Bare-string tool outputs (save_memory sentinels) must be wrapped for handle_memory_actions.
+
+    Verifies the SimpleNamespace wrapping pattern is emitted.
+    """
+    from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+    src = emit_turn_core_helpers()
+    # The wrap pattern: SimpleNamespace(content=tm) for str outputs.
+    assert "SimpleNamespace(content=tm)" in src

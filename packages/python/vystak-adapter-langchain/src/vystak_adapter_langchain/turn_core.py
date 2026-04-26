@@ -159,16 +159,15 @@ async def process_turn_streaming(
                 accumulated.append(token)
                 yield TurnEvent(type="token", text=token)
         elif ev_kind == "on_tool_end":
-            # NOTE: on_tool_end's "output" is the raw tool return value
-            # (e.g. a bare str like "__SAVE_MEMORY__|user|..."), NOT a
-            # ToolMessage with .content. handle_memory_actions expects
-            # objects with .content; bare strings will be silently
-            # skipped. Phase 4 must wrap these (e.g. via SimpleNamespace
-            # or a tiny dataclass) or switch to a different event source
-            # that yields full ToolMessage objects.
             tm = event["data"].get("output")
             if tm is not None:
-                tool_msgs.append(tm)
+                # handle_memory_actions expects objects with .content (ToolMessage shape).
+                # Bare strings (e.g. save_memory's "__SAVE_MEMORY__|..." return) are wrapped.
+                if hasattr(tm, "content"):
+                    tool_msgs.append(tm)
+                elif isinstance(tm, str):
+                    tool_msgs.append(SimpleNamespace(content=tm))
+                # else: ignore — non-string, non-message outputs aren't memory sentinels.
 
     if _store is not None and tool_msgs:
         await handle_memory_actions(
@@ -188,10 +187,10 @@ def emit_turn_core_helpers() -> str:
 
     The returned string is plain Python source. It assumes the
     surrounding module has imported ``dataclass``, ``Literal``,
-    ``uuid``, ``Command``, and that the names ``_agent``, ``_store``,
-    ``handle_memory_actions``, and ``AGENT_NAME`` are already bound at
-    module level — these are all already part of the existing
-    ``SERVER_PY`` shape.
+    ``uuid``, ``Command``, ``SimpleNamespace``, and that the names
+    ``_agent``, ``_store``, ``handle_memory_actions``, and ``AGENT_NAME``
+    are already bound at module level — these are all already part of
+    the existing ``SERVER_PY`` shape.
 
     Helpers ``_flatten_message_content`` and ``_build_turn_config`` are
     defined inside the emitted source itself, not assumed at the splice
