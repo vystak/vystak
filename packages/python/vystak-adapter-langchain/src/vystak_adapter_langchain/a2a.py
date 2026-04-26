@@ -261,7 +261,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('    task_id = params.get("id") or str(uuid.uuid4())')
     lines.append('    raw_message = params.get("message", {})')
     lines.append('    metadata = params.get("metadata", {})')
-    lines.append('    session_id = params.get("sessionId") or task_id')
+    # Wire format puts sessionId inside params["metadata"]; keep params["sessionId"]
+    # as a top-level fallback. Only fall through to task_id if neither is set.
+    lines.append('    session_id = metadata.get("sessionId") or params.get("sessionId") or task_id')
     lines.append("")
     lines.append("    # Seed the task manager so resume scenarios work consistently with")
     lines.append("    # prior behaviour (task created before handler dispatch).")
@@ -329,7 +331,9 @@ def generate_a2a_handler_code(agent: Agent) -> str:
     lines.append('    task_id = params.get("id") or str(uuid.uuid4())')
     lines.append('    raw_message = params.get("message", {})')
     lines.append('    metadata = params.get("metadata", {})')
-    lines.append('    session_id = params.get("sessionId") or task_id')
+    # Wire format puts sessionId inside params["metadata"]; keep params["sessionId"]
+    # as a top-level fallback. Only fall through to task_id if neither is set.
+    lines.append('    session_id = metadata.get("sessionId") or params.get("sessionId") or task_id')
     lines.append("")
     lines.append("    if _task_manager.get_task(task_id) is None:")
     lines.append("        _task_manager.create_task(task_id, raw_message)")
