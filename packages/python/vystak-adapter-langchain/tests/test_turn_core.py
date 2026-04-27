@@ -151,3 +151,43 @@ class TestTurnCoreToolCallLiteral:
         assert "tool_call" not in values
         assert "tool_call_start" in values
         assert "tool_call_end" in values
+
+
+class TestTurnCoreToolCallEmissions:
+    """process_turn_streaming yields a TurnEvent on each on_tool_start/on_tool_end."""
+
+    def test_streaming_handles_on_tool_start(self):
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        assert 'ev_kind == "on_tool_start"' in src
+        assert 'type="tool_call_start"' in src
+
+    def test_streaming_handles_on_tool_end_with_duration(self):
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        assert 'type="tool_call_end"' in src
+        assert "duration_ms" in src
+
+    def test_streaming_uses_run_id_for_duration(self):
+        """Duration must be computed from the langgraph run_id keyed start
+        time, NOT recomputed at end-time. Verifies the per-tool start-map."""
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        assert "run_id" in src
+        # A dict keyed by run_id holding start times, populated on
+        # on_tool_start and read on on_tool_end.
+        assert "_tool_starts" in src or "tool_starts" in src
+
+    def test_streaming_does_not_break_existing_on_tool_end_memory_path(self):
+        """The existing on_tool_end branch already collects tool messages for
+        handle_memory_actions. The new emission must coexist with it."""
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        # Memory wrapping pattern (from prior task) must still be present.
+        assert "SimpleNamespace(content=tm)" in src
+        # handle_memory_actions still appears twice (once for each core).
+        assert src.count("await handle_memory_actions(") == 2

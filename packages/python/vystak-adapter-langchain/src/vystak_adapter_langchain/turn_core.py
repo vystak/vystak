@@ -144,6 +144,7 @@ async def process_turn_streaming(
 
     accumulated: list[str] = []
     tool_msgs: list = []
+    _tool_starts: dict[str, float] = {}
 
     async for event in _agent.astream_events(
         agent_input, config=config, version="v2",
@@ -165,7 +166,28 @@ async def process_turn_streaming(
             if token:
                 accumulated.append(token)
                 yield TurnEvent(type="token", text=token)
+        elif ev_kind == "on_tool_start":
+            tool_name = event.get("name") or event.get("data", {}).get("name", "?")
+            run_id = str(event.get("run_id") or "")
+            started_at = time.time()
+            if run_id:
+                _tool_starts[run_id] = started_at
+            yield TurnEvent(
+                type="tool_call_start",
+                data={"tool_name": tool_name, "started_at": started_at},
+            )
         elif ev_kind == "on_tool_end":
+            tool_name = event.get("name") or event.get("data", {}).get("name", "?")
+            run_id = str(event.get("run_id") or "")
+            started_at = _tool_starts.pop(run_id, None)
+            duration_ms = (
+                int((time.time() - started_at) * 1000)
+                if started_at is not None else 0
+            )
+            yield TurnEvent(
+                type="tool_call_end",
+                data={"tool_name": tool_name, "duration_ms": duration_ms},
+            )
             tm = event["data"].get("output")
             if tm is not None:
                 # handle_memory_actions expects objects with .content (ToolMessage shape).
