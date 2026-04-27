@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -17,6 +18,8 @@ from vystak.transport import (
     Transport,
 )
 from vystak.transport.base import ServerDispatcherProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class HttpTransport(Transport):
@@ -98,7 +101,9 @@ class HttpTransport(Transport):
                     # legacy JSON-RPC envelope frames emitted by the
                     # LangChain adapter for token/status/final events).
                     # Existing SSE consumers can still parse the envelope
-                    # themselves at a higher layer.
+                    # themselves at a higher layer. Log at debug so this is
+                    # visible if real bugs surface.
+                    logger.debug("skipping non-A2AEvent SSE frame: %r", parsed)
                     continue
 
     async def serve(self, canonical_name: str, handler: ServerDispatcherProtocol) -> None:

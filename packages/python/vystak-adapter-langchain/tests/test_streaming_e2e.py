@@ -26,7 +26,13 @@ def _build_app(events: list[A2AEvent]) -> FastAPI:
     """Build a minimal FastAPI app with a /a2a route that streams the given
     event list through an A2AHandler. The SSE wire shape mirrors what the
     LangChain adapter's emitted server.py uses for tool_call/tool_result/final
-    (bare A2AEvent JSON via model_dump_json)."""
+    (bare A2AEvent JSON via model_dump_json).
+
+    NOTE: this emission logic is a *model* of a2a.py's wire format, not an
+    import. If a2a.py later changes its wire shape (adds new event types,
+    alters envelope structure), update this harness to match — otherwise
+    these tests will silently drift and stop catching production wire bugs.
+    """
     app = FastAPI()
 
     async def _one_shot(message: A2AMessage, metadata: dict) -> str:
