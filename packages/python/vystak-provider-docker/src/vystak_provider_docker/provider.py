@@ -778,6 +778,7 @@ class DockerProvider(PlatformProvider):
                     success=True,
                     hash=plan.target_hash,
                     message=f"Deployed {plan.agent_name} at {url}",
+                    info={"url": url},
                 )
 
             return DeployResult(
@@ -1077,6 +1078,7 @@ class DockerProvider(PlatformProvider):
                     success=True,
                     hash=plan.target_hash,
                     message=f"Deployed channel {channel.name} at {url}",
+                    info={"url": url},
                 )
 
             error = channel_result.error if channel_result else "Channel node not found"

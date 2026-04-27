@@ -379,8 +379,9 @@ def _resolve_agent_urls(deployed_agents: list[dict]) -> dict[str, str]:
             continue
 
         result = d.get("result")
-        if result and hasattr(result, "message") and " at " in result.message:
-            urls[agent.name] = result.message.split(" at ", 1)[1]
+        result_info = getattr(result, "info", {}) or {}
+        if result_info.get("url"):
+            urls[agent.name] = result_info["url"]
             continue
 
         url = d.get("url")

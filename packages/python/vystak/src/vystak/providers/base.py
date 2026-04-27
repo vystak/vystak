@@ -37,6 +37,11 @@ class DeployResult:
     success: bool
     hash: str
     message: str
+    # Free-form key-value bag for structured deploy metadata. Providers
+    # populate ``info["url"]`` with the agent's reachable wire address so
+    # downstream callers (e.g. channel route resolution) don't have to
+    # parse ``message`` strings to recover it.
+    info: dict = field(default_factory=dict)
 
 
 @dataclass
