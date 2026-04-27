@@ -1,5 +1,7 @@
 # Vystak
 
+[![CI](https://github.com/vystak/vystak/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vystak/vystak/actions/workflows/ci.yml)
+
 Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.
 
 Vystak builds nothing. It wires everything. Define your agent in Python or YAML, and Vystak generates native framework code, provisions infrastructure, and deploys to Docker — from a single command.
