@@ -277,3 +277,29 @@ class TestServerTemplateThreadBindings:
         # Ensure it's no longer a dead variable: it's read after the
         # 'require_explicit_mention=' kwarg in the policy call.
         assert "require_explicit_mention=_THREAD_REQUIRE_EXPLICIT_MENTION" in SERVER_PY
+
+
+class TestSlackChannelStreamToolCalls:
+    """The stream_tool_calls flag round-trips from Channel.config to channel_config.json."""
+
+    def test_default_value_false(self):
+        plugin = SlackChannelPlugin()
+        code = plugin.generate_code(_channel(), {})
+        cfg = json.loads(code.files["channel_config.json"])
+        assert cfg.get("stream_tool_calls") is False
+
+    def test_true_when_set_in_channel_config(self):
+        plugin = SlackChannelPlugin()
+        ch = _channel(config={"stream_tool_calls": True})
+        code = plugin.generate_code(ch, {})
+        cfg = json.loads(code.files["channel_config.json"])
+        assert cfg["stream_tool_calls"] is True
+
+    def test_slack_channel_config_pydantic_field(self):
+        """The pydantic SlackChannelConfig schema documents the field."""
+        from vystak_channel_slack import SlackChannelConfig
+
+        cfg = SlackChannelConfig(stream_tool_calls=True)
+        assert cfg.stream_tool_calls is True
+        # Default still False.
+        assert SlackChannelConfig().stream_tool_calls is False

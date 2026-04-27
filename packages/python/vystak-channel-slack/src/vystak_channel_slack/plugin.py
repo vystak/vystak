@@ -21,6 +21,7 @@ class SlackChannelConfig(BaseModel):
     """Optional config for a Slack channel."""
 
     port: int = 8080
+    stream_tool_calls: bool = False
 
 
 class SlackChannelPlugin(ChannelPlugin):
@@ -83,6 +84,7 @@ class SlackChannelPlugin(ChannelPlugin):
                     or channel.thread_require_explicit_mention
                 ),
             },
+            "stream_tool_calls": bool(channel.config.get("stream_tool_calls", False)),
             "state": state_cfg,
         }
 
