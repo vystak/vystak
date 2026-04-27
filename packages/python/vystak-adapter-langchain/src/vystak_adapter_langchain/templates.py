@@ -144,6 +144,11 @@ def _get_session_store(agent: Agent):
     return None
 
 
+def _compaction_enabled(agent: Agent) -> bool:
+    """True when codegen should emit compaction wiring."""
+    return agent.compaction is not None and agent.compaction.mode != "off"
+
+
 def _has_mcp_servers(agent: Agent) -> bool:
     """Check if the agent has MCP servers configured."""
     return bool(agent.mcp_servers)
