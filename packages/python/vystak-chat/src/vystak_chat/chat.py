@@ -39,6 +39,8 @@ COMMANDS = [
     ("/new", "", "New session (same agent)"),
     ("/resume", "<id>", "Resume a session by ID"),
     ("/status", "", "Show connection info"),
+    ("/compact", "[instructions]", "Force-compact the current session"),
+    ("/compactions", "", "List compaction generations for the current session"),
     ("/help", "", "Show commands"),
     ("/exit", "", "Quit"),
 ]
@@ -635,6 +637,10 @@ class ChatREPL:
                 self._cmd_new()
             case "status":
                 self._show_status()
+            case "compact":
+                await self._cmd_compact(args)
+            case "compactions":
+                await self._cmd_compactions(args)
             case _:
                 console.print(f"[error]Unknown: /{cmd}[/error]  [system]Type /help[/system]")
 
@@ -713,6 +719,63 @@ class ChatREPL:
         # guards cross-agent chaining, so drop it explicitly.
         self._previous_response_id = None
         console.print(f"[success]Switched to {model}[/success]")
+
+    async def _cmd_compact(self, args: str):
+        if not self._previous_response_id or not self._agent_url:
+            console.print("[warning]No active conversation to compact.[/warning]")
+            return
+        try:
+            resp = await client.get_response(
+                self._agent_url, response_id=self._previous_response_id
+            )
+            thread_id = resp.get("thread_id")
+            if not thread_id:
+                console.print("[error]Server did not return thread_id.[/error]")
+                return
+            result = await client.compact(
+                self._agent_url,
+                thread_id=thread_id,
+                instructions=args.strip() or None,
+            )
+        except Exception as exc:
+            console.print(f"[error]Compaction failed: {exc}[/error]")
+            return
+        console.print(
+            f"[success]Compacted {result['messages_compacted']} messages "
+            f"(generation {result['generation']}).[/success]"
+        )
+        if result.get("summary_preview"):
+            console.print(f"[dim]Summary: {result['summary_preview']}…[/dim]")
+
+    async def _cmd_compactions(self, args: str):
+        if not self._previous_response_id or not self._agent_url:
+            console.print("[warning]No active conversation.[/warning]")
+            return
+        try:
+            resp = await client.get_response(
+                self._agent_url, response_id=self._previous_response_id
+            )
+            thread_id = resp.get("thread_id")
+            rows = await client.list_compactions(self._agent_url, thread_id=thread_id)
+        except Exception as exc:
+            console.print(f"[error]{exc}[/error]")
+            return
+        if not rows:
+            console.print("[system]No compactions yet for this thread.[/system]")
+            return
+        t = Table(show_header=True, header_style="bold")
+        t.add_column("Gen")
+        t.add_column("Trigger")
+        t.add_column("Created")
+        t.add_column("Preview")
+        for r in rows:
+            t.add_row(
+                str(r["generation"]),
+                r["trigger"],
+                r["created_at"][:19],
+                (r.get("summary_preview") or "")[:60],
+            )
+        console.print(t)
 
     async def _handle_message(self, message: str):
         if not self.connected:
