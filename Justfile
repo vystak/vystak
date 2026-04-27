@@ -29,8 +29,15 @@ typecheck: typecheck-python typecheck-typescript
 typecheck-python:
     uv run pyright packages/python/
 
+# Build TypeScript packages (emits dist/ for each workspace member).
+# typecheck-typescript depends on it because adapter-mastra and
+# provider-docker import @vystak/core via its dist/.d.ts; on a fresh
+# clone (CI), tsc can't resolve the cross-package import without it.
+build-typescript:
+    pnpm -r run build
+
 # Type check TypeScript
-typecheck-typescript:
+typecheck-typescript: build-typescript
     pnpm -r run typecheck
 
 # Format all code
