@@ -109,3 +109,64 @@ async def test_summarizer_failure_returns_truncated_with_fallback_signal():
     assert "rate limited" in fallback
     assert await store.latest("t1") is None
     assert len(out) <= len(msgs)
+
+
+@pytest.mark.asyncio
+async def test_metrics_recorded_on_successful_write():
+    from vystak_adapter_langchain.compaction.metrics import CompactionMetrics
+    store = InMemoryCompactionStore()
+    msgs = _msgs()
+    metrics = CompactionMetrics()
+    await maybe_compact(
+        msgs, model=_Stub(tokens=170_000),
+        last_input_tokens=None,
+        context_window=200_000, trigger_pct=0.75, keep_recent_pct=0.5,
+        target_tokens=100_000,
+        summarizer=_Stub(tokens=0), summarize_fn=_ok_summarize,
+        compaction_store=store, thread_id="t1",
+        metrics=metrics,
+    )
+    assert metrics.total_count(layer="layer3", trigger="threshold", outcome="written") == 1
+
+
+@pytest.mark.asyncio
+async def test_metrics_recorded_on_suppression():
+    from vystak_adapter_langchain.compaction.metrics import CompactionMetrics
+    store = InMemoryCompactionStore()
+    msgs = _msgs()
+    await store.write(
+        thread_id="t1", summary_text="prev", up_to_message_id="t1:3",
+        trigger="autonomous", summarizer_model="x", usage={},
+    )
+    metrics = CompactionMetrics()
+    await maybe_compact(
+        msgs, model=_Stub(tokens=170_000),
+        last_input_tokens=None,
+        context_window=200_000, trigger_pct=0.75, keep_recent_pct=0.10,
+        target_tokens=100_000,
+        summarizer=_Stub(tokens=0), summarize_fn=_ok_summarize,
+        compaction_store=store, thread_id="t1",
+        metrics=metrics,
+    )
+    # Either "covered" or "recent" — at least one suppression
+    total_supp = (metrics.suppressions(layer="layer3", reason="recent")
+                  + metrics.suppressions(layer="layer3", reason="covered"))
+    assert total_supp == 1
+
+
+@pytest.mark.asyncio
+async def test_metrics_recorded_on_fallback():
+    from vystak_adapter_langchain.compaction.metrics import CompactionMetrics
+    store = InMemoryCompactionStore()
+    msgs = _msgs()
+    metrics = CompactionMetrics()
+    await maybe_compact(
+        msgs, model=_Stub(tokens=170_000),
+        last_input_tokens=None,
+        context_window=200_000, trigger_pct=0.75, keep_recent_pct=0.10,
+        target_tokens=100,
+        summarizer=_Stub(tokens=0), summarize_fn=_failing_summarize,
+        compaction_store=store, thread_id="t1",
+        metrics=metrics,
+    )
+    assert metrics.total_count(layer="layer3", trigger="threshold", outcome="failed_fallback") == 1

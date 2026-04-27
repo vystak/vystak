@@ -12,6 +12,11 @@ from vystak_adapter_langchain.compaction.coverage import (
     message_id,
 )
 from vystak_adapter_langchain.compaction.errors import CompactionError
+from vystak_adapter_langchain.compaction.metrics import (
+    CompactionMetrics,
+    record_compaction,
+    record_suppression,
+)
 from vystak_adapter_langchain.compaction.store import CompactionStore
 from vystak_adapter_langchain.compaction.tokens import estimate_tokens
 
@@ -34,6 +39,7 @@ async def maybe_compact(
     summarize_fn,
     compaction_store: CompactionStore,
     thread_id: str,
+    metrics: CompactionMetrics | None = None,
 ) -> tuple[list[BaseMessage], str | None]:
     """Maybe replace older messages with a summary."""
     latest = await compaction_store.latest(thread_id)
@@ -51,6 +57,9 @@ async def maybe_compact(
                 "covered=%.2f seconds_since=%.0f",
                 thread_id, already, seconds_since,
             )
+            if metrics is not None:
+                reason = "covered" if already >= 1 - LAYER3_SUPPRESS_RECENT_PCT else "recent"
+                record_suppression(metrics, layer="layer3", reason=reason)
             return messages, None
 
     estimate = await estimate_tokens(
@@ -73,6 +82,11 @@ async def maybe_compact(
             thread_id, exc.reason,
         )
         truncated = _hard_truncate(messages, target_tokens)
+        if metrics is not None:
+            record_compaction(
+                metrics, layer="layer3", trigger="threshold",
+                outcome="failed_fallback",
+            )
         return truncated, exc.reason
 
     last_id = message_id(older[-1]) or ""
@@ -84,6 +98,13 @@ async def maybe_compact(
         summarizer_model=summary.model_id,
         usage=summary.usage,
     )
+    if metrics is not None:
+        record_compaction(
+            metrics, layer="layer3", trigger="threshold", outcome="written",
+            input_tokens=int(summary.usage.get("input_tokens", 0)),
+            output_tokens=int(summary.usage.get("output_tokens", 0)),
+            messages_compacted=len(older),
+        )
     return [SystemMessage(content=summary.text)] + recent, None
 
 
