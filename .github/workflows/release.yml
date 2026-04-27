@@ -1,9 +1,13 @@
 name: Release
 
+# Trigger: pushing a tag matching ``v*.*.*``. The tag MUST match the
+# version in ./VERSION (single source of truth bumped via
+# ``just bump <version>``); the verify step refuses otherwise.
+
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
   workflow_dispatch:
 
 jobs:
@@ -15,6 +19,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify tag matches VERSION
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          TAG="${GITHUB_REF#refs/tags/v}"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::tag v$TAG does not match VERSION ($VERSION) — bump VERSION + commit before tagging"
+            exit 1
+          fi
+          echo "Releasing v$VERSION"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -48,7 +62,17 @@ jobs:
         # Build artifacts go to the workspace-root ./dist/, so clear between
         # packages and publish one at a time for deterministic ordering.
         run: |
-          for pkg in vystak vystak-adapter-langchain vystak-provider-docker vystak-cli; do
+          for pkg in vystak \
+                     vystak-transport-http \
+                     vystak-transport-nats \
+                     vystak-adapter-langchain \
+                     vystak-channel-api \
+                     vystak-channel-chat \
+                     vystak-channel-slack \
+                     vystak-provider-docker \
+                     vystak-provider-azure \
+                     vystak-cli \
+                     vystak-chat; do
             rm -rf dist
             uv build --package "$pkg"
             uv publish

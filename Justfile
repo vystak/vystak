@@ -62,6 +62,12 @@ ci: lint typecheck test
 # from this list into ``ci`` (or vice versa) as gates flip green/red.
 ci-live: lint-python typecheck-typescript test-python test-typescript
 
+# Bump every workspace package to the version in ./VERSION (or argv[1]).
+# Usage:  just bump 0.2.0   # writes VERSION + rewrites every pyproject.toml
+#                            # and package.json in the workspace.
+bump version="":
+    uv run python scripts/bump_version.py {{version}}
+
 # Run docs site locally
 docs-dev:
     pnpm --filter vystak-docs start

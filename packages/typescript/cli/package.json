@@ -1,6 +1,6 @@
 {
   "name": "vystak",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.",
   "type": "module",
   "license": "Apache-2.0",
