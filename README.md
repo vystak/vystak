@@ -1,6 +1,19 @@
 # Vystak
 
 [![CI](https://github.com/vystak/vystak/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vystak/vystak/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-vystak.dev-blue)](https://vystak.dev)
+[![PyPI vystak](https://img.shields.io/pypi/v/vystak?label=vystak)](https://pypi.org/project/vystak/)
+[![PyPI vystak-cli](https://img.shields.io/pypi/v/vystak-cli?label=vystak-cli)](https://pypi.org/project/vystak-cli/)
+[![PyPI vystak-adapter-langchain](https://img.shields.io/pypi/v/vystak-adapter-langchain?label=vystak-adapter-langchain)](https://pypi.org/project/vystak-adapter-langchain/)
+[![PyPI vystak-provider-docker](https://img.shields.io/pypi/v/vystak-provider-docker?label=vystak-provider-docker)](https://pypi.org/project/vystak-provider-docker/)
+[![PyPI vystak-provider-azure](https://img.shields.io/pypi/v/vystak-provider-azure?label=vystak-provider-azure)](https://pypi.org/project/vystak-provider-azure/)
+[![PyPI vystak-channel-slack](https://img.shields.io/pypi/v/vystak-channel-slack?label=vystak-channel-slack)](https://pypi.org/project/vystak-channel-slack/)
+[![PyPI vystak-channel-chat](https://img.shields.io/pypi/v/vystak-channel-chat?label=vystak-channel-chat)](https://pypi.org/project/vystak-channel-chat/)
+[![PyPI vystak-channel-api](https://img.shields.io/pypi/v/vystak-channel-api?label=vystak-channel-api)](https://pypi.org/project/vystak-channel-api/)
+[![PyPI vystak-transport-http](https://img.shields.io/pypi/v/vystak-transport-http?label=vystak-transport-http)](https://pypi.org/project/vystak-transport-http/)
+[![PyPI vystak-transport-nats](https://img.shields.io/pypi/v/vystak-transport-nats?label=vystak-transport-nats)](https://pypi.org/project/vystak-transport-nats/)
+[![PyPI vystak-chat](https://img.shields.io/pypi/v/vystak-chat?label=vystak-chat)](https://pypi.org/project/vystak-chat/)
+[![npm vystak](https://img.shields.io/npm/v/vystak?label=npm%3A%20vystak)](https://www.npmjs.com/package/vystak)
 
 Declarative, platform-agnostic orchestration for AI agents. Define once, deploy everywhere.
 
