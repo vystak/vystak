@@ -103,6 +103,9 @@ channels:
       - {name: SLACK_BOT_TOKEN}
       - {name: SLACK_APP_TOKEN}
 
+    config:                             # optional channel-runtime knobs
+      stream_tool_calls: false          # see "Tool-call streaming" below
+
     agents: [agent-a, agent-b]          # required: which agents are routable
 
     # --- Resolution fallback ---
@@ -237,6 +240,48 @@ Limit per channel:
 thread:
   initial_history_limit: 5      # only fetch most recent 5 prior messages
 ```
+
+## Tool-call streaming
+
+When the agent invokes tools — e.g. delegating to a peer agent (`ask_weather_agent`), calling an MCP server, or hitting an external API — the user otherwise sees a single placeholder message until the final reply arrives. For multi-tool turns this looks identical to a stalled run.
+
+Set `config.stream_tool_calls: true` to surface a live progress trail instead:
+
+```yaml
+channels:
+  - name: slack-main
+    type: slack
+    config:
+      stream_tool_calls: true
+    # ...
+```
+
+While the agent works, the bot's reply message edits live to show:
+
+```
+🔧 *ask_weather_agent*
+🔧 *ask_time_agent*
+_Working..._
+```
+
+…and as each tool finishes:
+
+```
+🔧 *ask_weather_agent* ✓ _(2.1s)_
+🔧 *ask_time_agent* ✓ _(0.4s)_
+_Working..._
+```
+
+When the agent emits its final reply, the entire trail is replaced by the reply text in a single `chat.update`.
+
+Mechanics:
+
+- Edits are **rate-limited to ≤ 1/sec per turn** to honour Slack's tier-3 `chat.update` cap. Updates within the throttle window coalesce; the final update is exempt.
+- **No tool arguments or return values are shown** — only the tool name + duration. Privacy-sensitive content (user IDs, addresses, API responses) doesn't appear in the trail.
+- **Errors** replace the trail with the same `Sorry, I hit an error talking to *<agent>*: …` text the non-streaming path uses.
+- DMs intentionally stay one-shot in v1 — only `app_mention` and follow-the-thread paths are streamed.
+
+Default `false` preserves today's one-shot UX exactly. Switching the flag is a non-disruptive opt-in: agents that don't fire tools render a single edit (just the final reply) regardless.
 
 ## Memory namespacing
 
