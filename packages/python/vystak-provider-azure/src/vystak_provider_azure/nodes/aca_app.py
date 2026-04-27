@@ -522,6 +522,12 @@ class ContainerAppNode(Provisionable):
                 check=True,
                 capture_output=True,
             )
+            # Per-agent cache image: layers from prior builds (vystak source
+            # bundling, pip install, etc.) are restored from registry. First
+            # build seeds the cache; subsequent builds with the same Dockerfile
+            # base + requirements skip straight to the changed layers. ``mode=max``
+            # exports intermediate layers, not just the final-stage ones.
+            cache_ref = f"{login_server}/{self._agent.name}:buildcache"
             result = subprocess.run(
                 [
                     "docker",
@@ -529,6 +535,10 @@ class ContainerAppNode(Provisionable):
                     "build",
                     "--platform",
                     "linux/amd64",
+                    "--cache-from",
+                    f"type=registry,ref={cache_ref}",
+                    "--cache-to",
+                    f"type=registry,ref={cache_ref},mode=max",
                     "--tag",
                     image_tag,
                     "--push",

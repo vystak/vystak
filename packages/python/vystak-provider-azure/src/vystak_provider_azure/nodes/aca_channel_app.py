@@ -250,6 +250,8 @@ class AzureChannelAppNode(Provisionable):
                 check=True,
                 capture_output=True,
             )
+            # Per-channel cache image: see aca_app.py for the rationale.
+            cache_ref = f"{login_server}/channel-{self._channel.name}:buildcache"
             result = subprocess.run(
                 [
                     "docker",
@@ -257,6 +259,10 @@ class AzureChannelAppNode(Provisionable):
                     "build",
                     "--platform",
                     "linux/amd64",
+                    "--cache-from",
+                    f"type=registry,ref={cache_ref}",
+                    "--cache-to",
+                    f"type=registry,ref={cache_ref},mode=max",
                     "--tag",
                     image_tag,
                     "--push",

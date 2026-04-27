@@ -303,6 +303,16 @@ class TestContainerAppNode:
         # Verify subprocess was called for docker login and buildx
         assert mock_subprocess.call_count == 2
 
+        # Verify buildx invocation includes per-agent registry-backed cache.
+        # First call is `docker login`; second is `docker buildx build`.
+        buildx_argv = mock_subprocess.call_args_list[1].args[0]
+        assert "buildx" in buildx_argv
+        cache_ref = "testreg.azurecr.io/my-agent:buildcache"
+        cache_from_idx = buildx_argv.index("--cache-from")
+        assert buildx_argv[cache_from_idx + 1] == f"type=registry,ref={cache_ref}"
+        cache_to_idx = buildx_argv.index("--cache-to")
+        assert buildx_argv[cache_to_idx + 1] == f"type=registry,ref={cache_ref},mode=max"
+
         # Verify transport env vars are injected
         create_call = node._aca_client.container_apps.begin_create_or_update
         container_app = create_call.call_args[0][2]
@@ -515,6 +525,17 @@ class TestAzureChannelAppNode:
         assert result.success is True
         dockerfile = (tmp_path / ".vystak" / "channels" / "chat" / "Dockerfile").read_text()
         assert "FROM --platform=linux/amd64 python:3.11-slim" in dockerfile
+
+        # buildx call (second subprocess invocation, after docker login) must
+        # carry per-channel registry-backed cache flags so layer-reuse works
+        # across deploys.
+        buildx_argv = mock_subproc.call_args_list[1].args[0]
+        assert "buildx" in buildx_argv
+        cache_ref = "test.azurecr.io/channel-chat:buildcache"
+        cache_from_idx = buildx_argv.index("--cache-from")
+        assert buildx_argv[cache_from_idx + 1] == f"type=registry,ref={cache_ref}"
+        cache_to_idx = buildx_argv.index("--cache-to")
+        assert buildx_argv[cache_to_idx + 1] == f"type=registry,ref={cache_ref},mode=max"
 
     @patch("subprocess.run")
     def test_provision_injects_secrets_and_port_env(self, mock_subproc, tmp_path, monkeypatch):
