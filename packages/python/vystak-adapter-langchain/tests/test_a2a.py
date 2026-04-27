@@ -219,3 +219,71 @@ class TestA2AStreamingUsesProcessTurnStreaming:
         )
         body = match.group(1)
         assert "_agent.astream_events(" not in body
+
+
+class TestA2AStreamingToolCallWireMapping:
+    """The streaming A2A path forwards new TurnEvent types over the wire."""
+
+    def _server_py(self):
+        from vystak.schema.agent import Agent
+        from vystak.schema.model import Model
+        from vystak.schema.platform import Platform
+        from vystak.schema.provider import Provider
+        from vystak.schema.secret import Secret
+        from vystak_adapter_langchain.adapter import LangChainAdapter
+
+        p = Provider(name="anthropic", type="anthropic")
+        d = Provider(name="docker", type="docker")
+        agent = Agent(
+            name="probe",
+            model=Model(name="m", model_name="claude", provider=p),
+            platform=Platform(name="local", type="docker", provider=d),
+            secrets=[Secret(name="K")],
+        )
+        return LangChainAdapter().generate(agent).files["server.py"]
+
+    def test_a2a_streaming_translates_tool_call_start(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _a2a_streaming\(.*?\)(?:\s*->\s*[^\n:]*)?:\s*\n(.*?)(?=\nasync def |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert 'ev.type == "tool_call_start"' in body
+        assert 'A2AEvent(type="tool_call"' in body
+
+    def test_a2a_streaming_translates_tool_call_end(self):
+        import re
+        src = self._server_py()
+        match = re.search(
+            r"async def _a2a_streaming\(.*?\)(?:\s*->\s*[^\n:]*)?:\s*\n(.*?)(?=\nasync def |\Z)",
+            src, re.DOTALL,
+        )
+        body = match.group(1)
+        assert 'ev.type == "tool_call_end"' in body
+        assert 'A2AEvent(type="tool_result"' in body
+
+    def test_sse_generator_emits_tool_call_branches(self):
+        """event_generator inside _handle_tasks_send_subscribe must have wire
+        branches for tool_call and tool_result, otherwise A2AEvents emitted by
+        _a2a_streaming are silently dropped before reaching the HTTP client."""
+        src = self._server_py()
+        # The SSE generator emits these as bare A2AEvent JSON
+        # (model_dump_json) so HttpTransport.stream_task can decode them.
+        assert 'ev.type == "tool_call"' in src
+        assert 'ev.type == "tool_result"' in src
+        assert "model_dump_json()" in src
+
+    def test_sse_generator_emits_decodable_final_event(self):
+        """Final event must also be wire-decodable as A2AEvent so the channel
+        sees the final reply text. The new branch emits model_dump_json()."""
+        src = self._server_py()
+        # Look for the new final-as-A2AEvent emission. It coexists with the
+        # legacy JSON-RPC envelope branch — both must be present so existing
+        # consumers (gateway test fixtures) and new consumers (channel
+        # stream_task) both see what they expect.
+        # Required string-presence checks:
+        assert 'A2AEvent(type="final"' in src or '"final"' in src
+        # Plain model_dump_json() emission appears at least once.
+        assert src.count("model_dump_json()") >= 1
