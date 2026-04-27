@@ -636,6 +636,7 @@ def generate_server_py(agent: Agent) -> str:
     session_store = _get_session_store(agent)
     uses_persistent = session_store and session_store.engine in ("postgres", "sqlite")
     has_mcp = _has_mcp_servers(agent)
+    compaction_enabled = _compaction_enabled(agent)
 
     if uses_persistent:
         saver_class = (
@@ -700,6 +701,16 @@ def generate_server_py(agent: Agent) -> str:
     lines.append(")")
     lines.append("")
 
+    if compaction_enabled:
+        lines.append("from vystak_adapter_langchain.compaction import (")
+        lines.append("    InMemoryCompactionStore,")
+        if uses_persistent and session_store.engine == "postgres":
+            lines.append("    PostgresCompactionStore,")
+        elif uses_persistent and session_store.engine == "sqlite":
+            lines.append("    SqliteCompactionStore,")
+        lines.append(")")
+        lines.append("")
+
     if uses_persistent:
         # Case 1: persistent + MCP  or  Case 2: persistent + no MCP
         lines.append("from contextlib import asynccontextmanager")
@@ -716,6 +727,8 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("")
         lines.append("_agent = None")
         lines.append("_store = None")
+        if compaction_enabled:
+            lines.append("_compaction_store = None")
         if has_mcp:
             lines.append("_mcp_client = None")
         lines.append("")
@@ -723,9 +736,15 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("@asynccontextmanager")
         lines.append("async def lifespan(app):")
         if has_mcp:
-            lines.append("    global _agent, _store, _mcp_client")
+            if compaction_enabled:
+                lines.append("    global _agent, _store, _compaction_store, _mcp_client")
+            else:
+                lines.append("    global _agent, _store, _mcp_client")
         else:
-            lines.append("    global _agent, _store")
+            if compaction_enabled:
+                lines.append("    global _agent, _store, _compaction_store")
+            else:
+                lines.append("    global _agent, _store")
         if has_mcp:
             lines.append("    _mcp_client = MultiServerMCPClient(MCP_SERVERS)")
             lines.append("    mcp_tools = await _mcp_client.get_tools()")
@@ -744,9 +763,25 @@ def generate_server_py(agent: Agent) -> str:
             lines.append("        await checkpointer.setup()")
             lines.append("        await store.setup()")
             lines.append("        _store = store")
-            lines.append(
-                "        _agent = create_agent(checkpointer, store=store, mcp_tools=mcp_tools)"
-            )
+            if compaction_enabled:
+                if session_store.engine == "postgres":
+                    lines.append("        # Compaction store on a separate connection")
+                    lines.append("        import psycopg as _psycopg")
+                    lines.append("        _comp_conn = await _psycopg.AsyncConnection.connect(DB_URI, autocommit=True)")
+                    lines.append("        _compaction_store = PostgresCompactionStore(_comp_conn)")
+                    lines.append("        await _compaction_store.setup()")
+                else:
+                    lines.append("        import aiosqlite as _aiosqlite")
+                    lines.append("        _comp_db = await _aiosqlite.connect(DB_URI)")
+                    lines.append("        _compaction_store = SqliteCompactionStore(_comp_db)")
+                    lines.append("        await _compaction_store.setup()")
+                lines.append(
+                    "        _agent = create_agent(checkpointer, store=store, compaction_store=_compaction_store, mcp_tools=mcp_tools)"
+                )
+            else:
+                lines.append(
+                    "        _agent = create_agent(checkpointer, store=store, mcp_tools=mcp_tools)"
+                )
             lines.append("        yield")
         else:
             if session_store.engine == "postgres":
@@ -762,7 +797,15 @@ def generate_server_py(agent: Agent) -> str:
                 lines.append("                await checkpointer.setup()")
                 lines.append("                await store.setup()")
                 lines.append("                _store = store")
-                lines.append("                _agent = create_agent(checkpointer, store=store)")
+                if compaction_enabled:
+                    lines.append("                # Compaction store on a separate connection")
+                    lines.append("                import psycopg as _psycopg")
+                    lines.append("                _comp_conn = await _psycopg.AsyncConnection.connect(DB_URI, autocommit=True)")
+                    lines.append("                _compaction_store = PostgresCompactionStore(_comp_conn)")
+                    lines.append("                await _compaction_store.setup()")
+                    lines.append("                _agent = create_agent(checkpointer, store=store, compaction_store=_compaction_store)")
+                else:
+                    lines.append("                _agent = create_agent(checkpointer, store=store)")
                 lines.append("                yield")
                 lines.append("                return")
                 lines.append("        except Exception as _e:")
@@ -779,7 +822,14 @@ def generate_server_py(agent: Agent) -> str:
                 lines.append("        await checkpointer.setup()")
                 lines.append("        await store.setup()")
                 lines.append("        _store = store")
-                lines.append("        _agent = create_agent(checkpointer, store=store)")
+                if compaction_enabled:
+                    lines.append("        import aiosqlite as _aiosqlite")
+                    lines.append("        _comp_db = await _aiosqlite.connect(DB_URI)")
+                    lines.append("        _compaction_store = SqliteCompactionStore(_comp_db)")
+                    lines.append("        await _compaction_store.setup()")
+                    lines.append("        _agent = create_agent(checkpointer, store=store, compaction_store=_compaction_store)")
+                else:
+                    lines.append("        _agent = create_agent(checkpointer, store=store)")
                 lines.append("        yield")
         lines.append("")
         lines.append("")
@@ -794,21 +844,34 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("")
         lines.append("_agent = None")
         lines.append("_mcp_client = None")
+        if compaction_enabled:
+            lines.append("_compaction_store = InMemoryCompactionStore()")
         lines.append("")
         lines.append("")
         lines.append("@asynccontextmanager")
         lines.append("async def lifespan(app):")
         lines.append("    global _agent, _mcp_client")
         lines.append("    _mcp_client = MultiServerMCPClient(MCP_SERVERS)")
-        lines.append("    _agent = create_agent(mcp_tools=await _mcp_client.get_tools())")
+        if compaction_enabled:
+            lines.append("    _agent = create_agent(mcp_tools=await _mcp_client.get_tools(), compaction_store=_compaction_store)")
+        else:
+            lines.append("    _agent = create_agent(mcp_tools=await _mcp_client.get_tools())")
         lines.append("    yield")
         lines.append("")
         lines.append("")
         lines.append(f'app = FastAPI(title="{agent.name}", lifespan=lifespan)')
     else:
-        # Case 4: not persistent + no MCP — unchanged
-        lines.append("from agent import agent")
-        lines.append("_agent = agent  # alias for A2A handlers")
+        # Case 4: not persistent + no MCP
+        if compaction_enabled:
+            lines.append("from agent import create_agent")
+            lines.append("from langgraph.checkpoint.memory import MemorySaver as _MS")
+            lines.append("_memory_saver = _MS()")
+            lines.append("")
+            lines.append("_compaction_store = InMemoryCompactionStore()")
+            lines.append("_agent = create_agent(checkpointer=_memory_saver, store=None, compaction_store=_compaction_store)")
+        else:
+            lines.append("from agent import agent")
+            lines.append("_agent = agent  # alias for A2A handlers")
         lines.append("")
         lines.append(f'app = FastAPI(title="{agent.name}")')
 
