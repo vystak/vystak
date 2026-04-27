@@ -233,3 +233,49 @@ def test_agent_subagent_duplicate_names_rejected():
     weather2 = Agent(name="weather-agent", model=m)
     with pytest.raises(ValueError, match="duplicate"):
         Agent(name="assistant", model=m, subagents=[weather1, weather2])
+
+
+def test_agent_default_compaction_is_none():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    a = Agent(
+        name="x",
+        model=Model(
+            name="claude",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    assert a.compaction is None
+
+
+def test_agent_with_compaction_round_trips():
+    from vystak.schema.agent import Agent
+    from vystak.schema.compaction import Compaction
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    a = Agent(
+        name="x",
+        model=Model(
+            name="claude",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+        compaction=Compaction(mode="aggressive", trigger_pct=0.5),
+    )
+    dumped = a.model_dump()
+    assert dumped["compaction"]["mode"] == "aggressive"
+    assert dumped["compaction"]["trigger_pct"] == 0.5
+
+    rebuilt = Agent.model_validate(dumped)
+    assert rebuilt.compaction.mode == "aggressive"
+
+
+def test_compaction_reexported_from_schema():
+    from vystak.schema import Compaction as C1
+    from vystak.schema.compaction import Compaction as C2
+
+    assert C1 is C2

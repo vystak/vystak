@@ -12,6 +12,7 @@ from vystak.schema.common import (
     VaultType,
     WorkspaceType,
 )
+from vystak.schema.compaction import Compaction
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Embedding, Model
 from vystak.schema.openai import (
@@ -66,6 +67,7 @@ __all__ = [
     "Cache",
     "Channel",
     "ChannelType",
+    "Compaction",
     "Database",
     "Embedding",
     "EnvironmentOverride",
