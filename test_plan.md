@@ -43,6 +43,7 @@ before merge / release), integration (should-pass weekly), and edge
 | D6 | docker | vault | chat | stream | Integration |
 | D7 | docker | default | slack | stream | Integration |
 | D8 | docker | vault | slack | stream | Edge |
+| **C1** | docker | default | chat | http | Integration |
 | **A1** | azure | default | chat | http | **Smoke** |
 | **A2** | azure | keyvault | chat | http | **Smoke** |
 | A3 | azure | default | slack | http | Integration |
@@ -55,6 +56,12 @@ before merge / release), integration (should-pass weekly), and edge
 **Smoke (6 cells)**: prove each major axis works in isolation.
 **Integration (6 cells)**: prove axes compose cleanly.
 **Edge (4 cells)**: prove the full product has no combinatorial surprises.
+
+**C-axis (compaction)**: orthogonal to stack × channel × transport. C1 verifies
+Postgres-backed session compaction end-to-end: 30 turns trigger threshold
+compaction, manual `/compact` succeeds, both rows appear in the inspection
+endpoint. Requires a real `ANTHROPIC_API_KEY`; LLM-dependent steps auto-skip
+on sentinel keys (infra wiring still verified).
 
 ---
 
@@ -507,3 +514,8 @@ dated markdown under `docs/test-plans/YYYY-MM-DD-results.md`.
   multi-agent cells (D-multi-http, D-multi-nats, A-multi-http) plus a
   collision-detection canary. Reference example:
   `examples/multi-agent/vystak.yaml`.
+- **2026-04-25** — Added C-axis (compaction). C1 cell: Postgres-backed
+  agent with `mode=aggressive, trigger_pct=0.05`; 30-turn conversation
+  triggers threshold compaction; manual `/compact` succeeds; both rows
+  appear in the inspection endpoint. `release_integration` + `docker`
+  markers; LLM-dependent steps auto-skip on sentinel keys.
