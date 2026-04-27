@@ -774,6 +774,119 @@ async def health():
     }
 
 
+# --- Test API: simulate Slack messages without going through Slack ---------
+#
+# Enabled when VYSTAK_SLACK_TEST_API=1. Posts to /test/event with a
+# Slack-shaped event dict run through the same resolution + forwarding
+# code as a real mention. Returns the agent's reply text directly so
+# integration tests can assert on output without standing up a Slack
+# workspace.
+
+import time as _time
+import uuid as _uuid
+
+from fastapi import HTTPException as _HTTPException
+from pydantic import BaseModel as _BaseModel
+
+
+class _TestEvent(_BaseModel):
+    text: str
+    user: str = "U_TEST"
+    channel: str = "C_TEST"
+    thread_ts: str | None = None
+    ts: str | None = None
+    team: str = "T_TEST"
+    is_dm: bool = False
+
+
+def _test_api_enabled() -> bool:
+    return os.environ.get("VYSTAK_SLACK_TEST_API") == "1"
+
+
+async def _dispatch_test_event(event: _TestEvent) -> dict:
+    """Run the channel's mention-style resolution + forward without Slack.
+
+    Mirrors the on_mention path: sticky thread-binding check, _resolve,
+    _forward_to_agent, _to_slack_mrkdwn. Persists the thread binding
+    on success the same way the real handler does.
+    """
+    ts = event.ts or "{:.6f}".format(_time.time())
+    is_dm = event.is_dm
+    channel = event.channel
+    team = event.team
+    user = event.user
+    text = event.text
+
+    ev = _Event(
+        team=team, channel=channel, user=user,
+        text=text, is_dm=is_dm, is_bot=False,
+        channel_name=channel,
+    )
+
+    # Sticky binding: if this thread is already bound, prefer that agent.
+    bound_agent: str | None = None
+    if event.thread_ts and event.thread_ts != ts:
+        bound_agent = _store.thread_binding(team, channel, event.thread_ts)
+    agent_name = bound_agent or _resolve(ev, _resolver_cfg, _store)
+
+    if agent_name is None:
+        raise _HTTPException(status_code=404, detail="no agent bound to this channel")
+    if agent_name not in ROUTES:
+        raise _HTTPException(
+            status_code=503,
+            detail=f"agent {agent_name!r} declared but not in transport routes "
+                   f"{list(ROUTES.keys())!r}",
+        )
+
+    session_id = _session_id(
+        None if is_dm else channel, event.thread_ts, ts, user,
+    )
+    project_id = (
+        f"slack:{team}:{channel}" if channel and not is_dm else None
+    )
+
+    raw_reply = await _forward_to_agent(
+        agent_name, text, session_id,
+        user_id=user, project_id=project_id,
+    )
+
+    # Persist thread binding so subsequent test events with the same
+    # thread_ts route to the same agent (matches real-Slack behavior).
+    thread_key_ts = event.thread_ts or ts
+    if thread_key_ts and not is_dm:
+        _store.set_thread_binding(
+            team=team, channel=channel,
+            thread_ts=thread_key_ts, agent=agent_name,
+        )
+
+    reply = _to_slack_mrkdwn(raw_reply)
+    return {
+        "reply": reply,
+        "agent": agent_name,
+        "session_id": session_id,
+        "thread_ts": thread_key_ts,
+    }
+
+
+@health_app.post("/test/event")
+async def test_event(event: _TestEvent):
+    if not _test_api_enabled():
+        raise _HTTPException(status_code=404, detail="test API disabled")
+    return await _dispatch_test_event(event)
+
+
+@health_app.get("/test/info")
+async def test_info():
+    """Expose channel state needed by integration tests (agents, routes, bindings)."""
+    if not _test_api_enabled():
+        raise _HTTPException(status_code=404, detail="test API disabled")
+    return {
+        "agents": _resolver_cfg.agents,
+        "routes": list(ROUTES.keys()),
+        "default_agent": _resolver_cfg.default_agent,
+    }
+
+
 async def _run():
     if not BOT_TOKEN or not APP_TOKEN:
         raise RuntimeError(
