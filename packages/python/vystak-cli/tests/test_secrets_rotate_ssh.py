@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 from vystak_cli.commands.secrets import secrets
 
@@ -20,6 +22,14 @@ agents:
 """
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 13),
+    reason=(
+        "Patches pathlib.Path module-wide; older CPython pathlib internals "
+        "access Path._flavour during construction and fail under MagicMock. "
+        "Test passes on 3.13+ where pathlib was rewritten without _flavour."
+    ),
+)
 def test_rotate_ssh_regenerates_and_pushes(tmp_path):
     config = tmp_path / "vystak.yaml"
     config.write_text(YAML)

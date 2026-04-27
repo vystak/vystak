@@ -460,6 +460,12 @@ class TestAzureProviderVaultGraph:
             {"ANTHROPIC_API_KEY": "sk-x", "STRIPE_API_KEY": "sk_y"}
         )
 
+        # Pin the deployer object_id so the deployer-self-grant node is
+        # always added. Without this, environments without an active
+        # ``az login`` (e.g. CI) take the None branch and only 2 grants
+        # are emitted, breaking the assertion below.
+        provider._deployer_object_id = lambda: "11111111-1111-1111-1111-111111111111"
+
         graph = provider._build_graph_for_tests(agent)
 
         node_names = [n.name for n in graph.nodes()]

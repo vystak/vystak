@@ -29,8 +29,15 @@ typecheck: typecheck-python typecheck-typescript
 typecheck-python:
     uv run pyright packages/python/
 
+# Build TypeScript packages (emits dist/ for each workspace member).
+# typecheck-typescript depends on it because adapter-mastra and
+# provider-docker import @vystak/core via its dist/.d.ts; on a fresh
+# clone (CI), tsc can't resolve the cross-package import without it.
+build-typescript:
+    pnpm -r run build
+
 # Type check TypeScript
-typecheck-typescript:
+typecheck-typescript: build-typescript
     pnpm -r run typecheck
 
 # Format all code
@@ -44,8 +51,16 @@ fmt-python:
 fmt-typescript:
     pnpm -r run fmt
 
-# Run full CI check (what GitHub Actions runs)
+# Run full CI check (lint + typecheck + tests, both languages).
+# This includes pre-existing baseline failures (lint-typescript needs
+# eslint.config.js per package; typecheck-python has ~124 pyright errors)
+# and is intended for local development / aspirational green-build work.
 ci: lint typecheck test
+
+# What GitHub Actions actually runs — only the four currently-green gates.
+# Mirrors the "live gates" list documented in CLAUDE.md. Move recipes
+# from this list into ``ci`` (or vice versa) as gates flip green/red.
+ci-live: lint-python typecheck-typescript test-python test-typescript
 
 # Run docs site locally
 docs-dev:
