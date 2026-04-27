@@ -1,6 +1,6 @@
 [project]
 name = "vystak-transport-nats"
-version = "0.1.0"
+dynamic = ["version"]
 description = "NATS JetStream transport for Vystak east-west A2A traffic"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +17,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -28,3 +28,7 @@ vystak = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}

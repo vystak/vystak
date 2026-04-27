@@ -1,6 +1,6 @@
 [project]
 name = "vystak-adapter-mastra"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Vystak Mastra framework adapter"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -17,3 +17,7 @@ packages = ["src/vystak_adapter_mastra"]
 
 [tool.uv.sources]
 vystak = { workspace = true }
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}

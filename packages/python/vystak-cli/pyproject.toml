@@ -1,6 +1,6 @@
 [project]
 name = "vystak-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Vystak CLI — declarative AI agent orchestration from the terminal"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,7 +41,7 @@ Issues = "https://github.com/vystak/vystak/issues"
 vystak = "vystak_cli.cli:cli"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -53,3 +53,7 @@ vystak-adapter-langchain = { workspace = true }
 vystak-provider-docker = { workspace = true }
 vystak-channel-chat = { workspace = true }
 vystak-channel-slack = { workspace = true }
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}

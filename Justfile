@@ -62,11 +62,25 @@ ci: lint typecheck test
 # from this list into ``ci`` (or vice versa) as gates flip green/red.
 ci-live: lint-python typecheck-typescript test-python test-typescript
 
-# Bump every workspace package to the version in ./VERSION (or argv[1]).
-# Usage:  just bump 0.2.0   # writes VERSION + rewrites every pyproject.toml
-#                            # and package.json in the workspace.
-bump version="":
+# Sync TypeScript package.json versions to the latest git tag (or argv[1]).
+# Python packages use hatch-vcs and read the version from git tags
+# directly — no sync needed there.
+sync-ts-version version="":
     uv run python scripts/bump_version.py {{version}}
+
+# Cut a release: tag HEAD with v<version> and push the tag.
+# release.yml then verifies + publishes everything atomically.
+# Usage:  just release 0.2.0
+release version:
+    @if ! [[ "{{version}}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][a-zA-Z0-9.]+)?$ ]]; then \
+        echo "version must be semver (e.g. 0.2.0); got: {{version}}" >&2; exit 1; \
+    fi
+    @if git rev-parse "v{{version}}" >/dev/null 2>&1; then \
+        echo "tag v{{version}} already exists" >&2; exit 1; \
+    fi
+    git tag -a "v{{version}}" -m "release v{{version}}"
+    git push origin "v{{version}}"
+    @echo "Tagged + pushed v{{version}} — release.yml will publish."
 
 # Run docs site locally
 docs-dev:

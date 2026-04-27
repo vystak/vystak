@@ -1,8 +1,8 @@
 name: Release
 
-# Trigger: pushing a tag matching ``v*.*.*``. The tag MUST match the
-# version in ./VERSION (single source of truth bumped via
-# ``just bump <version>``); the verify step refuses otherwise.
+# Trigger: pushing a tag matching ``v*.*.*``. Python package versions
+# come from the tag itself (via ``hatch-vcs``); npm package.json files
+# are rewritten at publish time by scripts/bump_version.py.
 
 on:
   push:
@@ -19,15 +19,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # hatch-vcs walks ``git describe`` to derive the version; a shallow
+          # clone misses the tag and falls back to a "0.0.0+dev…" string.
+          fetch-depth: 0
 
-      - name: Verify tag matches VERSION
+      - name: Read version from tag
+        id: version
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG="${GITHUB_REF#refs/tags/v}"
-          if [ "$VERSION" != "$TAG" ]; then
-            echo "::error::tag v$TAG does not match VERSION ($VERSION) — bump VERSION + commit before tagging"
-            exit 1
-          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION"
 
       - name: Install uv
@@ -52,6 +53,9 @@ jobs:
         run: |
           uv sync
           pnpm install --frozen-lockfile
+
+      - name: Sync npm package.json versions to tag
+        run: uv run python scripts/bump_version.py "${{ steps.version.outputs.version }}"
 
       - name: Build TypeScript packages
         run: pnpm -r run build

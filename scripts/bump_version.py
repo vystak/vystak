@@ -1,58 +1,65 @@
 #!/usr/bin/env python3
-"""Bump every package version to match the top-level VERSION file.
+"""Sync TypeScript package.json versions from a git-derived version.
 
-Single source of truth: ``./VERSION`` at the repo root. Running this
-script rewrites:
+Python packages use ``hatch-vcs`` and read the version from git tags
+directly — no script needed there. TypeScript / npm has no native
+git-tag versioning, so this script rewrites ``packages/typescript/*/package.json``
+to a target version (the latest ``v*.*.*`` tag, the value of ``$VERSION``,
+or argv[1] if provided).
 
-- ``pyproject.toml`` for every workspace member under ``packages/python/``
-  (including the umbrella ``vystak`` package).
-- ``package.json`` for every workspace member under ``packages/typescript/``.
-- The root ``pyproject.toml`` (workspace marker version, kept in sync).
+Used by ``.github/workflows/release.yml`` between the tag-checkout
+and the ``pnpm publish`` step. Locally:
 
-Usage:
-
-    # Set a new version
-    echo "0.2.0" > VERSION
-    uv run python scripts/bump_version.py
-
-    # Or pass a version on the command line
-    uv run python scripts/bump_version.py 0.2.0
-
-The script is idempotent — re-running with the same VERSION is a no-op.
-Exit code 0 on success, 1 on any IO / parse failure.
+    just sync-ts-version           # syncs to latest git tag
+    just sync-ts-version 0.2.0     # syncs to an explicit version
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION_FILE = ROOT / "VERSION"
 
 
-def read_version() -> str:
-    """Read the canonical version, optionally overridden by argv[1]."""
-    if len(sys.argv) > 1:
+def _from_argv() -> str | None:
+    if len(sys.argv) > 1 and sys.argv[1].strip():
         return sys.argv[1].strip()
-    if not VERSION_FILE.exists():
-        print(f"VERSION file not found at {VERSION_FILE}", file=sys.stderr)
-        sys.exit(1)
-    return VERSION_FILE.read_text().strip()
+    return None
 
 
-_PYPROJECT_RE = re.compile(r'^(version\s*=\s*)"[^"]*"', re.MULTILINE)
+def _from_env() -> str | None:
+    return os.environ.get("VYSTAK_RELEASE_VERSION") or None
 
 
-def bump_pyproject(path: Path, version: str) -> bool:
-    text = path.read_text()
-    new = _PYPROJECT_RE.sub(rf'\1"{version}"', text, count=1)
-    if new == text:
-        return False
-    path.write_text(new)
-    return True
+def _from_git_tag() -> str | None:
+    """Latest reachable v*.*.* tag, with the leading ``v`` stripped."""
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0", "--match", "v*.*.*"],
+            cwd=ROOT, check=True, text=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        return None
+    tag = out.stdout.strip()
+    return tag.removeprefix("v") if tag else None
+
+
+def resolve_version() -> str:
+    for source in (_from_argv, _from_env, _from_git_tag):
+        v = source()
+        if v:
+            return v
+    print(
+        "No version available — pass argv[1], set VYSTAK_RELEASE_VERSION, "
+        "or create a v*.*.* git tag.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def bump_package_json(path: Path, version: str) -> bool:
@@ -65,32 +72,21 @@ def bump_package_json(path: Path, version: str) -> bool:
 
 
 def main() -> int:
-    version = read_version()
+    version = resolve_version()
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][\w.]+)?", version):
         print(f"Refusing non-semver version: {version!r}", file=sys.stderr)
         return 1
 
-    if not (VERSION_FILE.exists() and VERSION_FILE.read_text().strip() == version):
-        VERSION_FILE.write_text(version + "\n")
-
     changed: list[Path] = []
-
-    for pyproj in (ROOT / "packages" / "python").glob("*/pyproject.toml"):
-        if bump_pyproject(pyproj, version):
-            changed.append(pyproj)
-
-    if bump_pyproject(ROOT / "pyproject.toml", version):
-        changed.append(ROOT / "pyproject.toml")
-
     for pkg in (ROOT / "packages" / "typescript").glob("*/package.json"):
         if bump_package_json(pkg, version):
             changed.append(pkg)
 
     if not changed:
-        print(f"Already at v{version}; nothing to do.")
+        print(f"All TypeScript packages already at v{version}.")
         return 0
 
-    print(f"Bumped to v{version}:")
+    print(f"Synced TypeScript packages to v{version}:")
     for path in sorted(changed):
         print(f"  {path.relative_to(ROOT)}")
     return 0

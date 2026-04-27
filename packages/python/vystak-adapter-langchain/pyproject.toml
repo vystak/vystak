@@ -1,6 +1,6 @@
 [project]
 name = "vystak-adapter-langchain"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Vystak framework adapter — generates LangChain/LangGraph agent code"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,7 @@ Repository = "https://github.com/vystak/vystak"
 Issues = "https://github.com/vystak/vystak/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -40,3 +40,7 @@ packages = ["src/vystak_adapter_langchain"]
 
 [tool.uv.sources]
 vystak = { workspace = true }
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}

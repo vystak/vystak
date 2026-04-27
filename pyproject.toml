@@ -30,6 +30,7 @@ dev-dependencies = [
     "vystak-transport-http",
     "vystak-transport-nats",
     "vystak-workspace-rpc",
+    "hatch-vcs>=0.5.0",
 ]
 
 [tool.uv.sources]
