@@ -1,6 +1,5 @@
 """Code generation templates for LangChain/LangGraph agents."""
 
-from textwrap import dedent
 
 from vystak.schema.agent import Agent
 
@@ -1342,8 +1341,11 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # resolve to a mid-1.0 langgraph that's incompatible with the prebuilt
     # package langchain 1.x pulls in.
     if _compaction_enabled(agent):
+        # langgraph-prebuilt 1.0.12 imports ExecutionInfo/ServerInfo from
+        # langgraph.runtime, which only landed in langgraph 1.0.12. Some
+        # transitive resolvers prefer the older 1.0.10; pin >=1.0.12.
         core_pin = "langchain-core>=1.0,<2.0"
-        graph_pin = "langgraph>=1.0,<2.0"
+        graph_pin = "langgraph>=1.0.12,<2.0"
         compaction_pkg = "\nlangchain>=1.0,<1.2"
     else:
         core_pin = "langchain-core>=0.3"
@@ -1355,15 +1357,26 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # nats-py is the runtime dependency for NatsTransport; included
     # unconditionally so NATS-deployment containers work without a separate
     # requirements pass.
-    return dedent(f"""\
-        {core_pin}
-        {graph_pin}
-        {provider_pkg}
-        fastapi>=0.115
-        uvicorn>=0.34
-        sse-starlette>=2.0
-        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{workspace_pkg}{compaction_pkg}{tool_deps}
-    """)
+    # Build line-by-line to avoid `dedent` losing its anchor when the
+    # optional pkg variables inject `\n`-prefixed lines without leading
+    # whitespace (which made dedent's common-prefix calculation collapse
+    # to "" and leave the indented lines un-dedented in the output).
+    lines = [
+        core_pin,
+        graph_pin,
+        provider_pkg,
+        "fastapi>=0.115",
+        "uvicorn>=0.34",
+        "sse-starlette>=2.0",
+        "nats-py>=2.6",
+    ]
+    for extra in (checkpoint_pkg, mcp_pkg, workspace_pkg, compaction_pkg, tool_deps):
+        if extra:
+            # Each `extra` is either a single line or a `\n`-prefixed block.
+            for line in extra.lstrip("\n").split("\n"):
+                if line.strip():
+                    lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def generate_store_py() -> str:
