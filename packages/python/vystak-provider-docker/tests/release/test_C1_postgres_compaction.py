@@ -91,11 +91,12 @@ def _key_looks_real(value: str | None) -> bool:
 
 @pytest.mark.xfail(
     reason=(
-        "DockerAgentNode does not yet bundle vystak_adapter_langchain source. "
-        "The published PyPI package lacks the compaction subpackage, so the agent "
-        "container fails to start with ModuleNotFoundError. "
-        "Fix: add vystak_adapter_langchain to the source-bundle loop in "
-        "vystak_provider_docker/nodes/agent.py alongside vystak/vystak_transport_*."
+        "C1 deploy currently leaves the postgres container running but the "
+        "agent container is not created. Bundling fix (5080ba9) for "
+        "vystak_adapter_langchain unblocked the ModuleNotFoundError, but a "
+        "deeper apply-flow issue prevents the agent container from being "
+        "scheduled in this release cell. Investigation deferred to a "
+        "follow-up — the test stays in the suite as a working spec."
     ),
     strict=False,
 )
