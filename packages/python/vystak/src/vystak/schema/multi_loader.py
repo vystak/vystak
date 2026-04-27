@@ -38,8 +38,12 @@ def _resolve_channel_agent_refs(
     channel_data: dict,
     agents_by_name: dict,
 ) -> dict:
-    """Resolve string agent references in a Slack channel block."""
-    if channel_data.get("type") != "slack":
+    """Resolve string agent references in a channel block.
+
+    Applies to any channel type that uses the unified `agents` /
+    `channel_overrides` / `default_agent` fields (Slack, chat, etc.).
+    """
+    if channel_data.get("type") not in ("slack", "chat"):
         return channel_data
     data = dict(channel_data)
     if "agents" in data:

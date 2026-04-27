@@ -3,7 +3,6 @@
 from textwrap import dedent
 
 from vystak.schema.agent import Agent
-from vystak.schema.model import Model
 
 from vystak_adapter_langchain.a2a import (
     generate_a2a_handler_code,
@@ -73,8 +72,11 @@ _CONTEXT_WINDOWS = {
 }
 
 
-def _context_window_for(model: Model) -> int:
-    return _CONTEXT_WINDOWS.get(model.model_name, 200_000)
+def _context_window_for(agent: "Agent") -> int:
+    """Resolve the context window: compaction override wins over the table default."""
+    if agent.compaction is not None and agent.compaction.context_window is not None:
+        return agent.compaction.context_window
+    return _CONTEXT_WINDOWS.get(agent.model.model_name, 200_000)
 
 
 def _generate_tool_stubs(stub_tool_names: list[str]) -> str:
@@ -349,7 +351,7 @@ def generate_agent_py(
             f"keep_recent_pct={comp.keep_recent_pct!r}, "
             f"prune_tool_output_bytes={comp.prune_tool_output_bytes!r}, "
             f"target_tokens={comp.target_tokens!r}), "
-            f"context_window={_context_window_for(agent.model)})"
+            f"context_window={_context_window_for(agent)})"
         )
         lines.append("")
 
@@ -519,9 +521,9 @@ def generate_agent_py(
         lines.append("    if mcp_tools:")
         lines.append("        all_tools.extend(mcp_tools)")
         if system_prompt:
-            lines.append(f"    prompt_fn = _make_prompt(system_prompt, store, compaction_store, _compaction_policy, {_context_window_for(agent.model)})")
+            lines.append(f"    prompt_fn = _make_prompt(system_prompt, store, compaction_store, _compaction_policy, {_context_window_for(agent)})")
         else:
-            lines.append(f"    prompt_fn = _make_prompt(None, store, compaction_store, _compaction_policy, {_context_window_for(agent.model)})")
+            lines.append(f"    prompt_fn = _make_prompt(None, store, compaction_store, _compaction_policy, {_context_window_for(agent)})")
         lines.append(
             "    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=prompt_fn"
             + middlewares_kw + ")"

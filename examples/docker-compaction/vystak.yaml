@@ -1,0 +1,52 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+    api_keys: {name: ANTHROPIC_API_KEY}
+
+agents:
+  - name: chatty
+    instructions: |
+      You are a verbose assistant. Always include a fresh 30-50 word
+      preamble before answering. The preamble should describe what
+      you're about to do, then the answer follows.
+    model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+    sessions:
+      type: postgres
+      provider: {name: docker, type: docker}
+    compaction:
+      mode: aggressive
+      context_window: 5000     # pretend the model only has a 5K window
+      trigger_pct: 0.7         # fire when prefill ≥ 3500 tokens
+      keep_recent_pct: 0.2     # keep last 20% of messages verbatim
+      summarizer:              # use Haiku for the summary call (cheap)
+        name: haiku
+        provider: {name: anthropic, type: anthropic}
+        model_name: claude-haiku-4-5-20251001
+        api_keys: {name: ANTHROPIC_API_KEY}
+
+channels:
+  - name: chat
+    type: chat
+    platform: local
+    config: {port: 8080}
+    agents: [chatty]
+
+  - name: slack-main
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [chatty]

@@ -26,4 +26,10 @@ class Compaction(NamedModel):
     prune_tool_output_bytes: int | None = Field(default=None, gt=0)
     target_tokens: int | None = Field(default=None, gt=0)
 
+    # Override the model's nominal context window. Useful for testing
+    # (set to e.g. 5000 to make compaction fire on tiny conversations) or
+    # for models not in the built-in `_CONTEXT_WINDOWS` table. None = use
+    # the table's value (defaults to 200_000 for unknown models).
+    context_window: int | None = Field(default=None, gt=0)
+
     summarizer: Model | None = None

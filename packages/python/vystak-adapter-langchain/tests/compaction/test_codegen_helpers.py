@@ -31,3 +31,27 @@ def test_conservative_enabled():
 
 def test_aggressive_enabled():
     assert _compaction_enabled(_agent(Compaction(mode="aggressive"))) is True
+
+
+def test_context_window_default():
+    from vystak_adapter_langchain.templates import _context_window_for
+    assert _context_window_for(_agent()) == 200_000
+
+
+def test_context_window_override_from_compaction():
+    from vystak_adapter_langchain.templates import _context_window_for
+    a = _agent(Compaction(mode="aggressive", context_window=5000))
+    assert _context_window_for(a) == 5000
+
+
+def test_context_window_unknown_model_defaults_to_200k():
+    from vystak_adapter_langchain.templates import _context_window_for
+    a = Agent(
+        name="x",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="some-future-model",
+        ),
+    )
+    assert _context_window_for(a) == 200_000
