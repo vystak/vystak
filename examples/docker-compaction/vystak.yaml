@@ -40,7 +40,7 @@ channels:
   - name: chat
     type: chat
     platform: local
-    config: {port: 8080}
+    config: {port: 18080}
     agents: [chatty]
 
   - name: slack-main

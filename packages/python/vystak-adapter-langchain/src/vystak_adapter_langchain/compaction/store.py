@@ -10,8 +10,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timezone
+from typing import TYPE_CHECKING
 
-import aiosqlite
+if TYPE_CHECKING:
+    import aiosqlite
 
 
 @dataclass(frozen=True)
