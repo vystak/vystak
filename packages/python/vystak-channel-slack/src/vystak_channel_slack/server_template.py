@@ -178,6 +178,9 @@ def _default_client() -> _AgentClient:
 _FORWARD_TIMEOUT_S = float(os.environ.get("VYSTAK_FORWARD_TIMEOUT_S", "180"))
 _FORWARD_RETRY_BACKOFF_S = float(os.environ.get("VYSTAK_FORWARD_RETRY_BACKOFF_S", "2"))
 
+_STREAM_TOOL_CALLS: bool = bool(_channel_config.get("stream_tool_calls", False))
+_STREAM_UPDATE_MIN_INTERVAL_S: float = 1.0  # Slack tier-3 chat.update cap
+
 
 async def _forward_to_agent(
     agent_name: str, text: str, session_id: str,
@@ -226,6 +229,137 @@ async def _forward_to_agent(
             await asyncio.sleep(_FORWARD_RETRY_BACKOFF_S)
     # unreachable — second attempt either returns or raises
     raise RuntimeError("unreachable")
+
+
+def _format_duration(duration_ms: int) -> str:
+    seconds = duration_ms / 1000.0
+    return f"{seconds:.1f}s"
+
+
+def _render_progress_trail(in_flight: list[dict], completed: list[dict]) -> str:
+    """Render the progress trail as Slack mrkdwn.
+
+    Each completed tool: 🔧 *<name>* ✓ _(2.1s)_
+    Each in-flight tool: 🔧 *<name>*
+    Trailer: _Working..._  (or _Responding..._ before any tool event)
+    """
+    lines: list[str] = []
+    for t in completed:
+        lines.append(f"🔧 *{t['tool_name']}* ✓ _({_format_duration(t['duration_ms'])})_")
+    for t in in_flight:
+        lines.append(f"🔧 *{t['tool_name']}*")
+    if completed or in_flight:
+        lines.append("_Working..._")
+    else:
+        lines.append("_Responding..._")
+    return "\\n".join(lines)
+
+
+async def _stream_to_agent(
+    client, placeholder: dict | None, say,
+    *,
+    agent_name: str, text: str, session_id: str,
+    user_id: str | None = None,
+    project_id: str | None = None,
+    thread_ts: str | None = None,
+) -> None:
+    """Stream agent events into the placeholder Slack message.
+
+    Mirrors _forward_to_agent's metadata shape but consumes the SSE
+    stream from stream_task and edits the placeholder via chat_update,
+    rate-limited to once per second per turn. On final, the entire
+    progress trail is replaced with _to_slack_mrkdwn(final_text).
+    """
+    metadata: dict = {"sessionId": session_id}
+    if user_id:
+        metadata["user_id"] = f"slack:{user_id}"
+    if project_id:
+        metadata["project_id"] = project_id
+
+    in_flight: list[dict] = []
+    completed: list[dict] = []
+    final_text: str | None = None
+    last_update_at: float = 0.0
+
+    async def _maybe_update(force: bool = False) -> None:
+        nonlocal last_update_at
+        if placeholder is None:
+            return
+        now = _time.time()
+        if not force and (now - last_update_at) < _STREAM_UPDATE_MIN_INTERVAL_S:
+            return
+        last_update_at = now
+        body = _render_progress_trail(in_flight, completed)
+        try:
+            await client.chat_update(
+                channel=placeholder["channel"],
+                ts=placeholder["ts"],
+                text=body,
+            )
+        except Exception as exc:
+            logger.warning("stream chat_update failed: %s", exc)
+
+    try:
+        async for ev in _default_client().stream_task(
+            agent_name, text,
+            metadata=metadata,
+            timeout=_FORWARD_TIMEOUT_S,
+        ):
+            if ev.type == "tool_call":
+                d = ev.data or {}
+                in_flight.append({
+                    "tool_name": d.get("tool_name", "?"),
+                    "started_at": d.get("started_at", _time.time()),
+                })
+                await _maybe_update()
+            elif ev.type == "tool_result":
+                d = ev.data or {}
+                tool_name = d.get("tool_name", "?")
+                duration_ms = int(d.get("duration_ms", 0))
+                # Move the matching in-flight entry to completed.
+                for i, t in enumerate(in_flight):
+                    if t["tool_name"] == tool_name:
+                        in_flight.pop(i)
+                        break
+                completed.append({"tool_name": tool_name, "duration_ms": duration_ms})
+                await _maybe_update()
+            elif ev.type == "final":
+                final_text = ev.text or ""
+                # Force the final update — exempt from rate limit.
+                if placeholder is not None:
+                    rendered = _to_slack_mrkdwn(final_text)
+                    try:
+                        await client.chat_update(
+                            channel=placeholder["channel"],
+                            ts=placeholder["ts"],
+                            text=rendered,
+                        )
+                    except Exception as exc:
+                        logger.exception("stream final chat_update failed: %s", exc)
+                else:
+                    rendered = _to_slack_mrkdwn(final_text)
+                    kwargs = {"text": rendered}
+                    if thread_ts:
+                        kwargs["thread_ts"] = thread_ts
+                    await say(**kwargs)
+                return
+    except Exception as exc:
+        logger.exception("stream_to_agent failed agent=%s: %s", agent_name, exc)
+        await _finalize(
+            client, say, placeholder,
+            text=f"Sorry, I hit an error talking to *{agent_name}*: `{exc}`",
+            thread_ts=thread_ts,
+        )
+        return
+
+    # Stream ended without a final event — fall back to a blank reply so the
+    # placeholder doesn't sit forever as "Responding...".
+    if final_text is None and placeholder is not None:
+        await _finalize(
+            client, say, placeholder,
+            text="(no response from agent)",
+            thread_ts=thread_ts,
+        )
 
 
 def _session_id(channel: str | None, thread_ts: str | None, ts: str | None, user: str | None) -> str:

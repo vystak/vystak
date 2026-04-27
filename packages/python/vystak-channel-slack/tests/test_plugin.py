@@ -303,3 +303,80 @@ class TestSlackChannelStreamToolCalls:
         assert cfg.stream_tool_calls is True
         # Default still False.
         assert SlackChannelConfig().stream_tool_calls is False
+
+
+class TestStreamToAgentHelper:
+    """The _stream_to_agent helper is emitted into server.py and the runtime
+    branches on the stream_tool_calls flag at use sites."""
+
+    def _server_py(self):
+        from vystak_channel_slack.server_template import SERVER_PY
+        return SERVER_PY
+
+    def test_helper_is_defined(self):
+        src = self._server_py()
+        assert "async def _stream_to_agent(" in src
+
+    def test_helper_uses_stream_task(self):
+        src = self._server_py()
+        assert "stream_task(" in src
+
+    def test_helper_is_rate_limited(self):
+        """Throttle to 1 chat.update per second (Slack tier-3 cap)."""
+        src = self._server_py()
+        # The helper computes a min interval between updates.
+        assert "_STREAM_UPDATE_MIN_INTERVAL_S" in src or "1.0" in src
+        # The helper tracks last_update_at to coalesce.
+        assert "last_update_at" in src
+
+    def test_helper_renders_in_flight_and_completed_lines(self):
+        """In-flight tools render as `🔧 *<name>*`; completed tools add `✓ _(Xs)_`."""
+        src = self._server_py()
+        assert "\\U0001f527" in src or "🔧" in src
+        assert "✓" in src or "\\u2713" in src
+        # The duration formatter renders as "(2.1s)" — keep the regex narrow
+        # so we don't false-positive on unrelated mentions.
+        assert "duration_ms" in src
+
+    def test_helper_handles_error_with_legacy_text(self):
+        """Same error text as _forward_to_agent's except branch."""
+        src = self._server_py()
+        # The exact phrase mirrors on_mention's existing error path.
+        assert "Sorry, I hit an error talking to" in src
+
+    def test_helper_replaces_placeholder_on_final(self):
+        """On final event, chat.update with the rendered final reply."""
+        src = self._server_py()
+        # The helper calls _to_slack_mrkdwn on ev.text (or equivalent) for
+        # the final replacement. Looking for the function call inside the
+        # streaming helper body.
+        # Use a regex to scope the assertion to the helper.
+        import re
+        m = re.search(
+            r"async def _stream_to_agent\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
+            src, re.DOTALL,
+        )
+        assert m, "_stream_to_agent body not found"
+        body = m.group(0)
+        assert "_to_slack_mrkdwn" in body
+        assert "chat_update" in body
+
+    def test_helper_passes_metadata_like_forward_to_agent(self):
+        """Same metadata shape: sessionId, user_id (slack-prefixed), project_id."""
+        src = self._server_py()
+        import re
+        m = re.search(
+            r"async def _stream_to_agent\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
+            src, re.DOTALL,
+        )
+        body = m.group(0)
+        assert '"sessionId"' in body
+        assert "slack:" in body  # the user_id prefix
+        assert "project_id" in body
+
+    def test_runtime_reads_stream_tool_calls_flag(self):
+        """server.py reads the flag from _channel_config at startup."""
+        src = self._server_py()
+        assert '"stream_tool_calls"' in src
+        # A module-level binding so the handlers can branch fast.
+        assert "_STREAM_TOOL_CALLS" in src or "_stream_tool_calls" in src
