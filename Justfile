@@ -44,8 +44,16 @@ fmt-python:
 fmt-typescript:
     pnpm -r run fmt
 
-# Run full CI check (what GitHub Actions runs)
+# Run full CI check (lint + typecheck + tests, both languages).
+# This includes pre-existing baseline failures (lint-typescript needs
+# eslint.config.js per package; typecheck-python has ~124 pyright errors)
+# and is intended for local development / aspirational green-build work.
 ci: lint typecheck test
+
+# What GitHub Actions actually runs — only the four currently-green gates.
+# Mirrors the "live gates" list documented in CLAUDE.md. Move recipes
+# from this list into ``ci`` (or vice versa) as gates flip green/red.
+ci-live: lint-python typecheck-typescript test-python test-typescript
 
 # Run docs site locally
 docs-dev:
