@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from vystak.transport import (
     A2AEvent,
     A2AMessage,
@@ -90,7 +91,15 @@ class HttpTransport(Transport):
                 except json.JSONDecodeError:
                     continue
                 # A2AEvent model_validate tolerates missing optional fields.
-                yield A2AEvent.model_validate(parsed)
+                try:
+                    yield A2AEvent.model_validate(parsed)
+                except ValidationError:
+                    # Skip lines that don't match the A2AEvent shape (e.g.,
+                    # legacy JSON-RPC envelope frames emitted by the
+                    # LangChain adapter for token/status/final events).
+                    # Existing SSE consumers can still parse the envelope
+                    # themselves at a higher layer.
+                    continue
 
     async def serve(self, canonical_name: str, handler: ServerDispatcherProtocol) -> None:
         # FastAPI's /a2a route already handles inbound HTTP; nothing to do.

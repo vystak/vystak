@@ -174,3 +174,39 @@ class TestHttpTransportBasics:
         t = HttpTransport(routes=routes)
         ref = AgentRef(canonical_name="x.agents.default")
         assert t._agent_base_url(ref) == "http://vystak-x:8000"
+
+    @pytest.mark.asyncio
+    async def test_stream_task_skips_non_a2a_event_frames(self, unused_tcp_port):
+        """stream_task must silently skip SSE frames whose JSON does not
+        match the A2AEvent shape (e.g., legacy JSON-RPC envelope frames
+        from the LangChain adapter), rather than aborting the stream."""
+        app = FastAPI()
+
+        @app.post("/a2a")
+        async def a2a_endpoint(request: Request):
+            body = await request.json()
+            assert body.get("method") == "tasks/sendSubscribe"
+
+            async def gen():
+                # Frame 1: valid A2AEvent (bare).
+                yield {"data": '{"type": "tool_call", "data": {"tool_name": "x"}}'}
+                # Frame 2: not an A2AEvent (no `type` field) -> ValidationError.
+                yield {"data": '{"jsonrpc": "2.0", "id": "n", "result": {}}'}
+                # Frame 3: valid A2AEvent (bare).
+                yield {"data": '{"type": "final", "text": "done", "final": true}'}
+
+            return EventSourceResponse(gen())
+
+        async with _serve(app, unused_tcp_port):
+            routes = {"test.agents.default": f"http://127.0.0.1:{unused_tcp_port}/a2a"}
+            t = HttpTransport(routes=routes)
+            ref = AgentRef(canonical_name="test.agents.default")
+            msg = A2AMessage(role="user", parts=[{"text": "x"}], metadata={})
+
+            received = []
+            async for ev in t.stream_task(ref, msg, {}, timeout=5):
+                received.append(ev)
+
+            assert len(received) == 2
+            assert received[0].type == "tool_call"
+            assert received[1].type == "final"
