@@ -669,6 +669,23 @@ async def on_mention(event, say, client):
             )
     logger.info("mention forward agent=%s session=%s", agent_name, session_id)
     project_id = f"slack:{event.get('team', '')}:{channel}" if channel else None
+    if _STREAM_TOOL_CALLS:
+        await _stream_to_agent(
+            client, placeholder, say,
+            agent_name=agent_name, text=text, session_id=session_id,
+            user_id=user, project_id=project_id, thread_ts=reply_thread_ts,
+        )
+        # Streaming path handled placeholder finalize itself (final/error).
+        # Still claim the thread on success.
+        thread_key_ts = event.get("thread_ts") or event.get("ts")
+        if thread_key_ts:
+            _store.set_thread_binding(
+                team=event.get("team", ""),
+                channel=channel,
+                thread_ts=thread_key_ts,
+                agent=agent_name,
+            )
+        return
     try:
         raw_reply = await _forward_to_agent(
             agent_name, text, session_id,
@@ -758,6 +775,13 @@ async def on_message(event, say, client):
             agent_name, session_id,
         )
         project_id = f"slack:{event.get('team', '')}:{channel}" if channel else None
+        if _STREAM_TOOL_CALLS:
+            await _stream_to_agent(
+                client, placeholder, say,
+                agent_name=agent_name, text=text, session_id=session_id,
+                user_id=user, project_id=project_id, thread_ts=reply_thread_ts,
+            )
+            return
         try:
             raw_reply = await _forward_to_agent(
                 agent_name, text, session_id,

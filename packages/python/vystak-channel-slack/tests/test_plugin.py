@@ -380,3 +380,48 @@ class TestStreamToAgentHelper:
         assert '"stream_tool_calls"' in src
         # A module-level binding so the handlers can branch fast.
         assert "_STREAM_TOOL_CALLS" in src or "_stream_tool_calls" in src
+
+
+class TestStreamToolCallsBranch:
+    """on_mention and on_message thread-follow branch on _STREAM_TOOL_CALLS."""
+
+    def _server_py(self):
+        from vystak_channel_slack.server_template import SERVER_PY
+        return SERVER_PY
+
+    def test_on_mention_branches_on_flag(self):
+        import re
+        src = self._server_py()
+        m = re.search(
+            r"async def on_mention\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
+            src, re.DOTALL,
+        )
+        assert m, "on_mention body not found"
+        body = m.group(0)
+        # The branch checks the flag and routes to _stream_to_agent on True.
+        assert "_STREAM_TOOL_CALLS" in body
+        assert "_stream_to_agent(" in body
+        # The non-streaming branch still calls _forward_to_agent.
+        assert "_forward_to_agent(" in body
+
+    def test_on_message_thread_follow_branches_on_flag(self):
+        import re
+        src = self._server_py()
+        m = re.search(
+            r"async def on_message\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
+            src, re.DOTALL,
+        )
+        assert m, "on_message body not found"
+        body = m.group(0)
+        assert "_STREAM_TOOL_CALLS" in body
+        assert "_stream_to_agent(" in body
+
+    def test_default_off_preserves_forward_to_agent(self):
+        """When stream_tool_calls=False, the existing _forward_to_agent path
+        is unchanged. Verifying the non-streaming branch still includes the
+        existing reply-finalize sequence."""
+        src = self._server_py()
+        # _to_slack_mrkdwn + _finalize sequence still present in on_mention.
+        # (Both pre-existed; we just want them not to be removed.)
+        assert "_to_slack_mrkdwn(raw_reply)" in src
+        assert "_finalize(client, say, placeholder" in src
