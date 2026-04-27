@@ -733,8 +733,19 @@ class AzureProvider(PlatformProvider):
         return result
 
     def destroy(
-        self, agent_name: str, include_resources: bool = False, no_wait: bool = False
+        self,
+        agent_name: str,
+        include_resources: bool = False,
+        no_wait: bool = False,
+        **_unused: object,
     ) -> None:
+        """Destroy an agent's Azure resources.
+
+        ``**_unused`` swallows provider-specific kwargs the CLI passes
+        through (e.g. Docker's ``delete_vault``, ``keep_sidecars``,
+        ``delete_workspace_data``) without erroring on this provider,
+        which has no analogous concepts.
+        """
         cfg = self._platform_config()
         credential = get_credential()
         subscription_id = get_subscription_id(cfg)
@@ -1072,7 +1083,11 @@ class AzureProvider(PlatformProvider):
             )
 
     def destroy_channel(
-        self, channel: Channel, *, delete_channel_data: bool = False
+        self,
+        channel: Channel,
+        *,
+        delete_channel_data: bool = False,
+        **_unused: object,
     ) -> None:
         """Delete the channel's Container App using its own platform context.
 
