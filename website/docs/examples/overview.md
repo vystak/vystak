@@ -136,8 +136,11 @@ Beyond the featured four, the [`examples/` directory](https://github.com/vystak/
 - **`code-first`** — the same agents defined in Python (`vystak.py`) instead of YAML.
 - **`memory-agent`** — long-term memory across sessions (Postgres-backed).
 - **`mcp-files`** — exposes a filesystem MCP server as agent tools.
+- **`docker-slack`** / **`docker-slack-multi-agent`** — Slack channel exposing one or many agents over Socket Mode.
 - **`azure-minimal`** — the simplest possible Azure deploy (single agent, no extras).
 - **`azure-postgres-test`** — Azure Container App with a managed Postgres Flexible Server.
+- **`azure-vault`** / **`azure-workspace-vault`** — full Azure Key Vault wiring (per-principal UAMI + Secrets User grants).
+- **`azure-slack-multi-agent`** — the cloud-grade combo: Slack channel + KV + Postgres sessions + 3-agent A2A delegation, with `stream_tool_calls: true` for live tool-call progress.
 
 Each is a standalone directory with its own `vystak.yaml` (or `vystak.py`).
 
