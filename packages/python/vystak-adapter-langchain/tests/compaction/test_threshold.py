@@ -1,13 +1,9 @@
-import time
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
 from vystak_adapter_langchain.compaction.coverage import assign_vystak_msg_id
 from vystak_adapter_langchain.compaction.errors import CompactionError, SummaryResult
 from vystak_adapter_langchain.compaction.store import (
-    CompactionRow,
     InMemoryCompactionStore,
 )
 from vystak_adapter_langchain.compaction.threshold import maybe_compact
@@ -24,7 +20,11 @@ class _Stub:
 
 
 async def _ok_summarize(model, messages, *, instructions=None):
-    return SummaryResult(text="SUMMARY", model_id="claude-haiku-test", usage={"input_tokens": 50, "output_tokens": 10})
+    return SummaryResult(
+        text="SUMMARY",
+        model_id="claude-haiku-test",
+        usage={"input_tokens": 50, "output_tokens": 10},
+    )
 
 
 async def _failing_summarize(model, messages, *, instructions=None):

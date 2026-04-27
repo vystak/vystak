@@ -1,12 +1,11 @@
 """Run threshold compaction 5+ times; assert generations advance and
 summaries stay bounded; first generation remains retrievable."""
 
-from datetime import datetime, timedelta, timezone
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-
 from vystak_adapter_langchain.compaction.coverage import assign_vystak_msg_id
 from vystak_adapter_langchain.compaction.errors import SummaryResult
 from vystak_adapter_langchain.compaction.store import InMemoryCompactionStore
@@ -41,7 +40,7 @@ def _age_out_last_compaction(store):
     rows = store._rows["t1"]
     rows[-1] = replace(
         rows[-1],
-        created_at=datetime.now(timezone.utc) - timedelta(seconds=300),
+        created_at=datetime.now(UTC) - timedelta(seconds=300),
     )
 
 

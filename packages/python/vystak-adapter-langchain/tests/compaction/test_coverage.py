@@ -1,5 +1,4 @@
 from langchain_core.messages import AIMessage, HumanMessage
-
 from vystak_adapter_langchain.compaction.coverage import (
     assign_vystak_msg_id,
     fraction_covered,

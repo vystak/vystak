@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 from langchain_core.messages import BaseMessage, SystemMessage
 
@@ -40,7 +40,7 @@ async def maybe_compact(
     if latest is not None:
         already = fraction_covered(messages, up_to=latest.up_to_message_id)
         seconds_since = (
-            datetime.now(timezone.utc) - latest.created_at
+            datetime.now(UTC) - latest.created_at
         ).total_seconds()
         if (
             already >= 1 - LAYER3_SUPPRESS_RECENT_PCT

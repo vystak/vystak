@@ -1,9 +1,10 @@
 """Layers 2 + 3 contention — simulate the autonomous middleware writing
 a compaction, then immediately invoke Layer 3. Layer 3 must defer."""
 
+from datetime import UTC
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-
 from vystak_adapter_langchain.compaction.coverage import assign_vystak_msg_id
 from vystak_adapter_langchain.compaction.errors import SummaryResult
 from vystak_adapter_langchain.compaction.store import InMemoryCompactionStore
@@ -61,11 +62,11 @@ async def test_old_layer2_write_does_not_suppress_layer3_when_uncovered():
         thread_id="t1", summary_text="OLD", up_to_message_id="t1:1",
         trigger="autonomous", summarizer_model="x", usage={},
     )
-    from datetime import datetime, timedelta, timezone
     from dataclasses import replace
+    from datetime import datetime, timedelta
     store._rows["t1"][0] = replace(
         store._rows["t1"][0],
-        created_at=datetime.now(timezone.utc) - timedelta(seconds=120),
+        created_at=datetime.now(UTC) - timedelta(seconds=120),
     )
 
     out, fallback = await maybe_compact(
