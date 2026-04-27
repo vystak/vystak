@@ -27,7 +27,14 @@ class TurnResult:
 class TurnEvent:
     """Single streamed event. Yielded by ``process_turn_streaming``."""
 
-    type: Literal["token", "tool_call", "interrupt", "final", "error"]
+    type: Literal[
+        "token",
+        "tool_call_start",
+        "tool_call_end",
+        "interrupt",
+        "final",
+        "error",
+    ]
     text: str = ""
     data: dict | None = None
     final: bool = False

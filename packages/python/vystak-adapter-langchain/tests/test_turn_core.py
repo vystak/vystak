@@ -124,3 +124,30 @@ def test_process_turn_streaming_wraps_bare_string_tool_outputs():
     src = emit_turn_core_helpers()
     # The wrap pattern: SimpleNamespace(content=tm) for str outputs.
     assert "SimpleNamespace(content=tm)" in src
+
+
+class TestTurnCoreToolCallLiteral:
+    """TurnEvent type discriminator must include tool_call_start / tool_call_end values."""
+
+    def test_literal_includes_tool_call_start_and_end(self):
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        assert '"tool_call_start"' in src
+        assert '"tool_call_end"' in src
+
+    def test_literal_does_not_keep_unused_tool_call_value(self):
+        """The pre-refactor 'tool_call' value was never emitted; replacing it
+        with tool_call_start/tool_call_end keeps the discriminator narrow."""
+        import re
+
+        from vystak_adapter_langchain.turn_core import emit_turn_core_helpers
+
+        src = emit_turn_core_helpers()
+        m = re.search(r"type:\s*Literal\[(.*?)\]", src, re.DOTALL)
+        assert m, "TurnEvent.type Literal annotation not found"
+        literal_body = m.group(1)
+        values = [v.strip().strip('"').strip("'") for v in literal_body.split(",")]
+        assert "tool_call" not in values
+        assert "tool_call_start" in values
+        assert "tool_call_end" in values
