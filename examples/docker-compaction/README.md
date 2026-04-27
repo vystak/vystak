@@ -14,14 +14,26 @@ compaction fires after a handful of turns. Routes to both a chat channel
 
 ## Prereqs
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export ANTHROPIC_API_URL=https://api.anthropic.com   # or your proxy
+Copy the secrets template and fill it in:
 
-# Optional — only if you want to test the Slack channel:
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_APP_TOKEN=xapp-...
+```bash
+cd examples/docker-compaction
+cp .env.example .env
+# edit .env with your real keys
 ```
+
+`vystak apply` reads `.env` from the project directory and injects the
+values into the agent + channel containers. The file is `.gitignore`d.
+
+Required:
+- `ANTHROPIC_API_KEY` — for both the agent and the summarizer
+- `ANTHROPIC_API_URL` — `https://api.anthropic.com` or a proxy
+
+Optional (only for the Slack channel):
+- `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` — Socket Mode tokens
+
+If you don't want Slack, delete the `slack-main` channel block from
+`vystak.yaml` before applying.
 
 Docker daemon must be running.
 
