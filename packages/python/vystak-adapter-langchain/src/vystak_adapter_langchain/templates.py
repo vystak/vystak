@@ -1336,9 +1336,19 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # (used by builtin_tools when agent.workspace is declared).
     workspace_pkg = "\nasyncssh>=2.18" if agent.workspace is not None else ""
 
-    compaction_pkg = ""
+    # When compaction is enabled, the langchain 1.x ecosystem requires the
+    # newer langgraph-prebuilt (which uses APIs added in langgraph 1.0.12).
+    # Pin both langchain-core and langgraph to the 1.x line so pip doesn't
+    # resolve to a mid-1.0 langgraph that's incompatible with the prebuilt
+    # package langchain 1.x pulls in.
     if _compaction_enabled(agent):
+        core_pin = "langchain-core>=1.0,<2.0"
+        graph_pin = "langgraph>=1.0,<2.0"
         compaction_pkg = "\nlangchain>=1.0,<1.2"
+    else:
+        core_pin = "langchain-core>=0.3"
+        graph_pin = "langgraph>=0.2"
+        compaction_pkg = ""
 
     # vystak + vystak_transport_http + vystak_transport_nats are bundled as
     # source by DockerAgentNode (on PYTHONPATH via COPY . . in the Dockerfile).
@@ -1346,8 +1356,8 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # unconditionally so NATS-deployment containers work without a separate
     # requirements pass.
     return dedent(f"""\
-        langchain-core>=0.3
-        langgraph>=0.2
+        {core_pin}
+        {graph_pin}
         {provider_pkg}
         fastapi>=0.115
         uvicorn>=0.34
