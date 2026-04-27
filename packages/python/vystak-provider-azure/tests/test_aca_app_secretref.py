@@ -75,7 +75,7 @@ def test_build_revision_agent_only_with_vault():
     kv_secrets = [
         s for s in revision["properties"]["configuration"]["secrets"] if "keyVaultUrl" in s
     ]
-    assert any(s["keyVaultUrl"].endswith("/secrets/ANTHROPIC_API_KEY") for s in kv_secrets)
+    assert any(s["keyVaultUrl"].endswith("/secrets/anthropic-api-key") for s in kv_secrets)
 
 
 def test_build_revision_agent_plus_workspace_sidecar():
@@ -112,8 +112,8 @@ def test_build_revision_agent_plus_workspace_sidecar():
     kv_secrets = [
         s for s in revision["properties"]["configuration"]["secrets"] if "keyVaultUrl" in s
     ]
-    anth = next(s for s in kv_secrets if s["keyVaultUrl"].endswith("/secrets/ANTHROPIC_API_KEY"))
-    stripe = next(s for s in kv_secrets if s["keyVaultUrl"].endswith("/secrets/STRIPE_API_KEY"))
+    anth = next(s for s in kv_secrets if s["keyVaultUrl"].endswith("/secrets/anthropic-api-key"))
+    stripe = next(s for s in kv_secrets if s["keyVaultUrl"].endswith("/secrets/stripe-api-key"))
     assert anth["identity"].endswith("/uami-agent")
     assert stripe["identity"].endswith("/uami-workspace")
     # All identitySettings are lifecycle: None (except ACR-pull which may be None too)
@@ -241,7 +241,7 @@ def test_channel_app_with_vault_uses_per_container_secretref():
         acr_info={"login_server": "r.azurecr.io", "password": "p"},
     )
     kv = [s for s in body["properties"]["configuration"]["secrets"] if "keyVaultUrl" in s]
-    assert any(s["keyVaultUrl"].endswith("/secrets/SLACK_BOT_TOKEN") for s in kv)
+    assert any(s["keyVaultUrl"].endswith("/secrets/slack-bot-token") for s in kv)
     assert all(
         s["lifecycle"] == "None" for s in body["properties"]["configuration"]["identitySettings"]
     )

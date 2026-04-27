@@ -285,7 +285,9 @@ class TestContainerAppNode:
             ),
         }
 
-        with patch("vystak_provider_azure.nodes.aca_app.Path") as mock_path_cls:
+        with patch("vystak_provider_azure.nodes.aca_app.Path") as mock_path_cls, \
+             patch("shutil.copytree") as _copytree, \
+             patch("shutil.rmtree") as _rmtree:  # noqa: F841 — suppress vystak-source bundling
             mock_build_dir = MagicMock()
             mock_path_cls.return_value.__truediv__ = lambda self, other: mock_build_dir
             mock_build_dir.__truediv__ = lambda self, other: MagicMock()
@@ -386,7 +388,9 @@ class TestContainerAppNode:
             ),
         }
 
-        with patch("vystak_provider_azure.nodes.aca_app.Path") as mock_path_cls:
+        with patch("vystak_provider_azure.nodes.aca_app.Path") as mock_path_cls, \
+             patch("shutil.copytree") as _copytree, \
+             patch("shutil.rmtree") as _rmtree:  # noqa: F841
             mock_build_dir = MagicMock()
             mock_path_cls.return_value.__truediv__ = lambda self, other: mock_build_dir
             mock_build_dir.__truediv__ = lambda self, other: MagicMock()

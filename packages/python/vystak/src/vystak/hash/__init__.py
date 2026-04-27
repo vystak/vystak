@@ -8,6 +8,7 @@ from vystak.hash.tree import (
     compute_grants_hash,
     hash_agent,
     hash_channel,
+    hash_generated_code,
     hash_workspace,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "hash_agent",
     "hash_channel",
     "hash_dict",
+    "hash_generated_code",
     "hash_model",
     "hash_workspace",
 ]

@@ -1,0 +1,114 @@
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: vystak-slack-multi-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+# Key Vault — secrets are uploaded from the local .env at apply time and
+# referenced by ACA via keyVaultUrl. The vault container app pulls each
+# secret with managed identity at runtime.
+vault:
+  name: vystak-slack-vault
+  provider: azure
+  mode: deploy
+  config:
+    vault_name: vystak-slack-vault
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist. When asked about weather, use the
+      get_weather tool to fetch real data and answer concisely.
+    model: minimax
+    platform: aca
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist. Use the get_time tool to fetch the
+      current time. The tool accepts a timezone_name argument (IANA
+      format like "America/Los_Angeles", "Europe/Lisbon", "Asia/Tokyo")
+      — pass it whenever the user mentions a city, country, or timezone
+      abbreviation. Map common forms:
+        - "PST" / "PT" / "Pacific" -> "America/Los_Angeles"
+        - "ET" / "EST" / "Eastern" -> "America/New_York"
+        - "Lisbon" / "Portugal" -> "Europe/Lisbon"
+        - "London" / "UK" -> "Europe/London"
+        - "Tokyo" / "Japan" -> "Asia/Tokyo"
+      If the user doesn't specify a timezone, default to UTC and mention
+      that. Answer concisely.
+    model: minimax
+    platform: aca
+    skills:
+      - {name: time, tools: [get_time]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: assistant-agent
+    instructions: |
+      You are a friendly general-purpose assistant.
+      When the user asks about weather, use ask_weather_agent.
+      When the user asks about time, use ask_time_agent. If the user
+      previously mentioned their timezone or city in saved memories,
+      include that in the question (e.g. "what time is it in
+      America/Los_Angeles?"). If no timezone is known, ask the user
+      first or default to UTC.
+      If the user asks about BOTH weather and time, call BOTH tools at the same time.
+      Pass user questions through verbatim and return the agent reply without paraphrasing.
+
+      MEMORY RULES (non-negotiable):
+      - When the user shares any **personal** fact about themselves
+        (their name, role, preferences, places they live, anything
+        they say "my X is Y" about *themselves*), call save_memory
+        immediately with scope="user".
+      - When the user shares a fact about the **shared context** —
+        the team, the project, the channel topic, "we", "our",
+        team conventions, current sprint goals — call save_memory
+        with scope="project".
+      - Do NOT ask permission. Do NOT say "would you like me to
+        remember" — just call the tool and confirm you saved it.
+      - If you don't see the fact in your injected memories, say
+        you don't know it yet — never hallucinate a memory.
+    model: minimax
+    platform: aca
+    subagents: [weather-agent, time-agent]
+    sessions:
+      type: postgres
+      name: assistant-sessions
+      provider: {name: azure, type: azure}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: slack-main
+    type: slack
+    platform: aca
+    config:
+      stream_tool_calls: true
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent

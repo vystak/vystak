@@ -273,11 +273,16 @@ class TestAzureChannelPlan:
         assert "Azure Container Apps" in plan.actions[0]
 
     def test_plan_channel_unchanged(self):
-        from vystak.hash import hash_channel
+        from vystak.channels import get_plugin
+        from vystak.hash import hash_channel, hash_generated_code
 
         provider = AzureProvider()
         channel = _make_channel()
-        current = hash_channel(channel).root
+        # Mirror what plan_channel does internally so the expected hash
+        # accounts for the codegen-output digest contribution.
+        plugin = get_plugin(channel.type)
+        codegen_hash = hash_generated_code(plugin.generate_code(channel, {}))
+        current = hash_channel(channel, codegen_hash=codegen_hash).root
         plan = provider.plan_channel(channel, current_hash=current)
         assert plan.actions == []
 
@@ -462,4 +467,7 @@ class TestAzureProviderVaultGraph:
         assert sum(1 for n in node_names if n.startswith("uami:")) == 2
         assert any("secret-sync" in n for n in node_names)
         grant_nodes = [n for n in node_names if n.startswith("kv-grant:")]
-        assert len(grant_nodes) == 2  # one per secret
+        # Three grants: deployer self-grant (Secrets Officer at vault scope)
+        # so apply-time secret-sync can write, plus one per (UAMI, secret)
+        # pair giving runtime read access (Secrets User at secret scope).
+        assert len(grant_nodes) == 3, grant_nodes

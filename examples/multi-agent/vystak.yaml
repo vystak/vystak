@@ -25,6 +25,7 @@ agents:
       - {name: weather, tools: [get_weather]}
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
 
   - name: time-agent
     instructions: |
@@ -36,15 +37,53 @@ agents:
       - {name: time, tools: [get_time]}
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: coder-agent
+    instructions: |
+      You are a coding assistant. The workspace has python 3.12, git, and
+      ripgrep available. Use fs.readFile / fs.writeFile / fs.listDir / fs.edit
+      to read and modify files in /workspace. Use exec.run to run shell
+      commands like pytest, ruff, or python scripts. Use git.status / git.diff
+      / git.commit to track changes. Keep replies concise and show the diff
+      or command output rather than restating it.
+    model: minimax
+    platform: local
+    skills:
+      - {name: editing, tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]}
+      - {name: shell, tools: [exec.run, exec.shell]}
+      - {name: vcs, tools: [git.status, git.diff, git.commit]}
+    workspace:
+      name: dev
+      image: python:3.12-slim
+      provision:
+        - apt-get update && apt-get install -y --no-install-recommends git ripgrep
+      persistence: volume
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
 
   - name: assistant-agent
     instructions: |
       You are a helpful general-purpose assistant.
       When the user asks about weather, use ask_weather_agent.
       When the user asks about time, use ask_time_agent.
+      When the user asks for code edits, file reads, shell commands, or git
+      operations, use ask_coder_agent and pass through the request verbatim.
       If the user asks about BOTH weather and time, call BOTH tools at the same time.
     model: minimax
     platform: local
-    subagents: [weather-agent, time-agent]
+    subagents: [weather-agent, time-agent, coder-agent]
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent, coder-agent]
+    default_agent: assistant-agent

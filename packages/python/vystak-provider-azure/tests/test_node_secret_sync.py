@@ -29,14 +29,16 @@ def test_push_if_missing_pushes_absent_secrets():
         env_values={"ANTHROPIC_API_KEY": "sk-ant-value"},
     )
     result = node.provision(context={})
-    client.set_secret.assert_called_once_with("ANTHROPIC_API_KEY", "sk-ant-value")
+    # KV name uses hyphens (Azure Key Vault rejects underscores).
+    client.set_secret.assert_called_once_with("anthropic-api-key", "sk-ant-value")
     assert result.info["pushed"] == ["ANTHROPIC_API_KEY"]
     assert result.info["skipped"] == []
     assert result.info["missing"] == []
 
 
 def test_push_if_missing_skips_present_secrets():
-    client = _secret_client(existing={"ANTHROPIC_API_KEY": "preserved"})
+    # Existing KV state uses the hyphen-translated name.
+    client = _secret_client(existing={"anthropic-api-key": "preserved"})
     node = SecretSyncNode(
         client=client,
         declared_secrets=["ANTHROPIC_API_KEY"],
@@ -48,7 +50,7 @@ def test_push_if_missing_skips_present_secrets():
 
 
 def test_force_overwrites_present_secrets():
-    client = _secret_client(existing={"ANTHROPIC_API_KEY": "old"})
+    client = _secret_client(existing={"anthropic-api-key": "old"})
     node = SecretSyncNode(
         client=client,
         declared_secrets=["ANTHROPIC_API_KEY"],
@@ -56,7 +58,7 @@ def test_force_overwrites_present_secrets():
         force=True,
     )
     result = node.provision(context={})
-    client.set_secret.assert_called_once_with("ANTHROPIC_API_KEY", "new")
+    client.set_secret.assert_called_once_with("anthropic-api-key", "new")
     assert result.info["pushed"] == ["ANTHROPIC_API_KEY"]
 
 

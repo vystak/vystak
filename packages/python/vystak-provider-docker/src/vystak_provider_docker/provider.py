@@ -5,7 +5,7 @@ from pathlib import Path
 import docker
 import docker.errors
 from vystak.channels import get_plugin
-from vystak.hash import hash_agent, hash_channel
+from vystak.hash import hash_agent, hash_channel, hash_generated_code
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -231,7 +231,8 @@ class DockerProvider(PlatformProvider):
                     "Vault, or deploy to Azure for Key Vault support."
                 )
             # type=VAULT is handled by the apply graph; no plan-time rejection.
-        tree = hash_agent(agent)
+        codegen_hash = hash_generated_code(self._generated_code)
+        tree = hash_agent(agent, codegen_hash=codegen_hash)
         target_hash = tree.root
         container = self._get_container(agent.name)
 
@@ -943,7 +944,14 @@ class DockerProvider(PlatformProvider):
         return container.labels.get("vystak.channel.hash")
 
     def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
-        tree = hash_channel(channel)
+        codegen_hash: str | None = None
+        try:
+            plugin = get_plugin(channel.type)
+            code = plugin.generate_code(channel, {})
+            codegen_hash = hash_generated_code(code)
+        except Exception:
+            codegen_hash = None
+        tree = hash_channel(channel, codegen_hash=codegen_hash)
         target_hash = tree.root
         container = self._get_channel_container(channel.name)
 

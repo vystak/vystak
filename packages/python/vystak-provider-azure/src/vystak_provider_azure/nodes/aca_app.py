@@ -204,7 +204,7 @@ def build_revision_for_vault(
         kv_secrets_block.append(
             {
                 "name": _kv_secret_name(s),
-                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "keyVaultUrl": f"{vault_uri}secrets/{_kv_secret_name(s)}",
                 "identity": agent_identity_resource_id,
             }
         )
@@ -213,7 +213,7 @@ def build_revision_for_vault(
             kv_secrets_block.append(
                 {
                     "name": _kv_secret_name(s),
-                    "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                    "keyVaultUrl": f"{vault_uri}secrets/{_kv_secret_name(s)}",
                     "identity": workspace_identity_resource_id,
                 }
             )
@@ -313,6 +313,7 @@ class ContainerAppNode(Provisionable):
         plan: DeployPlan,
         platform_config: dict,
         peer_routes_json: str = "{}",
+        env_values: dict[str, str] | None = None,
     ):
         self._aca_client = aca_client
         self._docker_client = docker_client
@@ -322,6 +323,10 @@ class ContainerAppNode(Provisionable):
         self._plan = plan
         self._platform_config = platform_config
         self._peer_routes_json = peer_routes_json
+        # Fallback for secret values when os.environ doesn't have them —
+        # CLI threads .env contents in here so agents work without
+        # exporting every secret to the apply shell.
+        self._env_values = dict(env_values or {})
         self._fqdn: str | None = None
 
         # Vault-backed deploy context (set via set_vault_context). When
@@ -455,6 +460,23 @@ class ContainerAppNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
+            # Bundle unpublished vystak + transport sources onto the container's
+            # PYTHONPATH (via COPY . . in the Dockerfile). Mirrors what the
+            # docker provider does — without this, containers fail at import
+            # with "No module named 'vystak'".
+            import shutil as _shutil
+
+            import vystak
+            import vystak_transport_http
+            import vystak_transport_nats
+
+            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
+                _src = Path(_mod.__file__).parent
+                _dst = build_dir / _src.name
+                if _dst.exists():
+                    _shutil.rmtree(_dst)
+                _shutil.copytree(_src, _dst)
+
             mcp_installs = ""
             needs_node = False
             if self._agent.mcp_servers:
@@ -528,7 +550,7 @@ class ContainerAppNode(Provisionable):
             env_vars = []
             for secret in self._agent.secrets:
                 secret_name = secret.name
-                value = os.environ.get(secret_name)
+                value = os.environ.get(secret_name) or self._env_values.get(secret_name)
                 if value:
                     safe_name = secret_name.lower().replace("_", "-")
                     aca_secrets.append(Secret(name=safe_name, value=value))

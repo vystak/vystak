@@ -1,6 +1,7 @@
 """Hash-tree tests for transport integration."""
 
-from vystak.hash.tree import hash_agent
+from vystak.hash.tree import hash_agent, hash_channel, hash_generated_code
+from vystak.providers.base import GeneratedCode
 from vystak.schema import (
     Agent,
     Model,
@@ -106,3 +107,74 @@ class TestTransportHashing:
         # Transport section still present; computed as "null" hash.
         assert tree.transport is not None
         assert len(tree.transport) == 64
+
+
+class TestCodegenHashing:
+    """Codegen output digest contributes to root so codegen-only changes
+    (e.g. turn_core.py / a2a.py source edits) bump the deploy hash even when
+    the Agent schema hasn't moved."""
+
+    def _code(self, **files: str) -> GeneratedCode:
+        return GeneratedCode(files=dict(files), entrypoint="server.py")
+
+    def test_codegen_section_present_with_default(self):
+        tree = hash_agent(_agent())
+        assert hasattr(tree, "codegen")
+        assert len(tree.codegen) == 64
+
+    def test_default_is_null_hash_when_codegen_omitted(self):
+        # Backwards compat: callers that don't pass codegen_hash get the
+        # canonical null section, identical to the old single-section build.
+        tree_a = hash_agent(_agent())
+        tree_b = hash_agent(_agent(), codegen_hash=None)
+        assert tree_a.codegen == tree_b.codegen
+        assert tree_a.root == tree_b.root
+
+    def test_codegen_change_changes_root(self):
+        digest_a = hash_generated_code(self._code(**{"server.py": "v1"}))
+        digest_b = hash_generated_code(self._code(**{"server.py": "v2"}))
+        assert digest_a != digest_b
+        tree_a = hash_agent(_agent(), codegen_hash=digest_a)
+        tree_b = hash_agent(_agent(), codegen_hash=digest_b)
+        assert tree_a.codegen != tree_b.codegen
+        assert tree_a.root != tree_b.root
+
+    def test_codegen_same_content_same_hash(self):
+        digest_a = hash_generated_code(self._code(**{"server.py": "x"}))
+        digest_b = hash_generated_code(self._code(**{"server.py": "x"}))
+        assert digest_a == digest_b
+
+    def test_hash_generated_code_handles_none(self):
+        # Schema-only callers pass None; helper returns null hash.
+        assert len(hash_generated_code(None)) == 64
+
+    def test_hash_generated_code_handles_empty_files(self):
+        empty = GeneratedCode(files={}, entrypoint="server.py")
+        assert hash_generated_code(empty) == hash_generated_code(None)
+
+    def test_hash_generated_code_filename_order_independent(self):
+        d1 = hash_generated_code(self._code(**{"a.py": "1", "b.py": "2"}))
+        # Different insertion order — must produce same digest.
+        d2 = hash_generated_code(GeneratedCode(
+            files={"b.py": "2", "a.py": "1"}, entrypoint="server.py",
+        ))
+        assert d1 == d2
+
+    def test_channel_codegen_threads_through(self):
+        from vystak.schema.channel import Channel
+        from vystak.schema.common import ChannelType
+
+        platform = Platform(
+            name="main",
+            type="docker",
+            provider=Provider(name="docker", type="docker"),
+        )
+        channel = Channel(
+            name="ch", type=ChannelType.SLACK, platform=platform,
+        )
+        digest_a = hash_generated_code(self._code(**{"server.py": "v1"}))
+        digest_b = hash_generated_code(self._code(**{"server.py": "v2"}))
+        tree_a = hash_channel(channel, codegen_hash=digest_a)
+        tree_b = hash_channel(channel, codegen_hash=digest_b)
+        assert tree_a.codegen != tree_b.codegen
+        assert tree_a.root != tree_b.root

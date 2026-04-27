@@ -39,6 +39,7 @@ class AzureChannelAppNode(Provisionable):
         generated_code: GeneratedCode,
         plan: DeployPlan,
         platform_config: dict,
+        env_values: dict[str, str] | None = None,
     ):
         self._aca_client = aca_client
         self._docker_client = docker_client
@@ -47,6 +48,11 @@ class AzureChannelAppNode(Provisionable):
         self._generated_code = generated_code
         self._plan = plan
         self._platform_config = platform_config
+        # Optional fallback: vystak.cli loads .env into a dict and hands it
+        # here so channel secrets resolve even when the apply shell doesn't
+        # have them exported. os.environ takes precedence (allows ad-hoc
+        # overrides) and env_values is the second-chance lookup.
+        self._env_values = dict(env_values or {})
         self._fqdn: str | None = None
 
         # Vault-backed deploy context (set via set_vault_context). When
@@ -103,7 +109,7 @@ class AzureChannelAppNode(Provisionable):
         kv_secrets_block: list[dict] = [
             {
                 "name": _kv_secret_name(s),
-                "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                "keyVaultUrl": f"{vault_uri}secrets/{_kv_secret_name(s)}",
                 "identity": identity_resource_id,
             }
             for s in self._vault_secrets
@@ -188,6 +194,27 @@ class AzureChannelAppNode(Provisionable):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_path.write_text(content)
 
+            # Bundle unpublished vystak + transport + channel-package sources onto
+            # the container's PYTHONPATH (via COPY . . in the Dockerfile). Mirrors
+            # what the docker provider's channel node does — without this the
+            # channel container fails at import with "No module named 'vystak'".
+            import shutil as _shutil
+
+            import vystak
+            import vystak_channel_slack
+            import vystak_transport_http
+            import vystak_transport_nats
+
+            for _mod in (
+                vystak, vystak_transport_http, vystak_transport_nats,
+                vystak_channel_slack,
+            ):
+                _src = Path(_mod.__file__).parent
+                _dst = build_dir / _src.name
+                if _dst.exists():
+                    _shutil.rmtree(_dst)
+                _shutil.copytree(_src, _dst)
+
             # The channel's own Dockerfile (shipped in generated_code) is Docker-local
             # friendly (no --platform). Azure needs linux/amd64 explicitly, so rewrite
             # the FROM line in the emitted Dockerfile to enforce it.
@@ -251,7 +278,7 @@ class AzureChannelAppNode(Provisionable):
             env_vars = []
             for secret in self._channel.secrets:
                 secret_name = secret.name
-                value = os.environ.get(secret_name)
+                value = os.environ.get(secret_name) or self._env_values.get(secret_name)
                 if value:
                     safe_name = secret_name.lower().replace("_", "-")
                     aca_secrets.append(Secret(name=safe_name, value=value))
@@ -265,6 +292,15 @@ class AzureChannelAppNode(Provisionable):
             # Channel.config may define a container PORT (defaults to 8080)
             channel_port = int(self._channel.config.get("port", 8080))
             env_vars.append({"name": "PORT", "value": str(channel_port)})
+
+            # Opt-in test API for integration testing — forwarded from the
+            # apply environment when set (`VYSTAK_SLACK_TEST_API=1 vystak apply`).
+            test_api = (
+                os.environ.get("VYSTAK_SLACK_TEST_API")
+                or self._env_values.get("VYSTAK_SLACK_TEST_API")
+            )
+            if test_api:
+                env_vars.append({"name": "VYSTAK_SLACK_TEST_API", "value": str(test_api)})
 
             # ----------------------------------------------------------
             # 4. Create Container App

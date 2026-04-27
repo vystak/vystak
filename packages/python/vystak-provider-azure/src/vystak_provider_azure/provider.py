@@ -1,6 +1,7 @@
 """AzureProvider — deploys agents to Azure Container Apps via ProvisionGraph."""
 
 import hashlib
+import os
 from pathlib import Path
 
 import docker
@@ -12,7 +13,7 @@ from azure.mgmt.keyvault import KeyVaultManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
 from azure.mgmt.resource import ResourceManagementClient
 from vystak.channels import get_plugin
-from vystak.hash import hash_agent, hash_channel
+from vystak.hash import hash_agent, hash_channel, hash_generated_code
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -153,15 +154,65 @@ class AzureProvider(PlatformProvider):
                 return docker.DockerClient(base_url=f"unix://{desktop_socket}")
             raise
 
+    def _deployer_object_id(self) -> str | None:
+        """Resolve the object_id of the user running ``vystak apply``.
+
+        Used to grant the deployer Secrets Officer role on a freshly
+        created Key Vault — vaults with ``enable_rbac_authorization=True``
+        give nobody (not even the creator) any role by default, so the
+        deployer needs an explicit grant before they can push secrets.
+
+        Resolution order:
+          1. ``AZURE_DEPLOYER_OBJECT_ID`` env override.
+          2. ``az ad signed-in-user show --query id -o tsv`` from the
+             active CLI session.
+
+        Returns None when neither is available — the caller skips the
+        deployer self-grant in that case (the user might already have a
+        role via group/inherited assignment, or be using a service
+        principal whose grant is managed externally).
+        """
+        env_oid = os.environ.get("AZURE_DEPLOYER_OBJECT_ID")
+        if env_oid:
+            return env_oid
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["az", "ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            oid = out.stdout.strip()
+            return oid if oid else None
+        except Exception:
+            return None
+
     def _tenant_id(self, cfg: dict) -> str:
         """Resolve the Azure tenant ID for the deploy.
 
-        Falls back to an empty string when no tenant is configured — the
-        KeyVaultNode only uses tenant_id in DEPLOY mode, and apply-time
-        construction will populate this from CLI context there. Tests that
-        mock the KV client never reach the tenant lookup.
+        Resolution order (first match wins):
+          1. ``provider.config["tenant_id"]`` — explicit override.
+          2. ``AZURE_TENANT_ID`` env var — common CI convention.
+          3. ``az account show --query tenantId`` — the active CLI session,
+             which the user must already have via ``az login`` for any
+             Azure deploy to work.
+
+        Falls back to empty string only as a last resort. Tests that mock
+        the KV client (or never construct it) won't trip the subprocess.
         """
-        return cfg.get("tenant_id", "")
+        if cfg.get("tenant_id"):
+            return cfg["tenant_id"]
+        env_tenant = os.environ.get("AZURE_TENANT_ID")
+        if env_tenant:
+            return env_tenant
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["az", "account", "show", "--query", "tenantId", "-o", "tsv"],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            return out.stdout.strip()
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # Graph construction
@@ -298,8 +349,9 @@ class AzureProvider(PlatformProvider):
             graph.add(workspace_identity_node)
             graph.add_dependency(workspace_identity_node.name, "resource-group")
 
-        # SecretSync — runs after the vault exists; deployer credentials push
-        # values for any declared secrets missing from KV.
+        # SecretSync — runs after the vault exists AND after the deployer
+        # has Secrets Officer role on it (otherwise set_secret returns
+        # ForbiddenByRbac for vaults created with enable_rbac_authorization=True).
         secret_client = SecretClient(
             vault_url=f"https://{vault_name}.vault.azure.net/",
             credential=credential,
@@ -315,18 +367,43 @@ class AzureProvider(PlatformProvider):
         graph.add(secret_sync)
         graph.add_dependency(secret_sync.name, vault_node.name)
 
-        # Grants — one per (identity, secret) pair, scoped to the individual
-        # KV secret path. Each grant depends on the identity (principal_id),
-        # the vault, and secret-sync (value must exist before the grant has
-        # useful effect).
+        # Deployer self-grant — gives the apply-time caller (the user
+        # running ``vystak apply``) Secrets Officer role on the vault so
+        # set_secret/get_secret succeed. Scoped to the whole vault, not
+        # individual secrets, since the deployer needs to manage all of
+        # them.
+        from vystak_provider_azure.nodes.kv_grant import KV_SECRETS_OFFICER_ROLE_ID
+
         auth_client = AuthorizationManagementClient(credential, subscription_id)
         vault_scope = (
             f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}"
             f"/providers/Microsoft.KeyVault/vaults/{vault_name}"
         )
+        deployer_oid = self._deployer_object_id()
+        if deployer_oid is not None:
+            deployer_grant = KvGrantNode(
+                client=auth_client,
+                scope=vault_scope,
+                principal_id=deployer_oid,
+                subscription_id=subscription_id,
+                role_id=KV_SECRETS_OFFICER_ROLE_ID,
+                principal_type="User",
+            )
+            graph.add(deployer_grant)
+            graph.add_dependency(deployer_grant.name, vault_node.name)
+            # secret_sync must run AFTER the deployer is granted write access.
+            graph.add_dependency(secret_sync.name, deployer_grant.name)
+
+        # Per-secret RBAC grants for agent UAMIs. Scope path uses the
+        # KV-normalized name (lowercase + hyphens) since that's where the
+        # secret actually lives in the vault.
+        from vystak_provider_azure.nodes.aca_app import _kv_secret_name
+
         if agent_identity_node is not None:
             for secret_name in agent_secret_names:
-                secret_scope = f"{vault_scope}/secrets/{secret_name}"
+                secret_scope = (
+                    f"{vault_scope}/secrets/{_kv_secret_name(secret_name)}"
+                )
                 grant = KvGrantNode(
                     client=auth_client,
                     scope=secret_scope,
@@ -344,7 +421,9 @@ class AzureProvider(PlatformProvider):
 
         if workspace_identity_node is not None:
             for secret_name in workspace_secret_names:
-                secret_scope = f"{vault_scope}/secrets/{secret_name}"
+                secret_scope = (
+                    f"{vault_scope}/secrets/{_kv_secret_name(secret_name)}"
+                )
                 grant = KvGrantNode(
                     client=auth_client,
                     scope=secret_scope,
@@ -392,7 +471,8 @@ class AzureProvider(PlatformProvider):
         return None
 
     def plan(self, agent: Agent, current_hash: str | None) -> DeployPlan:
-        tree = hash_agent(agent)
+        codegen_hash = hash_generated_code(self._generated_code)
+        tree = hash_agent(agent, codegen_hash=codegen_hash)
         target_hash = tree.root
 
         if current_hash == target_hash:
@@ -568,6 +648,7 @@ class AzureProvider(PlatformProvider):
                 plan=plan,
                 platform_config=cfg,
                 peer_routes_json=peer_routes or "{}",
+                env_values=self._env_values,
             )
             if vault_node is not None and agent_identity_key is not None:
                 container_app_node.set_vault_context(
@@ -822,7 +903,17 @@ class AzureProvider(PlatformProvider):
         return None
 
     def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
-        tree = hash_channel(channel)
+        # Generate codegen output with empty routes — routes are deploy-time
+        # state, not part of the codegen identity. SERVER_PY + channel_config.json
+        # changes still bump the hash via this path.
+        codegen_hash: str | None = None
+        try:
+            plugin = get_plugin(channel.type)
+            code = plugin.generate_code(channel, {})
+            codegen_hash = hash_generated_code(code)
+        except Exception:
+            codegen_hash = None
+        tree = hash_channel(channel, codegen_hash=codegen_hash)
         target_hash = tree.root
 
         if current_hash == target_hash:
@@ -947,6 +1038,7 @@ class AzureProvider(PlatformProvider):
                     generated_code=code,
                     plan=plan,
                     platform_config=cfg,
+                    env_values=self._env_values,
                 )
             )
 

@@ -127,6 +127,10 @@ class DockerChannelNode(Provisionable):
             env = {
                 "PORT": str(self._container_port),
             }
+            # Opt-in test API for integration testing — forwarded from the
+            # apply environment when set (`VYSTAK_SLACK_TEST_API=1 vystak apply`).
+            if os.environ.get("VYSTAK_SLACK_TEST_API"):
+                env["VYSTAK_SLACK_TEST_API"] = os.environ["VYSTAK_SLACK_TEST_API"]
             # Channel secrets delivery:
             # - Vault path (_vault_secrets_volume set): secrets are rendered
             #   into /shared/secrets.env by the per-channel Vault Agent

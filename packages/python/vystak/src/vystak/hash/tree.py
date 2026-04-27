@@ -28,6 +28,12 @@ class AgentHashTree:
     # v1 Secret Manager additions
     workspace_identity: str
     grants: str
+    # Codegen output digest. Captures the actual generated server.py / Dockerfile /
+    # requirements bundle so changes to framework-adapter codegen modules
+    # (turn_core.py, a2a.py, templates.py, …) trigger redeploy even when the
+    # Agent schema hasn't moved. Defaults to "null" when callers don't have
+    # generated code in hand at plan time.
+    codegen: str
     root: str
 
 
@@ -48,6 +54,11 @@ class ChannelHashTree:
     routes: str
     runtime: str
     secrets: str
+    # Codegen output digest. Captures the channel plugin's emitted
+    # ``server.py`` / ``channel_config.json`` so changes to the plugin's
+    # generator (or to ``server_template.SERVER_PY``) trigger redeploy
+    # even when the channel schema hasn't moved.
+    codegen: str
     root: str
 
 
@@ -120,8 +131,32 @@ def _hash_subagents(agent: Agent) -> str:
     return hashlib.sha256("|".join(names).encode()).hexdigest()
 
 
-def hash_agent(agent: Agent) -> AgentHashTree:
-    """Compute the full hash tree for an agent definition."""
+def hash_generated_code(generated_code) -> str:
+    """Hash the file contents of a GeneratedCode bundle.
+
+    Order-stable across runs because we sort filenames before hashing.
+    Empty / None bundles return the canonical "null" hash so the schema-
+    only branch and the codegen-aware branch produce the same root when
+    no generated code is in hand.
+    """
+    if generated_code is None or not getattr(generated_code, "files", None):
+        return _hash_str(None)
+    items = sorted(generated_code.files.items())
+    blob = "\n".join(f"{name}:{content}" for name, content in items)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTree:
+    """Compute the full hash tree for an agent definition.
+
+    When ``codegen_hash`` is provided, it contributes to the root so changes
+    to the framework adapter's emitted source (turn_core.py, a2a.py,
+    templates.py, …) bump the deploy hash even when the Agent schema hasn't
+    moved. Callers in providers' ``plan()`` should pass
+    ``hash_generated_code(self._generated_code)`` whenever generated code
+    is in hand. Defaults to the canonical "null" hash for backwards
+    compatibility with callers that haven't been wired through yet.
+    """
     brain = hash_model(agent.model)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
@@ -140,6 +175,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         else _hash_str(None)
     )
     grants = compute_grants_hash(agent)
+    codegen = codegen_hash if codegen_hash is not None else _hash_str(None)
 
     sections = "|".join(
         [
@@ -156,6 +192,7 @@ def hash_agent(agent: Agent) -> AgentHashTree:
             subagents,
             workspace_identity,
             grants,
+            codegen,
         ]
     )
     root = hashlib.sha256(sections.encode()).hexdigest()
@@ -174,19 +211,31 @@ def hash_agent(agent: Agent) -> AgentHashTree:
         subagents=subagents,
         workspace_identity=workspace_identity,
         grants=grants,
+        codegen=codegen,
         root=root,
     )
 
 
-def hash_channel(channel: Channel) -> ChannelHashTree:
-    """Compute the full hash tree for a channel definition."""
+def hash_channel(
+    channel: Channel,
+    *,
+    codegen_hash: str | None = None,
+) -> ChannelHashTree:
+    """Compute the full hash tree for a channel definition.
+
+    When ``codegen_hash`` is provided, it contributes to the root so changes
+    to the channel plugin's emitted source (``server_template.SERVER_PY``,
+    Dockerfile, requirements) bump the deploy hash even when the channel
+    schema hasn't moved.
+    """
     config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()
     routes = _hash_list(channel.agents)
     mode = channel.runtime_mode.value if channel.runtime_mode else "default"
     runtime = _hash_str(f"{channel.type.value}|{mode}")
     secrets = _hash_list(channel.secrets)
+    codegen = codegen_hash if codegen_hash is not None else _hash_str(None)
 
-    sections = "|".join([config, routes, runtime, secrets])
+    sections = "|".join([config, routes, runtime, secrets, codegen])
     root = hashlib.sha256(sections.encode()).hexdigest()
 
     return ChannelHashTree(
@@ -194,5 +243,6 @@ def hash_channel(channel: Channel) -> ChannelHashTree:
         routes=routes,
         runtime=runtime,
         secrets=secrets,
+        codegen=codegen,
         root=root,
     )

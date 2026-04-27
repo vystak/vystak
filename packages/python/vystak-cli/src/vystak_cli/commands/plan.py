@@ -42,6 +42,18 @@ def plan(files, file_path):
         try:
             provider = get_provider(agent)
             provider.set_agent(agent)
+            # Hand the provider its generated code BEFORE plan() so the
+            # codegen-output digest contributes to target_hash. Without this,
+            # codegen-only changes (e.g. turn_core.py, a2a.py, templates.py)
+            # show as "No changes" against a stale deployment.
+            try:
+                code = adapter.generate(agent)
+                provider.set_generated_code(code)
+            except Exception:
+                # If generation fails (validation already passed, but generate
+                # may still hit edge cases), fall through with no codegen hash —
+                # the schema-only hash still captures most changes.
+                pass
             current_hash = provider.get_hash(agent.name)
             deploy_plan = provider.plan(agent, current_hash)
 

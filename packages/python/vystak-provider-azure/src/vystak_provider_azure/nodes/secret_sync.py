@@ -6,6 +6,8 @@ from azure.core.exceptions import ResourceNotFoundError
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 
+from vystak_provider_azure.nodes.aca_app import _kv_secret_name
+
 
 class SecretSyncNode(Provisionable):
     """Pushes declared secrets into a KV client with push-if-missing semantics.
@@ -43,12 +45,18 @@ class SecretSyncNode(Provisionable):
         missing: list[str] = []
 
         for name in self._declared:
-            existing_value = self._get_existing(name)
+            # Azure Key Vault secret names must match [a-zA-Z0-9-]+ (no
+            # underscores). ACA secret-ref names additionally require
+            # lowercase. _kv_secret_name normalizes to both — apply the
+            # same transform here so the KV name and the ACA keyVaultUrl
+            # reference match.
+            kv_name = _kv_secret_name(name)
+            existing_value = self._get_existing(kv_name)
             if existing_value is not None and not self._force:
                 skipped.append(name)
                 continue
             if name in self._env:
-                self._client.set_secret(name, self._env[name])
+                self._client.set_secret(kv_name, self._env[name])
                 pushed.append(name)
             else:
                 missing.append(name)
@@ -67,6 +75,7 @@ class SecretSyncNode(Provisionable):
         )
 
     def _get_existing(self, name: str) -> str | None:
+        """Lookup an existing secret. Caller passes the KV-form name (hyphens)."""
         try:
             return self._client.get_secret(name).value
         except ResourceNotFoundError:

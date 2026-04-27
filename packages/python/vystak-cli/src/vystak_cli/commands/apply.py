@@ -156,6 +156,12 @@ def _run_provider_apply(
         if hasattr(provider, "set_allow_missing"):
             provider.set_allow_missing(allow_missing)
 
+        # Hand the provider its generated code BEFORE plan() so the
+        # codegen-output digest contributes to the target_hash. Without
+        # this, changes to the framework adapter (turn_core.py, a2a.py,
+        # templates.py, …) wouldn't bump the hash and re-applies would
+        # report "Already up to date" against stale agent containers.
+        provider.set_generated_code(code)
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
 
@@ -180,7 +186,6 @@ def _run_provider_apply(
             deploy_plan.actions.append("Force redeploy")
 
         click.echo("  Deploying:")
-        provider.set_generated_code(code)
         provider.set_agent(agent)
 
         if hasattr(provider, "set_listener"):
@@ -198,12 +203,37 @@ def _run_provider_apply(
         peer_routes: str | None = None
         if (
             agent.platform is not None
-            and agent.platform.provider.type == "docker"
+            and agent.subagents
             and agent.platform.transport is not None
         ):
             try:
+                provider_type = (
+                    agent.platform.provider.type
+                    if agent.platform.provider
+                    else None
+                )
                 plugin = get_transport_plugin(agent.platform.transport.type)
-                peer_routes = build_routes_json(agent.subagents, plugin, agent.platform)
+                if provider_type == "docker":
+                    # Docker container DNS — derive from agent name only.
+                    peer_routes = build_routes_json(
+                        agent.subagents, plugin, agent.platform,
+                    )
+                else:
+                    # Non-Docker (Azure ACA, etc.): use the live FQDNs from
+                    # already-deployed peers. Build the same routes_json
+                    # shape so the agent's AgentClient resolves them.
+                    import json
+                    peer_urls = {a["name"]: a.get("url") for a in deployed_agents}
+                    routes: dict[str, dict[str, str]] = {}
+                    for sub in agent.subagents:
+                        url = peer_urls.get(sub.name)
+                        if url and url != "(unchanged)":
+                            routes[sub.name] = {
+                                "canonical": sub.canonical_name,
+                                "address": url.rstrip("/") + "/a2a",
+                            }
+                    if routes:
+                        peer_routes = json.dumps(routes)
             except (KeyError, Exception):
                 pass
 
@@ -257,6 +287,7 @@ def _run_provider_apply(
             deploy_plan.actions.append("Force redeploy")
 
         agents_by_name = {a["name"]: a["agent"] for a in deployed_agents}
+        urls_by_name = {a["name"]: a.get("url") for a in deployed_agents}
 
         # Channels list their routable agents declaratively now (channel.agents).
         # Resolve each one to a transport route entry so the channel container's
@@ -271,9 +302,29 @@ def _run_provider_apply(
                     continue
                 try:
                     plugin = get_transport_plugin(peer_agent.platform.transport.type)
+                    # Prefer the platform-resolved live URL (Azure ACA FQDN,
+                    # external service, etc.) when the deploy returned one.
+                    # Docker agents fall through to the plugin's container-DNS
+                    # default since deployed_agents only carries internal
+                    # localhost ports for them.
+                    live_url = urls_by_name.get(name)
+                    provider_type = (
+                        peer_agent.platform.provider.type
+                        if peer_agent.platform.provider
+                        else None
+                    )
+                    if (
+                        live_url
+                        and live_url != "(unchanged)"
+                        and provider_type != "docker"
+                    ):
+                        # Append /a2a so the AgentClient hits the JSON-RPC endpoint.
+                        address = live_url.rstrip("/") + "/a2a"
+                    else:
+                        address = plugin.resolve_address_for(peer_agent, peer_agent.platform)
                     resolved_routes[name] = {
                         "canonical": peer_agent.canonical_name,
-                        "address": plugin.resolve_address_for(peer_agent, peer_agent.platform),
+                        "address": address,
                     }
                 except (KeyError, Exception):
                     pass
