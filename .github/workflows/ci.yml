@@ -35,9 +35,7 @@ jobs:
           cache: pnpm
 
       - name: Install just
-        uses: extractions/setup-just@v3
-        with:
-          just-version: "1.50.0"
+        uses: taiki-e/install-action@just
 
       - name: Install Python dependencies
         run: uv sync
