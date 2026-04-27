@@ -3,6 +3,7 @@
 from textwrap import dedent
 
 from vystak.schema.agent import Agent
+from vystak.schema.model import Model
 
 from vystak_adapter_langchain.a2a import (
     generate_a2a_handler_code,
@@ -59,6 +60,21 @@ At the start of each conversation, relevant memories are provided in context.
 Use save_memory to remember important facts, preferences, or instructions the user shares.
 Use forget_memory to remove incorrect or outdated memories when asked.
 """
+
+
+# Approximate context windows for known model families (for compaction
+# threshold math). Falls back to 200_000.
+_CONTEXT_WINDOWS = {
+    "claude-opus-4-7": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+    "gpt-4o": 128_000,
+    "gpt-4.1": 1_000_000,
+}
+
+
+def _context_window_for(model: Model) -> int:
+    return _CONTEXT_WINDOWS.get(model.model_name, 200_000)
 
 
 def _generate_tool_stubs(stub_tool_names: list[str]) -> str:
@@ -262,6 +278,7 @@ def generate_agent_py(
 
     # Checkpointer based on resources
     session_store = _get_session_store(agent)
+    compaction_enabled = _compaction_enabled(agent)
 
     # Build the agent code
     lines = []
@@ -293,11 +310,48 @@ def generate_agent_py(
     if has_mcp:
         lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
         lines.append(_generate_mcp_config(agent))
+    if compaction_enabled:
+        lines.append("")
+        lines.append("# Compaction (Layer 1 prune + Layer 2 autonomous middleware)")
+        lines.append(
+            "from vystak_adapter_langchain.compaction import "
+            "prune_messages, maybe_compact, assign_vystak_msg_id, message_id, "
+            "summarize as _vystak_summarize, resolve_preset"
+        )
+        lines.append("from langchain.agents.middleware import create_summarization_tool_middleware")
     lines.append("")
     lines.append("")
     lines.append("# Model")
     lines.append(f"model = {model_class}({model_kwargs_str})")
     lines.append("")
+
+    if compaction_enabled:
+        comp = agent.compaction
+        summ_model = comp.summarizer or agent.model
+        summ_import, summ_class = MODEL_PROVIDERS.get(
+            summ_model.provider.type, MODEL_PROVIDERS["anthropic"]
+        )
+        # Avoid duplicate import.
+        if summ_import not in "\n".join(lines):
+            lines.append(summ_import)
+        lines.append("")
+        lines.append("# Compaction summarizer model")
+        lines.append(
+            f'_compaction_summarizer = {summ_class}(model="{summ_model.model_name}")'
+        )
+        lines.append("")
+        lines.append("# Resolved compaction policy (preset + overrides)")
+        lines.append("from vystak.schema.compaction import Compaction as _Compaction")
+        lines.append(
+            "_compaction_policy = resolve_preset(_Compaction("
+            f"mode={comp.mode!r}, "
+            f"trigger_pct={comp.trigger_pct!r}, "
+            f"keep_recent_pct={comp.keep_recent_pct!r}, "
+            f"prune_tool_output_bytes={comp.prune_tool_output_bytes!r}, "
+            f"target_tokens={comp.target_tokens!r}), "
+            f"context_window={_context_window_for(agent.model)})"
+        )
+        lines.append("")
 
     if session_store and session_store.engine == "postgres":
         lines.append("# Session persistence (Postgres) — initialized at startup via lifespan")
@@ -368,6 +422,15 @@ def generate_agent_py(
             f"{full_tools_list}, *_builtin_tools" if full_tools_list else "*_builtin_tools"
         )
 
+    # Build middlewares kwarg for create_react_agent (Layer 2 compaction middleware).
+    middlewares_kw = ""
+    if compaction_enabled:
+        middlewares_kw = (
+            ", middlewares=[create_summarization_tool_middleware("
+            "model=_compaction_summarizer, "
+            "keep_last_n_messages=int(_compaction_policy.keep_recent_pct * 100))]"
+        )
+
     # For persistent checkpointers, create agent via function (memory set at startup)
     # Use a prompt callable so memory recall is ephemeral (never saved to checkpoint state)
     if session_store and session_store.engine in ("postgres", "sqlite"):
@@ -434,7 +497,8 @@ def generate_agent_py(
         else:
             lines.append("    prompt_fn = _make_prompt(None, store)")
         lines.append(
-            "    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=prompt_fn)"
+            "    return create_react_agent(model, all_tools, checkpointer=checkpointer, store=store, prompt=prompt_fn"
+            + middlewares_kw + ")"
         )
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
@@ -445,20 +509,26 @@ def generate_agent_py(
         lines.append("        all_tools.extend(mcp_tools)")
         if system_prompt:
             lines.append(
-                "    return create_react_agent(model, all_tools, checkpointer=memory, prompt=system_prompt)"
+                "    return create_react_agent(model, all_tools, checkpointer=memory, prompt=system_prompt"
+                + middlewares_kw + ")"
             )
         else:
-            lines.append("    return create_react_agent(model, all_tools, checkpointer=memory)")
+            lines.append(
+                "    return create_react_agent(model, all_tools, checkpointer=memory"
+                + middlewares_kw + ")"
+            )
         lines.append("")
         lines.append("agent = None  # created during server lifespan")
     else:
         if system_prompt:
             lines.append(
-                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory, prompt=system_prompt)"
+                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory, prompt=system_prompt"
+                + middlewares_kw + ")"
             )
         else:
             lines.append(
-                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory)"
+                f"agent = create_react_agent(model, [{full_tools_list}], checkpointer=memory"
+                + middlewares_kw + ")"
             )
 
     lines.append("")
