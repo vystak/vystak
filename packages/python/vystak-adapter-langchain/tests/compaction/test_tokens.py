@@ -1,6 +1,5 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-
 from vystak_adapter_langchain.compaction.tokens import (
     EstimateResult,
     estimate_tokens,
