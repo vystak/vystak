@@ -58,7 +58,7 @@ just docs-build
 As of main (`f82c342`), `just ci` does **not** fully green because of issues unrelated to any specific PR:
 
 - **`lint-typescript`** fails — ESLint 9 requires `eslint.config.js`, missing in `packages/typescript/cli` and `packages/typescript/core`.
-- **`typecheck-python`** fails with ~124 pyright errors, mostly Pydantic-style test fixtures missing required fields (`name=`, `provider=`, `type=`). Never ran in CI before 2026-04-16 because lint-python blocked it first.
+- **`typecheck-python`** fails with ~300 pyright errors. Mostly two patterns: (1) Pydantic-style test fixtures missing required fields (`name=`, `provider=`, `type=`); (2) `Optional` member access in `templates.py` / `tree.py` / `compaction/` (e.g. `agent.compaction.mode` without narrowing the `Compaction | None`). Same pattern as the long-standing `session_store.engine` access that hasn't been gated on. Never ran in CI before 2026-04-16 because lint-python blocked it first.
 
 `just lint-python`, `just test-python`, `just typecheck-typescript`, `just test-typescript` all pass. When adding work, assume these four gates are the live ones.
 
