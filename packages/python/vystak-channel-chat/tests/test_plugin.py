@@ -348,7 +348,10 @@ class TestServerTemplateResponsesApi:
 
         # The old byte-proxy pattern must be gone — no raw httpx POST to /v1/responses.
         assert 'client.post(f"{agent_url}/v1/responses"' not in SERVER_PY
-        assert "httpx" not in SERVER_PY
+        # httpx is now present for the /v1/sessions/* proxy routes — the
+        # assertion is that the OLD /v1/responses byte-proxy is gone, not
+        # that httpx is absent entirely.
+        assert 'client.post(f"{agent_url}/v1/responses"' not in SERVER_PY
 
     def test_requirements_includes_transport_pip_deps(self):
         from vystak_channel_chat.server_template import REQUIREMENTS

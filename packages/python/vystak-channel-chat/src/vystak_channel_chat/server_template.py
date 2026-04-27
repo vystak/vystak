@@ -451,6 +451,56 @@ async def get_response(response_id: str):
     return JSONResponse(result)
 
 
+async def _resolve_agent_for_thread(thread_id: str) -> str | None:
+    """Return the HTTP base URL for the agent that owns *thread_id*.
+
+    The thread_id is opaque to the chat channel — we cannot look it up in
+    _RESPONSE_OWNERS (which is keyed by response_id, not thread_id).  The
+    strategy is:
+    - If exactly one agent is routed, use it unconditionally (single-agent
+      deployments, the overwhelmingly common case).
+    - Otherwise return None, letting the caller respond with 404.
+    """
+    if len(ROUTES) == 1:
+        agent_name = next(iter(ROUTES))
+        return ROUTES[agent_name]
+    return None
+
+
+@app.post("/v1/sessions/{thread_id}/compact")
+async def proxy_compact(thread_id: str, request: Request):
+    target = await _resolve_agent_for_thread(thread_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": {"message": f"thread '{thread_id}' not routed", "type": "invalid_request_error", "code": "thread_not_found"}})
+    body = await request.body()
+    import httpx
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{target}/v1/sessions/{thread_id}/compact", content=body, headers={"content-type": "application/json"})
+    return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.get("/v1/sessions/{thread_id}/compactions")
+async def proxy_list_compactions(thread_id: str):
+    target = await _resolve_agent_for_thread(thread_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": {"message": f"thread '{thread_id}' not routed", "type": "invalid_request_error", "code": "thread_not_found"}})
+    import httpx
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(f"{target}/v1/sessions/{thread_id}/compactions")
+    return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.get("/v1/sessions/{thread_id}/compactions/{generation}")
+async def proxy_get_compaction(thread_id: str, generation: int):
+    target = await _resolve_agent_for_thread(thread_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": {"message": f"thread '{thread_id}' not routed", "type": "invalid_request_error", "code": "thread_not_found"}})
+    import httpx
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(f"{target}/v1/sessions/{thread_id}/compactions/{generation}")
+    return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
 if __name__ == "__main__":
     import uvicorn
 
