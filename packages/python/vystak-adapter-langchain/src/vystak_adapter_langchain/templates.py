@@ -1334,6 +1334,10 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # (used by builtin_tools when agent.workspace is declared).
     workspace_pkg = "\nasyncssh>=2.18" if agent.workspace is not None else ""
 
+    compaction_pkg = ""
+    if _compaction_enabled(agent):
+        compaction_pkg = "\nlangchain>=1.0,<1.2"
+
     # vystak + vystak_transport_http + vystak_transport_nats are bundled as
     # source by DockerAgentNode (on PYTHONPATH via COPY . . in the Dockerfile).
     # nats-py is the runtime dependency for NatsTransport; included
@@ -1346,7 +1350,7 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
         fastapi>=0.115
         uvicorn>=0.34
         sse-starlette>=2.0
-        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{workspace_pkg}{tool_deps}
+        nats-py>=2.6{checkpoint_pkg}{mcp_pkg}{workspace_pkg}{compaction_pkg}{tool_deps}
     """)
 
 
