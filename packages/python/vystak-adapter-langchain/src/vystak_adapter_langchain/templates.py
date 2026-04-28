@@ -723,9 +723,15 @@ def generate_server_py(agent: Agent) -> str:
             lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
         lines.append("")
         if has_mcp:
-            lines.append("from agent import create_agent, DB_URI, MCP_SERVERS")
+            if compaction_enabled:
+                lines.append("from agent import create_agent, DB_URI, MCP_SERVERS, _compaction_summarizer")
+            else:
+                lines.append("from agent import create_agent, DB_URI, MCP_SERVERS")
         else:
-            lines.append("from agent import create_agent, DB_URI")
+            if compaction_enabled:
+                lines.append("from agent import create_agent, DB_URI, _compaction_summarizer")
+            else:
+                lines.append("from agent import create_agent, DB_URI")
         lines.append("")
         lines.append("")
         lines.append("_agent = None")
@@ -842,7 +848,10 @@ def generate_server_py(agent: Agent) -> str:
         lines.append("from contextlib import asynccontextmanager")
         lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
         lines.append("")
-        lines.append("from agent import create_agent, MCP_SERVERS")
+        if compaction_enabled:
+            lines.append("from agent import create_agent, MCP_SERVERS, _compaction_summarizer")
+        else:
+            lines.append("from agent import create_agent, MCP_SERVERS")
         lines.append("")
         lines.append("")
         lines.append("_agent = None")
@@ -866,7 +875,7 @@ def generate_server_py(agent: Agent) -> str:
     else:
         # Case 4: not persistent + no MCP
         if compaction_enabled:
-            lines.append("from agent import create_agent")
+            lines.append("from agent import create_agent, _compaction_summarizer")
             lines.append("from langgraph.checkpoint.memory import MemorySaver as _MS")
             lines.append("_memory_saver = _MS()")
             lines.append("")
