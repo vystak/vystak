@@ -28,16 +28,24 @@ def test_no_compaction_emits_no_compaction_imports():
     assert "vystak_adapter_langchain.compaction" not in code
 
 
-def test_conservative_emits_middleware_with_preset_kwargs():
+def test_conservative_emits_compaction_imports():
+    """Compaction-enabled agent imports our runtime module.
+
+    Layer 2 (autonomous middleware) emission is disabled in the current
+    codegen path — langchain 1.1.x renamed the API and removed the
+    autonomous-tool variant. Layers 1+3 still wire in via the prompt
+    callable.
+    """
     code = generate_agent_py(_agent(Compaction(mode="conservative")))
     assert "from vystak_adapter_langchain.compaction import" in code
-    assert "create_summarization_tool_middleware" in code
-    assert "keep_last_n_messages" in code
+    # Sanity: the disabled middleware doesn't sneak back in.
+    assert "create_summarization_tool_middleware" not in code
 
 
-def test_aggressive_emits_middleware():
+def test_aggressive_emits_compaction_imports():
     code = generate_agent_py(_agent(Compaction(mode="aggressive")))
-    assert "create_summarization_tool_middleware" in code
+    assert "from vystak_adapter_langchain.compaction import" in code
+    assert "create_summarization_tool_middleware" not in code
 
 
 def test_explicit_summarizer_model_emitted():
