@@ -101,9 +101,30 @@ and `trigger='manual'` when you invoke `/compact`.
 
 ## Tuning
 
-The `context_window: 5000` is artificial — drop it (or remove it) to use
-the real Claude Sonnet 200K window. `trigger_pct` and `keep_recent_pct`
-behave the same way at any window size.
+This example is calibrated for **fast dev iteration**, not realistic
+production use:
+
+- `context_window: 5000` — pretend the model has a 5K window so
+  compaction fires after 5–10 turns instead of hundreds.
+- `trigger_pct: 0.3` — fire at 30% of the (fake) window, i.e. 1500
+  tokens. Tight enough that you'll see compaction within a single
+  test session; the conservative-mode default is 0.75.
+- `summarizer: claude-haiku-4-5-20251001` — Haiku is roughly 1/15 the
+  cost of Sonnet, so summaries are cheap during dev.
+
+For production use, drop `context_window` (so the real model context
+applies — 200K for Claude Sonnet 4.x) and pick a preset:
+
+```yaml
+compaction:
+  mode: conservative   # trigger_pct=0.75, keep_recent_pct=0.10
+# or
+compaction:
+  mode: aggressive     # trigger_pct=0.60, keep_recent_pct=0.20
+```
+
+`trigger_pct` and `keep_recent_pct` behave the same way at any window
+size — they're fractions of the resolved context window.
 
 ## Teardown
 

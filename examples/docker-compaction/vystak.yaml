@@ -28,7 +28,7 @@ agents:
     compaction:
       mode: aggressive
       context_window: 5000     # pretend the model only has a 5K window
-      trigger_pct: 0.7         # fire when prefill ≥ 3500 tokens
+      trigger_pct: 0.3         # fire when prefill ≥ 1500 tokens (dev-tight)
       keep_recent_pct: 0.2     # keep last 20% of messages verbatim
       summarizer:              # use Haiku for the summary call (cheap)
         name: haiku

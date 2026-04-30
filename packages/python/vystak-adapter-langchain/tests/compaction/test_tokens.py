@@ -90,7 +90,9 @@ async def test_pre_flight_failure_falls_back_to_chars_div_4():
         context_window=200_000,
     )
     assert r.method == "chars_div_4"
-    assert 900 <= r.tokens <= 1100
+    # 4000 chars / 3.5 chars-per-token * 1.10 safety = ~1257 tokens.
+    # Allow a 10% slack on either side of the calibration.
+    assert 1100 <= r.tokens <= 1400
 
 
 class _SyncOnlyModel:

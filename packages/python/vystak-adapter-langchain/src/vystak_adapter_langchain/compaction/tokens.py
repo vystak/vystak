@@ -90,6 +90,15 @@ async def estimate_tokens(
 
 
 def _chars_div_4(messages: list[BaseMessage]) -> int:
+    """Estimate token count from total character length.
+
+    Despite the function name (kept for back-compat), the divisor is 3.5,
+    not 4. The classic GPT 1:4 ratio under-estimates Anthropic prefill for
+    typical English: Claude's tokenizer yields ~3.5 chars/token in
+    practice, and accounting for system-prompt + tool definitions adds
+    another ~10%. Erring toward over-estimation is safer here — a fired
+    compaction is recoverable; a missed one isn't.
+    """
     total = 0
     for m in messages:
         if isinstance(m.content, str):
@@ -100,4 +109,5 @@ def _chars_div_4(messages: list[BaseMessage]) -> int:
                     total += len(str(block.get("text", "")))
                 else:
                     total += len(str(block))
-    return total // 4
+    # 3.5 chars/token Claude approximation, then +10% safety margin.
+    return int((total / 3.5) * 1.10)
