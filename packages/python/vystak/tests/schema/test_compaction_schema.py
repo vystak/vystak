@@ -57,3 +57,15 @@ def test_target_tokens_positive():
     with pytest.raises(ValidationError):
         Compaction(target_tokens=0)
     Compaction(target_tokens=10_000)  # ok
+
+
+def test_use_langchain_middleware_default_off():
+    c = Compaction()
+    assert c.use_langchain_middleware is False
+
+
+def test_use_langchain_middleware_round_trip():
+    c = Compaction(use_langchain_middleware=True)
+    assert c.use_langchain_middleware is True
+    rebuilt = Compaction.model_validate(c.model_dump())
+    assert rebuilt.use_langchain_middleware is True

@@ -32,4 +32,14 @@ class Compaction(NamedModel):
     # the table's value (defaults to 200_000 for unknown models).
     context_window: int | None = Field(default=None, gt=0)
 
+    # Opt-in defense-in-depth: when True, codegen also wires LangChain 1.1+'s
+    # `SummarizationMiddleware` into the agent. It runs after our prompt
+    # callable's Layer 3 and provides a second, model-level threshold
+    # check. Off by default — our Layer 3 already covers the threshold path
+    # and the langchain dep brings packaging fragility (see
+    # langgraph/langgraph-prebuilt version skew that this codebase has hit).
+    # Originally intended to wire the autonomous-tool middleware (Layer 2),
+    # which no longer exists upstream as of langchain 1.1.
+    use_langchain_middleware: bool = False
+
     summarizer: Model | None = None

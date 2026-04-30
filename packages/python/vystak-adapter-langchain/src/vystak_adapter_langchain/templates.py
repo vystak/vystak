@@ -314,16 +314,18 @@ def generate_agent_py(
     if compaction_enabled:
         lines.append("")
         lines.append("# Compaction (Layer 1 prune + Layer 3 threshold compact)")
-        # Note: Layer 2 (autonomous tool middleware) is currently disabled —
-        # langchain 1.1.x renamed `create_summarization_tool_middleware` to
-        # the class `SummarizationMiddleware` and dropped the
-        # autonomous-tool variant. Layers 1+3+manual still work via our
-        # own compaction runtime.
         lines.append(
             "from vystak_adapter_langchain.compaction import "
             "prune_messages, maybe_compact, assign_vystak_msg_id, message_id, "
             "summarize as _vystak_summarize, resolve_preset"
         )
+        if agent.compaction.use_langchain_middleware:
+            lines.append(
+                "# Optional defense-in-depth: LangChain 1.1+ SummarizationMiddleware"
+            )
+            lines.append(
+                "from langchain.agents.middleware import SummarizationMiddleware"
+            )
     lines.append("")
     lines.append("")
     lines.append("# Model")
@@ -428,11 +430,17 @@ def generate_agent_py(
         )
 
     # Build middlewares kwarg for create_react_agent.
-    # Layer 2 (autonomous tool middleware) is disabled in this codegen path —
-    # langchain 1.1.x renamed the API and removed the autonomous-tool variant.
-    # Layers 1 (prune) and 3 (threshold) are wired into the prompt callable
-    # below and don't depend on langchain middleware.
+    # Default: empty (our Layer 1+3 wired into the prompt callable suffice).
+    # Opt-in via compaction.use_langchain_middleware: emit LangChain 1.1+'s
+    # SummarizationMiddleware as a second, model-level threshold check.
     middlewares_kw = ""
+    if compaction_enabled and agent.compaction.use_langchain_middleware:
+        middlewares_kw = (
+            ", middleware=[SummarizationMiddleware("
+            "model=_compaction_summarizer, "
+            "trigger=('fraction', _compaction_policy.trigger_pct), "
+            "keep=('fraction', _compaction_policy.keep_recent_pct))]"
+        )
 
     # For persistent checkpointers, create agent via function (memory set at startup)
     # Use a prompt callable so memory recall is ephemeral (never saved to checkpoint state)
@@ -1352,12 +1360,23 @@ def generate_requirements_txt(agent: Agent, tool_reqs: str | None = None) -> str
     # resolve to a mid-1.0 langgraph that's incompatible with the prebuilt
     # package langchain 1.x pulls in.
     if _compaction_enabled(agent):
-        # Compaction runtime uses only langchain-core BaseMessage types
-        # (already pinned in the default path) plus our own modules.
-        # No additional langchain/langgraph pins needed.
-        core_pin = "langchain-core>=0.3"
-        graph_pin = "langgraph>=0.2"
-        compaction_pkg = ""
+        if agent.compaction.use_langchain_middleware:
+            # langchain 1.1+ provides SummarizationMiddleware. The transitive
+            # langgraph-prebuilt has packaging skew with langgraph; pin the
+            # last known-good prebuilt version explicitly.
+            core_pin = "langchain-core>=1.0,<2.0"
+            graph_pin = "langgraph>=1.0,<2.0"
+            compaction_pkg = (
+                "\nlangchain>=1.1,<1.2"
+                "\nlanggraph-prebuilt<=1.0.5"
+            )
+        else:
+            # Compaction runtime uses only langchain-core BaseMessage types
+            # (already pinned in the default path) plus our own modules.
+            # No additional langchain/langgraph pins needed.
+            core_pin = "langchain-core>=0.3"
+            graph_pin = "langgraph>=0.2"
+            compaction_pkg = ""
     else:
         core_pin = "langchain-core>=0.3"
         graph_pin = "langgraph>=0.2"
