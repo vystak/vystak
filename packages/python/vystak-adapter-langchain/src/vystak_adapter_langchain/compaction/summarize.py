@@ -54,12 +54,25 @@ def _render_transcript(messages: list[BaseMessage]) -> str:
 
 
 def _flatten(content) -> str:
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
+    """Concatenate text from a structured-content block list.
+
+    Anthropic responses can be a list mixing `{"type": "text", "text": ...}`,
+    `{"type": "thinking", "thinking": ..., "signature": ...}`, and other
+    block types. Only `text` blocks contribute to the output; thinking,
+    tool-use, and any unknown block types are dropped (we don't want
+    raw thinking traces leaking into a stored summary).
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
                 parts.append(block.get("text", ""))
-            else:
-                parts.append(str(block))
-        return "".join(parts)
-    return str(content)
+            # All other dict block types (thinking, tool_use, etc.) are dropped.
+        elif isinstance(block, str):
+            parts.append(block)
+        # Unknown non-string non-dict types: drop silently.
+    return "".join(parts)

@@ -1,9 +1,19 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from vystak_adapter_langchain.compaction import tokens as _tokens_mod
 from vystak_adapter_langchain.compaction.tokens import (
     EstimateResult,
     estimate_tokens,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_probe_cache():
+    """Tokenizer-probe cache is module-level; reset between tests so models
+    with the same id() don't carry over a previous probe result."""
+    _tokens_mod._TOKENIZER_PROBE_CACHE.clear()
+    yield
+    _tokens_mod._TOKENIZER_PROBE_CACHE.clear()
 
 
 class _ModelTokenizer:
@@ -81,3 +91,61 @@ async def test_pre_flight_failure_falls_back_to_chars_div_4():
     )
     assert r.method == "chars_div_4"
     assert 900 <= r.tokens <= 1100
+
+
+class _SyncOnlyModel:
+    """Stub model exposing only the SYNC tokenizer (mirrors ChatAnthropic)."""
+
+    def __init__(self, value: int):
+        self._value = value
+        self.calls = 0
+
+    def get_num_tokens_from_messages(self, messages):
+        self.calls += 1
+        return self._value
+
+
+@pytest.mark.asyncio
+async def test_sync_only_model_uses_pre_flight_sync():
+    model = _SyncOnlyModel(8500)
+    r = await estimate_tokens(
+        [HumanMessage(content="hi")],
+        model=model,
+        last_input_tokens=None,
+        trigger_pct=0.75,
+        context_window=200_000,
+    )
+    assert r.method == "pre_flight_sync"
+    assert r.tokens == 8500
+    assert model.calls == 1
+
+
+class _NoTokenizerModel:
+    """Stub model exposing neither tokenizer — must fall to chars/4."""
+
+
+@pytest.mark.asyncio
+async def test_no_tokenizer_falls_back_silently_after_first_log(caplog):
+    """When neither tokenizer exists, fall back to chars/4 and log INFO once,
+    not WARNING every turn (the prior behavior spammed every turn)."""
+    import logging
+    model = _NoTokenizerModel()
+    msgs = [HumanMessage(content="x" * 4000)]
+    caplog.set_level(logging.WARNING, logger="vystak_adapter_langchain.compaction.tokens")
+
+    r1 = await estimate_tokens(
+        msgs, model=model, last_input_tokens=None,
+        trigger_pct=0.75, context_window=200_000,
+    )
+    r2 = await estimate_tokens(
+        msgs, model=model, last_input_tokens=None,
+        trigger_pct=0.75, context_window=200_000,
+    )
+
+    assert r1.method == "chars_div_4"
+    assert r2.method == "chars_div_4"
+    # No WARNING should be emitted on either call (the previous bug logged
+    # WARNING every turn). INFO from the first probe is allowed and not
+    # captured by caplog at WARNING level.
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == []
