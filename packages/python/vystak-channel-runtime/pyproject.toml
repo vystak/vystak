@@ -26,8 +26,10 @@ dependencies = [
     "aiosqlite>=0.20",
     "asyncpg>=0.29",
     "pydantic>=2.7",
-    "fastapi>=0.110",
 ]
+
+[project.optional-dependencies]
+test-endpoint = ["fastapi>=0.110"]
 
 [project.urls]
 Homepage = "https://vystak.dev"
