@@ -110,6 +110,28 @@ class DiscordChannelRuntime(ChannelRuntime):
             raw=raw_event,
         )
 
+    async def authorize(self, event: InboundEvent) -> bool:
+        from vystak_channel_discord.threads import (
+            is_forum_channel,
+            is_thread_channel,
+            should_respond_in_thread,
+        )
+        if not await super().authorize(event):
+            return False
+        chan_type = event.metadata.get("channel_type")
+        is_in_thread = is_thread_channel(chan_type) or is_forum_channel(chan_type) or (
+            event.metadata.get("raw_message") is not None
+            and getattr(event.metadata["raw_message"], "thread", None) is not None
+        )
+        require_mention = (
+            self.config.get("thread", {}).get("require_explicit_mention", False)
+        )
+        return should_respond_in_thread(
+            require_explicit_mention=require_mention,
+            mentions_bot=event.mentions_bot,
+            is_in_thread=is_in_thread,
+        )
+
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
