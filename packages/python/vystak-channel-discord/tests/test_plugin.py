@@ -36,7 +36,8 @@ def test_channel_config_includes_channel_type_and_protocol():
     out = DiscordChannelPlugin().generate_code(_channel(), resolved_routes={})
     cfg = json.loads(out.files["channel_config.json"])
     assert cfg["channel_type"] == "discord"
-    assert cfg["agent_protocol"] == "a2a-turn"
+    # Discord defaults to streaming so the typing indicator covers the turn.
+    assert cfg["agent_protocol"] == "a2a-stream"
 
 
 def test_plugin_writes_version_fields():

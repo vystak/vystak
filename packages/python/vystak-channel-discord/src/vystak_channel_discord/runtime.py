@@ -237,9 +237,37 @@ class DiscordChannelRuntime(ChannelRuntime):
             is_in_thread=is_in_thread,
         )
 
+    async def before_call(self, event: InboundEvent, route: str) -> None:
+        """Start Discord's typing indicator for streaming turns.
+
+        `channel.typing()` is an async context manager that sends an initial
+        typing event and refreshes it every ~5s for the manager's lifetime.
+        We hold the manager open across the streaming turn and exit it in
+        post_reply.
+        """
+        if self.agent_protocol != "a2a-stream":
+            return
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            return
+        try:
+            typing_ctx = msg.channel.typing()
+            await typing_ctx.__aenter__()
+            event.metadata["_typing_ctx"] = typing_ctx
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed to start typing indicator: %s", exc)
+
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
+        # Stop the typing indicator before posting the reply.
+        typing_ctx = event.metadata.pop("_typing_ctx", None)
+        if typing_ctx is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await typing_ctx.__aexit__(None, None, None)
+
         msg = event.metadata.get("raw_message")
         if msg is None:
             logger.warning("no raw_message; cannot post reply")
@@ -269,18 +297,6 @@ class DiscordChannelRuntime(ChannelRuntime):
             role = "assistant" if getattr(hist.author, "id", None) == bot_id else "user"
             out.append(Message(role=role, content=hist.content or ""))
         return out
-
-    async def before_call(self, event: InboundEvent, route: str) -> None:
-        if not self.config.get("post_placeholder", False):
-            return
-        msg = event.metadata.get("raw_message")
-        if msg is None:
-            return
-        try:
-            placeholder = await msg.channel.send("Responding…")
-        except Exception:  # noqa: BLE001
-            return
-        event.metadata["placeholder_message"] = placeholder
 
     async def on_no_route(self, event: InboundEvent) -> None:
         text = self.config.get("no_route_message")

@@ -60,9 +60,13 @@ class DiscordChannelPlugin(ChannelPlugin):
         if channel.state is not None:
             state_cfg = channel.state.model_dump(exclude_none=True)
 
+        # Discord defaults to streaming so the typing indicator auto-refreshes
+        # for the whole turn duration. Override with `config: {agent_protocol:
+        # a2a-turn}` for one-shot mode.
+        agent_protocol = channel.config.get("agent_protocol", "a2a-stream")
         channel_config: dict = {
             "channel_type": "discord",
-            "agent_protocol": "a2a-turn",
+            "agent_protocol": agent_protocol,
             "agents": agent_names,
             "default_agent": default_agent_name,
             "group_policy": (
