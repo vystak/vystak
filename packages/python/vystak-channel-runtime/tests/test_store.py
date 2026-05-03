@@ -8,6 +8,7 @@ from vystak_channel_runtime.store import (
     MemoryChannelStore,
     PostgresChannelStore,
     SqliteChannelStore,
+    make_channel_store,
 )
 
 
@@ -127,3 +128,25 @@ async def test_postgres_route_pref(postgres_dsn):
     assert await s.get_route_pref("slack", "T1") == "hero"
     await s.delete_route_pref("slack", "T1")
     await s.close()
+
+
+def test_make_channel_store_none_returns_memory():
+    s = make_channel_store(None)
+    assert isinstance(s, MemoryChannelStore)
+
+
+def test_make_channel_store_sqlite(tmp_path):
+    cfg = {"type": "sqlite", "path": str(tmp_path / "x.db")}
+    s = make_channel_store(cfg)
+    assert isinstance(s, SqliteChannelStore)
+
+
+def test_make_channel_store_postgres():
+    cfg = {"type": "postgres", "dsn": "postgresql://u:p@h/db"}
+    s = make_channel_store(cfg)
+    assert isinstance(s, PostgresChannelStore)
+
+
+def test_make_channel_store_unknown_raises():
+    with pytest.raises(ValueError):
+        make_channel_store({"type": "redis"})

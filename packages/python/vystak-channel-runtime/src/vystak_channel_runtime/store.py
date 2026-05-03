@@ -483,3 +483,23 @@ class PostgresChannelStore:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+
+def make_channel_store(state_config: dict | None) -> ChannelStore:
+    """Build a ChannelStore from a Service-shaped config dict.
+
+    Accepts None (-> MemoryChannelStore) or one of:
+      {"type": "sqlite",   "path": "/path/to.db"}
+      {"type": "postgres", "dsn":  "postgresql://..."}
+      {"type": "memory"}
+    """
+    if state_config is None:
+        return MemoryChannelStore()
+    kind = state_config.get("type")
+    if kind in (None, "memory"):
+        return MemoryChannelStore()
+    if kind == "sqlite":
+        return SqliteChannelStore(state_config["path"])
+    if kind == "postgres":
+        return PostgresChannelStore(state_config["dsn"])
+    raise ValueError(f"unknown channel store type: {kind!r}")

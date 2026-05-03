@@ -1,6 +1,13 @@
 """Vystak channel runtime — shared base for channel containers."""
 
 from vystak_channel_runtime.agent_client import A2AAgentClient, AgentClient
+from vystak_channel_runtime.store import (
+    ChannelStore,
+    MemoryChannelStore,
+    PostgresChannelStore,
+    SqliteChannelStore,
+    make_channel_store,
+)
 from vystak_channel_runtime.types import (
     AgentCallError,
     AgentChunk,
@@ -17,8 +24,13 @@ __all__ = [
     "AgentChunk",
     "AgentClient",
     "AgentReply",
+    "ChannelStore",
     "InboundEvent",
+    "MemoryChannelStore",
     "Message",
+    "PostgresChannelStore",
     "SkipEvent",
+    "SqliteChannelStore",
     "ThreadBinding",
+    "make_channel_store",
 ]
