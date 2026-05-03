@@ -191,3 +191,49 @@ async def test_parse_event_message_without_mention_passes_parse_but_authorize_dr
     ev = rt.parse_event(raw)
     assert ev.mentions_bot is False
     assert await rt.authorize(ev) is False
+
+
+def test_parse_event_dm_scope_id_includes_user():
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "message", "event": _bolt_event(text="hello", channel_type="im"), "say": None}
+    ev = rt.parse_event(raw)
+    assert ev.is_dm is True
+    assert ev.scope_id == "T1:U_USER"
+
+
+def test_parse_event_guild_scope_id_is_team_only():
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "app_mention", "event": _bolt_event(), "say": None}
+    ev = rt.parse_event(raw)
+    assert ev.is_dm is False
+    assert ev.scope_id == "T1"
+
+
+@pytest.mark.asyncio
+async def test_slack_runtime_channel_binding_fallback():
+    """When `/vystak route hero` pinned a channel, plain @mentions in that
+    channel route to the pinned agent (no per-thread binding exists)."""
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "T1", "C1:", "channel-pinned")
+    rt = SlackChannelRuntime(
+        config=_config(default_agent=None),
+        routes={
+            "hero": {"address": "http://hero:8000"},
+            "channel-pinned": {"address": "http://x:8000"},
+        },
+        store=store,
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "app_mention", "event": _bolt_event(), "say": None}
+    ev = rt.parse_event(raw)
+    assert await rt.resolve_route(ev) == "channel-pinned"

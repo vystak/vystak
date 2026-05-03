@@ -90,12 +90,18 @@ class SlackChannelRuntime(ChannelRuntime):
         team_id = ev.get("team") or ""
         channel_id = ev.get("channel", "")
         thread_ts = ev.get("thread_ts") or ev.get("ts") or ""
-        is_dm = ev.get("channel_type") == "im"
+        user_id = ev.get("user", "")
         mentions_bot = (
             kind == "app_mention"
             or f"<@{getattr(self, '_bot_user_id', '')}>" in (ev.get("text") or "")
         )
         is_bot = bool(ev.get("bot_id"))
+
+        # DMs include the user in scope_id so per-user prefs can be looked up
+        # by the same key the runtime computes from incoming events.  Guild
+        # messages keep team-only scope so channel_overrides + thread bindings
+        # (which are workspace-wide) keep their meaning.
+        scope_id = f"{team_id}:{user_id}" if is_dm else team_id
 
         metadata = {
             "channel_id": channel_id,
@@ -109,15 +115,27 @@ class SlackChannelRuntime(ChannelRuntime):
 
         return InboundEvent(
             channel_type=ChannelType.SLACK,
-            scope_id=team_id,
+            scope_id=scope_id,
             thread_id=f"{channel_id}:{thread_ts}",
-            user_id=ev.get("user", ""),
+            user_id=user_id,
             text=ev.get("text", ""),
             is_dm=is_dm,
             mentions_bot=mentions_bot,
             metadata=metadata,
             raw=raw_event,
         )
+
+    async def channel_binding_thread_id(self, event: InboundEvent) -> str | None:
+        """Slack's per-channel binding convention: thread_id = `f"{channel_id}:"`.
+
+        Written by `/vystak route` (commands._route).  Read here so per-message
+        lookups fall back to the channel-pinned binding when no per-thread
+        binding exists.
+        """
+        channel_id = event.metadata.get("channel_id")
+        if not channel_id:
+            return None
+        return f"{channel_id}:"
 
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply

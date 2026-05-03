@@ -71,6 +71,11 @@ class ChannelRuntime(ABC):
 
     # --- Pipeline hooks (subclass may override; defaults below) -----------
 
+    async def channel_binding_thread_id(self, event: InboundEvent) -> str | None:
+        """Subclass hook: return a per-channel-scope thread_id for binding lookup
+        when per-thread lookup misses. Default: None (no fallback)."""
+        return None
+
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
         return []
 
@@ -106,7 +111,8 @@ class ChannelRuntime(ABC):
     # --- Authorize (base owns) --------------------------------------------
 
     async def resolve_route(self, event: InboundEvent) -> str | None:
-        """Order: channel_overrides -> thread_binding -> route_pref (DM) -> default_agent."""
+        """Order: channel_overrides -> thread_binding -> channel_binding (subclass hook)
+        -> route_pref (DM) -> default_agent."""
         ov = self.config.get("channel_overrides", {}).get(event.scope_id)
         if ov is not None and isinstance(ov, dict) and ov.get("agent"):
             return ov["agent"]
@@ -117,6 +123,15 @@ class ChannelRuntime(ABC):
             )
             if bound:
                 return bound
+            # Per-channel-scope fallback (subclass-defined; e.g. Slack's
+            # `f"{channel_id}:"` convention written by `/vystak route`).
+            channel_tid = await self.channel_binding_thread_id(event)
+            if channel_tid is not None and channel_tid != event.thread_id:
+                bound = await self.store.get_thread_binding(
+                    self.channel_type, event.scope_id, channel_tid,
+                )
+                if bound:
+                    return bound
 
         if event.is_dm:
             pref = await self.store.get_route_pref(

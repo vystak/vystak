@@ -362,3 +362,47 @@ async def test_handle_event_agent_error_routes_to_handler():
     await rt.handle_event({"scope_id": "C1", "user_id": "U", "text": "hi"})
     assert rt.errors == [("hero", "boom")]
     assert rt.posted == []
+
+
+class _SlackishRuntime(TrivialRuntime):
+    """Test helper that exposes a per-channel-scope binding fallback."""
+
+    async def channel_binding_thread_id(self, event):
+        chan = event.metadata.get("channel_id")
+        return f"{chan}:" if chan else None
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_falls_back_to_channel_binding():
+    """When per-thread binding misses, look up the per-channel binding via the subclass hook."""
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "T1", "C1:", "channel-pinned")
+    rt = _SlackishRuntime(
+        config=_config(default_agent=None),
+        routes=_routes(),
+        store=store,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="T1", thread_id="C1:1700.123",
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+        metadata={"channel_id": "C1"},
+    )
+    assert await rt.resolve_route(ev) == "channel-pinned"
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_thread_binding_takes_precedence_over_channel_binding():
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "T1", "C1:", "channel-pinned")
+    await store.set_thread_binding("slack", "T1", "C1:1700.123", "thread-pinned")
+    rt = _SlackishRuntime(
+        config=_config(default_agent=None),
+        routes=_routes(),
+        store=store,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="T1", thread_id="C1:1700.123",
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+        metadata={"channel_id": "C1"},
+    )
+    assert await rt.resolve_route(ev) == "thread-pinned"
