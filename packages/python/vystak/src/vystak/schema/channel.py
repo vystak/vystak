@@ -91,6 +91,8 @@ class Channel(NamedModel):
     ai_fallback: dict | None = None
     welcome_on_invite: bool = True
     welcome_message: str | None = None
+    channel_package_version: str | None = None
+    channel_runtime_version: str | None = None
 
     @model_validator(mode="before")
     @classmethod
