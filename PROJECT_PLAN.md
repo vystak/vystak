@@ -12,14 +12,14 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ## Current State
 
-**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway.
+**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway. Long-running sessions stay bounded via three-layer compaction.
 
 **Numbers:**
-- 230+ commits
-- 390+ tests across 50+ test files
+- 290+ commits
+- 1270+ tests across 65+ test files
 - 9 Python packages + 4 TypeScript stubs
-- 9 examples (Docker + Azure)
-- 4 design sessions (April 11-15, 2026)
+- 10 examples (Docker + Azure)
+- 5 design sessions (April 11–30, 2026)
 
 ## What We Built
 
@@ -245,6 +245,88 @@ client.chat.completions.create(model="vystak/my-agent", messages=[...])
 - `openai_types.py` bundled into Docker builds for agent and gateway containers
 - Chat REPL uses Responses API with `previous_response_id` chaining
 - OpenAI error format on all `/v1/` endpoints
+
+### Phase 15: Session Compaction (Complete — April 25–30, 2026)
+
+**Three-layer defense against context overflow on long-running sessions.**
+
+Compaction fires inside the agent's prompt callable, next to the
+LangGraph checkpoint. None of the three layers requires changes to
+how clients call the agent — they're transparent under
+`/v1/responses` chaining.
+
+- **Schema:** `Agent.compaction: Compaction | None`
+  - `mode`: `off | conservative | aggressive` (preset shorthands)
+  - Optional overrides: `trigger_pct`, `keep_recent_pct`,
+    `prune_tool_output_bytes`, `target_tokens`, `context_window`,
+    `summarizer` (Model with its own provider/api_key)
+  - Hash contribution: changing compaction policy triggers redeploy
+
+- **Layer 1 — pre-call prune** (always-on, pure):
+  - Head-and-tail truncates oversized `ToolMessage` content older
+    than the last 3 user→assistant turns
+  - Defaults: 4 KB threshold (conservative), 1 KB (aggressive)
+  - Never touches `HumanMessage` / `AIMessage` text
+
+- **Layer 3 — threshold pre-call summarize:**
+  - Token estimate via 3-tier strategy: cheap early-out from
+    cached `last_input_tokens`, sync/async provider tokenizer
+    (Anthropic exposes only sync in langchain 1.x), calibrated
+    chars/3.5 with 10% safety margin as last resort
+  - Summarizes `older` slice when prefill ≥
+    `trigger_pct × context_window`
+  - 60-second + 70%-coverage idempotency guard prevents
+    summary-of-summary on adjacent turns
+  - Stores summary in `vystak_compactions` table; the LangGraph
+    checkpoint is never rewritten
+  - Fail-open with `x_vystak: {compaction_fallback}` SSE chunk
+    on summarizer error
+
+- **Manual `POST /v1/sessions/{thread_id}/compact`:**
+  - Optional `instructions` payload guides the summary
+  - Fails loudly (HTTP 502) with `compaction_failed` code
+
+- **Inspection endpoints:**
+  - `GET /v1/sessions/{thread_id}/compactions` — list all generations
+  - `GET /v1/sessions/{thread_id}/compactions/{generation}` — full row
+  - Chat-channel proxy (`vystak-channel-chat`) forwards all three
+  - `vystak-chat` slash commands `/compact [instructions]` and
+    `/compactions` resolve `thread_id` from the most recent
+    `previous_response_id`
+
+- **Storage backends:**
+  - `vystak_compactions` table with `(thread_id, generation)` PK
+  - PostgresCompactionStore, SqliteCompactionStore,
+    InMemoryCompactionStore — same contract across all three
+
+- **Tool-output offloading** (opt-in via `Workspace`):
+  - Large tool outputs written to disk, replaced in-prompt with
+    `[tool] OK (N bytes) | preview: ... → /path`
+  - Built-in `read_offloaded(path, offset, length)` tool with
+    path-traversal hardening
+
+- **Observability:** Prometheus-style counters
+  (`vystak_compaction_total{layer, trigger, outcome}`,
+  `_input_tokens_total`, `_messages_compacted`, `_estimate_error`,
+  `_suppressions`) plus structured logs.
+
+- **What's not Layer 2:** the originally planned autonomous-tool
+  middleware is gone upstream. LangChain 1.1 renamed the API to
+  `SummarizationMiddleware` (threshold-based) and removed the
+  autonomous-tool variant. The remaining class is incompatible
+  with vystak's `prompt=` callable architecture (`create_agent`
+  doesn't accept callables, only static `system_prompt` strings).
+  Layer 3 in our prompt callable provides the same threshold
+  guarantee. Rationale preserved in `vystak.schema.compaction` for
+  a future codegen migration to `create_agent` + middleware chain.
+
+- **Verified end-to-end** on Postgres-backed agents in
+  `examples/docker-compaction/`: threshold compactions fire after
+  ~5 turns at the artificial 5K context window, manual `/compact`
+  lands as a separate generation, summary text is clean prose with
+  no thinking-block leak.
+
+- **Concept doc:** `website/docs/concepts/compaction.md`.
 
 ---
 
@@ -508,10 +590,10 @@ Estimated size: 8-10 tasks, comparable to Plan A/B scope. Likely a multi-week ef
 - [ ] Audit log for agent access (who called which agent, when)
 
 **Token Optimization:**
-- [ ] Session compaction — summarize older messages to fit context window
-- [ ] Configurable context window limits per agent
+- [x] Session compaction — summarize older messages to fit context window *(Phase 15)*
+- [x] Configurable context window limits per agent *(`Compaction.context_window` override, Phase 15)*
+- [x] Message pruning strategies (sliding window, summarize, truncate) *(Layer 1 prune + Layer 3 summarize + manual `/compact`, Phase 15)*
 - [ ] Token budget per request (max_tokens enforcement)
-- [ ] Message pruning strategies (sliding window, summarize, truncate)
 - [ ] Token usage tracking per agent/user/project (already captured, needs storage)
 - [ ] Cost estimation in `vystak plan` (model pricing × estimated tokens)
 
@@ -790,6 +872,7 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `specs/2026-04-13-provision-graph-design.md`
 - `specs/2026-04-13-azure-provider-design.md`
 - `specs/2026-04-13-multi-agent-deploy-design.md`
+- `specs/2026-04-25-session-compaction-design.md`
 
 **Plans:**
 - `plans/2026-04-11-monorepo-scaffold.md`
@@ -806,6 +889,7 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `plans/2026-04-13-provision-graph.md`
 - `plans/2026-04-13-azure-provider-phase2a.md`
 - `plans/2026-04-14-multi-agent-loader.md`
+- `plans/2026-04-26-session-compaction.md`
 
 ---
 
