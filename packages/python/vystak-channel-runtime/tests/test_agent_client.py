@@ -77,3 +77,43 @@ async def test_send_turn_succeeds_after_retry(monkeypatch):
     reply = await client.send_turn("http://hero:8000", text="ping", thread_id="t1")
     assert reply.text == "ok"
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_retries_on_5xx(monkeypatch):
+    """Retry the connect/initial-response phase on 5xx; succeed on 2nd try."""
+    calls = {"n": 0}
+
+    class _FakeStreamResponse:
+        def __init__(self, status_code: int, lines: list[str] | None = None):
+            self.status_code = status_code
+            self._lines = lines or []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def aiter_lines(self):
+            for line in self._lines:
+                yield line
+
+    def fake_stream(self, method, url, *, json, timeout):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return _FakeStreamResponse(503)
+        ok_line = (
+            'data: {"jsonrpc":"2.0","id":"x","result":{"delta":"hi","finish_reason":"stop"}}'
+        )
+        return _FakeStreamResponse(200, lines=[ok_line])
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+    client = A2AAgentClient(max_retries=3, base_backoff=0.01)
+    chunks = []
+    async for c in client.stream_turn(
+        "http://hero:8000", text="ping", thread_id="t1",
+    ):
+        chunks.append(c)
+    assert calls["n"] == 2
+    assert any(c.delta == "hi" for c in chunks)

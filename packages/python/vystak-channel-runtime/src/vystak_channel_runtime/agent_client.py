@@ -123,25 +123,50 @@ class A2AAgentClient:
             "method": "tasks/sendSubscribe",
             "params": params,
         }
+        # Retry only the pre-stream phase (connect + initial response).
+        # Once we start yielding chunks the stream is committed; errors
+        # propagate as AgentCallError without retry to avoid duplicate
+        # token deliveries.
         async with httpx.AsyncClient() as client:
-            try:
-                async with client.stream(
-                    "POST", url, json=body, timeout=self._timeout
-                ) as resp:
-                    if resp.status_code != 200:
-                        raise AgentCallError(
-                            f"agent {agent_url} returned {resp.status_code}"
-                        )
-                    async for line in resp.aiter_lines():
-                        if not line or not line.startswith("data:"):
+            for attempt in range(1, self._max_retries + 1):
+                try:
+                    async with client.stream(
+                        "POST", url, json=body, timeout=self._timeout
+                    ) as resp:
+                        if 500 <= resp.status_code < 600 and attempt < self._max_retries:
+                            await asyncio.sleep(
+                                self._base_backoff * (2 ** (attempt - 1))
+                            )
                             continue
-                        chunk = self._chunk_from_sse(line.removeprefix("data:").strip())
-                        if chunk is not None:
-                            yield chunk
-            except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-                raise AgentCallError(
-                    f"agent {agent_url} stream failed: {exc}"
-                ) from exc
+                        if resp.status_code != 200:
+                            raise AgentCallError(
+                                f"agent {agent_url} returned {resp.status_code}"
+                            )
+                        # Stream committed — no more retries from here.
+                        try:
+                            async for line in resp.aiter_lines():
+                                if not line or not line.startswith("data:"):
+                                    continue
+                                chunk = self._chunk_from_sse(
+                                    line.removeprefix("data:").strip()
+                                )
+                                if chunk is not None:
+                                    yield chunk
+                        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+                            raise AgentCallError(
+                                f"agent {agent_url} stream interrupted: {exc}"
+                            ) from exc
+                        return
+                except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+                    if attempt < self._max_retries:
+                        await asyncio.sleep(
+                            self._base_backoff * (2 ** (attempt - 1))
+                        )
+                        continue
+                    raise AgentCallError(
+                        f"agent {agent_url} stream failed: {exc}"
+                    ) from exc
+            raise AgentCallError(f"agent {agent_url} stream exhausted retries")
 
     @staticmethod
     def _reply_from_jsonrpc(payload: dict[str, Any]) -> AgentReply:
