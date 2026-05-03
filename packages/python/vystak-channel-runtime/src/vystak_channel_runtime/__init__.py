@@ -1,6 +1,7 @@
 """Vystak channel runtime — shared base for channel containers."""
 
 from vystak_channel_runtime.agent_client import A2AAgentClient, AgentClient
+from vystak_channel_runtime.launcher import build_runtime, launch
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.store import (
     ChannelStore,
@@ -21,6 +22,8 @@ from vystak_channel_runtime.types import (
 
 __all__ = [
     "A2AAgentClient",
+    "build_runtime",
+    "launch",
     "AgentCallError",
     "AgentChunk",
     "AgentClient",
