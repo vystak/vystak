@@ -225,6 +225,42 @@ class TestChannelHashTree:
         assert tree1.secrets != tree2.secrets
         assert tree1.root != tree2.root
 
+    def test_channel_package_version_change_detected(self):
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            channel_package_version="0.1.0",
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            channel_package_version="0.2.0",
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.runtime != tree2.runtime
+        assert tree1.root != tree2.root
+
+    def test_channel_runtime_version_change_detected(self):
+        ch1 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            channel_runtime_version="0.1.0",
+        )
+        ch2 = Channel(
+            name="slack",
+            type=ChannelType.SLACK,
+            platform=make_platform(),
+            channel_runtime_version="0.2.0",
+        )
+        tree1 = hash_channel(ch1)
+        tree2 = hash_channel(ch2)
+        assert tree1.runtime != tree2.runtime
+        assert tree1.root != tree2.root
+
 
 def test_adding_subagent_changes_caller_root_hash():
     from vystak.hash.tree import hash_agent

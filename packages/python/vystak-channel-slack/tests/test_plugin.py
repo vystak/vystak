@@ -62,9 +62,8 @@ class TestSlackChannelPlugin:
         }
         code = plugin.generate_code(_channel(), resolved)
 
-        assert code.entrypoint == "server.py"
+        assert code.entrypoint == "python -m vystak_channel_slack"
         assert set(code.files.keys()) == {
-            "server.py",
             "Dockerfile",
             "requirements.txt",
             "routes.json",
@@ -118,15 +117,13 @@ class TestSlackChannelPlugin:
         code = plugin.generate_code(_channel(), {})
         assert "rules.json" not in code.files
 
-    def test_requirements_include_slack_bolt(self):
+    def test_requirements_lists_third_party_deps(self):
+        """Channel package source is bundled by DockerChannelNode; the
+        emitted requirements.txt only carries third-party deps."""
         plugin = SlackChannelPlugin()
         code = plugin.generate_code(_channel(), {})
         assert "slack-bolt" in code.files["requirements.txt"]
-
-    def test_requirements_include_psycopg(self):
-        plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
-        assert "psycopg" in code.files["requirements.txt"]
+        assert "vystak-channel-slack" not in code.files["requirements.txt"]
 
     def test_thread_name_in_channel(self):
         plugin = SlackChannelPlugin()
@@ -139,6 +136,43 @@ class TestSlackChannelPlugin:
         assert name == "thread:slack:dm:1705.555"
 
 
+class TestNoCodegenShape:
+    """Task 2.8: plugin must emit configs + Dockerfile only (no Python source)."""
+
+    def test_plugin_emits_no_python_source(self):
+        plugin = SlackChannelPlugin()
+        out = plugin.generate_code(_channel(), resolved_routes={})
+        for path in out.files:
+            assert not path.endswith(".py"), f"unexpected python source emitted: {path}"
+        assert "Dockerfile" in out.files
+        assert "channel_config.json" in out.files
+        assert "routes.json" in out.files
+        assert "requirements.txt" in out.files
+
+    def test_plugin_entrypoint_is_module_form(self):
+        plugin = SlackChannelPlugin()
+        out = plugin.generate_code(_channel(), resolved_routes={})
+        assert out.entrypoint == "python -m vystak_channel_slack"
+
+    def test_dockerfile_uses_bundled_source(self):
+        """Dockerfile bundles source via COPY . . and runs `python -m`,
+        not `pip install vystak-channel-slack==X.Y.Z` from PyPI."""
+        plugin = SlackChannelPlugin()
+        out = plugin.generate_code(_channel(), resolved_routes={})
+        df = out.files["Dockerfile"]
+        assert "COPY . ." in df
+        assert "python" in df and "vystak_channel_slack" in df
+        assert "vystak-channel-slack==" not in df
+
+    def test_channel_config_includes_channel_type_and_protocol(self):
+        plugin = SlackChannelPlugin()
+        out = plugin.generate_code(_channel(), resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["channel_type"] == "slack"
+        # Slack defaults to streaming so tool-call statuses surface in-thread.
+        assert cfg["agent_protocol"] == "a2a-stream"
+
+
 class TestAutoRegistration:
     def test_plugin_registered_on_import(self):
         from vystak.channels import get_plugin
@@ -146,137 +180,11 @@ class TestAutoRegistration:
         plugin = get_plugin(ChannelType.SLACK)
         assert isinstance(plugin, SlackChannelPlugin)
 
-
-class TestServerTemplateTransportBootstrap:
-    """Task 16: the Slack channel server must bootstrap an AgentClient from env."""
-
-    def test_reads_vystak_routes_json_env(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "VYSTAK_ROUTES_JSON" in SERVER_PY
-
-    def test_has_build_transport_helper(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "_build_transport_from_env" in SERVER_PY
-
-    def test_installs_agent_client_as_default(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "AgentClient" in SERVER_PY
-        # The process-level default client must be installed so _default_client()
-        # returns something from the event handlers.
-        assert "_DEFAULT_CLIENT" in SERVER_PY
-
-    def test_uses_http_transport_plugin(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "HttpTransport" in SERVER_PY
-        assert "vystak_transport_http" in SERVER_PY
-
-    def test_dispatch_goes_through_agent_client(self):
-        """A2A dispatch is via AgentClient.send_task(), not raw httpx POST to /a2a."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert ".send_task(" in SERVER_PY
-        # The old raw /a2a httpx posting must be gone.
-        assert '/a2a"' not in SERVER_PY
-        assert "'tasks/send'" not in SERVER_PY
-
-    def test_fallback_to_routes_json(self):
-        """While providers are still on the old route-shape, the server must
-        tolerate a legacy routes.json and convert it to the new shape.
-        """
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "routes.json" in SERVER_PY
-        # Single-line migration-state warning log.
-        assert "routes.json fallback" in SERVER_PY
-
-    def test_channel_config_loaded(self):
-        """server.py must load channel_config.json at startup."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "channel_config.json" in SERVER_PY
-        assert "channel_config" in SERVER_PY
-
-    def test_resolver_used_in_server(self):
-        """server.py must use the resolver module."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "vystak_channel_slack.resolver" in SERVER_PY or "_resolve" in SERVER_PY
-
-    def test_slash_command_handler_present(self):
-        """server.py must register a /vystak slash command handler."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "/vystak" in SERVER_PY
-        assert "handle_command" in SERVER_PY
-
-    def test_member_joined_handler_present(self):
-        """server.py must handle member_joined_channel events."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "member_joined_channel" in SERVER_PY
-        assert "on_member_joined" in SERVER_PY
-
-    def test_vystak_packages_not_in_requirements(self):
-        """vystak + vystak_transport_http are bundled as source by
-        DockerChannelNode; they must NOT appear in requirements.txt."""
-        from vystak_channel_slack.server_template import REQUIREMENTS
-
-        assert "vystak>=" not in REQUIREMENTS
-        assert "vystak-transport-http" not in REQUIREMENTS
-
-    def test_dockerfile_creates_data_dir(self):
-        """Dockerfile must create /data for SQLite to write."""
-        from vystak_channel_slack.server_template import DOCKERFILE
-
-        assert "mkdir -p /data" in DOCKERFILE
-
-
-class TestServerTemplateThreadBindings:
-    """Slack agent threads — server.py wires up thread_bindings."""
-
-    def test_imports_route_thread_message(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "from vystak_channel_slack.threads import route_thread_message" in SERVER_PY
-
-    def test_on_mention_writes_binding_after_finalize(self):
-        """After _finalize succeeds, on_mention persists the binding."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "_store.set_thread_binding(" in SERVER_PY
-
-    def test_on_mention_sticky_check_uses_binding(self):
-        """If a binding exists, on_mention must use it instead of resolving."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        # Sticky check looks up the binding before _resolve().
-        assert "_store.thread_binding(" in SERVER_PY
-
-    def test_on_message_calls_route_thread_message(self):
-        """The non-DM branch in on_message must consult the policy."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "route_thread_message(" in SERVER_PY
-
-    def test_on_message_no_longer_blanket_returns_for_non_dm(self):
-        """The 'mentions are already handled by on_mention' early-return
-        must be gone — replaced by the policy call."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "mentions are already handled by on_mention" not in SERVER_PY
-
-    def test_require_explicit_mention_is_consulted(self):
-        """The opt-out flag is passed to the policy."""
-        from vystak_channel_slack.server_template import SERVER_PY
-
-        assert "_THREAD_REQUIRE_EXPLICIT_MENTION" in SERVER_PY
-        # Ensure it's no longer a dead variable: it's read after the
-        # 'require_explicit_mention=' kwarg in the policy call.
-        assert "require_explicit_mention=_THREAD_REQUIRE_EXPLICIT_MENTION" in SERVER_PY
+    def test_plugin_writes_version_fields(self):
+        out = SlackChannelPlugin().generate_code(_channel(), resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert "channel_package_version" in cfg
+        assert "channel_runtime_version" in cfg
 
 
 class TestSlackChannelStreamToolCalls:
@@ -303,125 +211,3 @@ class TestSlackChannelStreamToolCalls:
         assert cfg.stream_tool_calls is True
         # Default still False.
         assert SlackChannelConfig().stream_tool_calls is False
-
-
-class TestStreamToAgentHelper:
-    """The _stream_to_agent helper is emitted into server.py and the runtime
-    branches on the stream_tool_calls flag at use sites."""
-
-    def _server_py(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-        return SERVER_PY
-
-    def test_helper_is_defined(self):
-        src = self._server_py()
-        assert "async def _stream_to_agent(" in src
-
-    def test_helper_uses_stream_task(self):
-        src = self._server_py()
-        assert "stream_task(" in src
-
-    def test_helper_is_rate_limited(self):
-        """Throttle to 1 chat.update per second (Slack tier-3 cap)."""
-        src = self._server_py()
-        # The helper computes a min interval between updates.
-        assert "_STREAM_UPDATE_MIN_INTERVAL_S" in src or "1.0" in src
-        # The helper tracks last_update_at to coalesce.
-        assert "last_update_at" in src
-
-    def test_helper_renders_in_flight_and_completed_lines(self):
-        """In-flight tools render as `🔧 *<name>*`; completed tools add `✓ _(Xs)_`."""
-        src = self._server_py()
-        assert "\\U0001f527" in src or "🔧" in src
-        assert "✓" in src or "\\u2713" in src
-        # The duration formatter renders as "(2.1s)" — keep the regex narrow
-        # so we don't false-positive on unrelated mentions.
-        assert "duration_ms" in src
-
-    def test_helper_handles_error_with_legacy_text(self):
-        """Same error text as _forward_to_agent's except branch."""
-        src = self._server_py()
-        # The exact phrase mirrors on_mention's existing error path.
-        assert "Sorry, I hit an error talking to" in src
-
-    def test_helper_replaces_placeholder_on_final(self):
-        """On final event, chat.update with the rendered final reply."""
-        src = self._server_py()
-        # The helper calls _to_slack_mrkdwn on ev.text (or equivalent) for
-        # the final replacement. Looking for the function call inside the
-        # streaming helper body.
-        # Use a regex to scope the assertion to the helper.
-        import re
-        m = re.search(
-            r"async def _stream_to_agent\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
-            src, re.DOTALL,
-        )
-        assert m, "_stream_to_agent body not found"
-        body = m.group(0)
-        assert "_to_slack_mrkdwn" in body
-        assert "chat_update" in body
-
-    def test_helper_passes_metadata_like_forward_to_agent(self):
-        """Same metadata shape: sessionId, user_id (slack-prefixed), project_id."""
-        src = self._server_py()
-        import re
-        m = re.search(
-            r"async def _stream_to_agent\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
-            src, re.DOTALL,
-        )
-        body = m.group(0)
-        assert '"sessionId"' in body
-        assert "slack:" in body  # the user_id prefix
-        assert "project_id" in body
-
-    def test_runtime_reads_stream_tool_calls_flag(self):
-        """server.py reads the flag from _channel_config at startup."""
-        src = self._server_py()
-        assert '"stream_tool_calls"' in src
-        # A module-level binding so the handlers can branch fast.
-        assert "_STREAM_TOOL_CALLS" in src or "_stream_tool_calls" in src
-
-
-class TestStreamToolCallsBranch:
-    """on_mention and on_message thread-follow branch on _STREAM_TOOL_CALLS."""
-
-    def _server_py(self):
-        from vystak_channel_slack.server_template import SERVER_PY
-        return SERVER_PY
-
-    def test_on_mention_branches_on_flag(self):
-        import re
-        src = self._server_py()
-        m = re.search(
-            r"async def on_mention\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
-            src, re.DOTALL,
-        )
-        assert m, "on_mention body not found"
-        body = m.group(0)
-        # The branch checks the flag and routes to _stream_to_agent on True.
-        assert "_STREAM_TOOL_CALLS" in body
-        assert "_stream_to_agent(" in body
-        # The non-streaming branch still calls _forward_to_agent.
-        assert "_forward_to_agent(" in body
-
-    def test_on_message_thread_follow_branches_on_flag(self):
-        import re
-        src = self._server_py()
-        m = re.search(
-            r"async def on_message\(.*?\):.*?(?=\n(?:async def |def |@|\Z))",
-            src, re.DOTALL,
-        )
-        assert m, "on_message body not found"
-        body = m.group(0)
-        assert "_STREAM_TOOL_CALLS" in body
-        assert "_stream_to_agent(" in body
-
-    def test_default_off_preserves_forward_to_agent(self):
-        """When stream_tool_calls=False, the existing _forward_to_agent path
-        is unchanged. Verifying the non-streaming branch still includes the
-        existing reply-finalize sequence."""
-        src = self._server_py()
-        # _to_slack_mrkdwn + _finalize sequence still present in on_mention.
-        # (Both pre-existed; we just want them not to be removed.)
-        assert "_to_slack_mrkdwn(raw_reply)" in src
-        assert "_finalize(client, say, placeholder" in src

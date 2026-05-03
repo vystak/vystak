@@ -9,7 +9,6 @@ requires real Slack tokens and is run by the user manually).
 from __future__ import annotations
 
 import contextlib
-import sqlite3
 
 import pytest
 
@@ -100,31 +99,6 @@ def test_state_volume_survives_container_restart(tmp_path):
     finally:
         with contextlib.suppress(_docker.errors.NotFound):
             client.volumes.get(volume_name).remove()
-
-
-@pytest.mark.docker
-@pytest.mark.skipif(not _docker_available(), reason="Docker not reachable")
-def test_sqlite_store_migrate_runs_clean(tmp_path):
-    """SqliteStore.migrate() creates the expected three tables."""
-    from vystak_channel_slack.store import SqliteStore
-
-    db_path = tmp_path / "state.db"
-    store = SqliteStore(path=str(db_path))
-    store.migrate()
-    store.migrate()  # idempotent
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        names = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-    finally:
-        conn.close()
-
-    assert {"channel_bindings", "user_prefs", "inviters"} <= names
 
 
 @pytest.mark.docker

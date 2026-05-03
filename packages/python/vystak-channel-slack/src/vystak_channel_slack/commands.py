@@ -1,6 +1,14 @@
 """Slash command handlers for /vystak in Slack channels."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vystak_channel_runtime.store import ChannelStore
+
+    from vystak_channel_slack.inviters import InviterStore
 
 
 @dataclass
@@ -14,7 +22,7 @@ class NotAuthorized(Exception):
     """Raised when the caller is not allowed to mutate routing config."""
 
 
-def handle_command(
+async def handle_command(
     *,
     cmd: str,
     args: str,
@@ -23,7 +31,8 @@ def handle_command(
     user: str,
     agents: list[str],
     route_authority: str,
-    store,
+    store: ChannelStore,
+    inviters: InviterStore,
 ) -> Result:
     """Dispatch a /vystak slash command.
 
@@ -38,25 +47,25 @@ def handle_command(
     rest = parts[1] if len(parts) > 1 else ""
 
     if sub == "route":
-        _check_authority("route", user, team, channel, route_authority, store)
-        return _route(team, channel, user, rest, agents, store)
+        await _check_authority("route", user, team, channel, route_authority, inviters)
+        return await _route(team, channel, user, rest, agents, store)
     if sub == "unroute":
-        _check_authority("unroute", user, team, channel, route_authority, store)
-        return _unroute(team, channel, store)
+        await _check_authority("unroute", user, team, channel, route_authority, inviters)
+        return await _unroute(team, channel, store)
     if sub == "prefer":
-        return _prefer(team, user, rest, agents, store)
+        return await _prefer(team, user, rest, agents, store)
     if sub == "unprefer":
-        return _unprefer(team, user, store)
+        return await _unprefer(team, user, store)
     if sub == "status":
-        return _status(team, channel, user, store)
+        return await _status(team, channel, user, store)
     return Result(message=_help_text(agents))
 
 
-def _check_authority(verb, user, team, channel, authority, store):
+async def _check_authority(verb, user, team, channel, authority, inviters: InviterStore):
     if authority == "anyone":
         return
     if authority == "inviter":
-        inv = store.inviter(team, channel)
+        inv = await inviters.get_inviter(team, channel)
         if inv is None or user != inv:
             raise NotAuthorized(
                 f"Only the user who invited the bot can /vystak {verb} in this channel."
@@ -65,7 +74,7 @@ def _check_authority(verb, user, team, channel, authority, store):
     if authority == "admins":
         # TODO: query Slack API for admin status. For now, default to deny —
         # safer than silently allowing.
-        inv = store.inviter(team, channel)
+        inv = await inviters.get_inviter(team, channel)
         if inv is None or user != inv:
             raise NotAuthorized(
                 f"Only workspace admins can /vystak {verb} in this channel."
@@ -74,7 +83,7 @@ def _check_authority(verb, user, team, channel, authority, store):
     raise NotAuthorized(f"unknown route_authority={authority!r}")
 
 
-def _route(team, channel, user, agent_arg, agents, store):
+async def _route(team, channel, user, agent_arg, agents, store: ChannelStore):
     if not agent_arg:
         return Result(message="Usage: /vystak route <agent>")
     if agent_arg not in agents:
@@ -84,16 +93,16 @@ def _route(team, channel, user, agent_arg, agents, store):
                 f"Available: {', '.join(agents)}"
             )
         )
-    store.set_channel_binding(team, channel, agent_arg, user)
+    await store.set_thread_binding("slack", team, f"{channel}:", agent_arg, user)
     return Result(message=f"Channel routed to '{agent_arg}'.")
 
 
-def _unroute(team, channel, store):
-    store.unbind_channel(team, channel)
+async def _unroute(team, channel, store: ChannelStore):
+    await store.delete_thread_binding("slack", team, f"{channel}:")
     return Result(message="Channel unrouted.")
 
 
-def _prefer(team, user, agent_arg, agents, store):
+async def _prefer(team, user, agent_arg, agents, store: ChannelStore):
     if not agent_arg:
         return Result(message="Usage: /vystak prefer <agent>")
     if agent_arg not in agents:
@@ -103,18 +112,18 @@ def _prefer(team, user, agent_arg, agents, store):
                 f"Available: {', '.join(agents)}"
             )
         )
-    store.set_user_pref(team, user, agent_arg)
+    await store.set_route_pref("slack", f"{team}:{user}", agent_arg)
     return Result(message=f"Your preferred agent is now '{agent_arg}'.")
 
 
-def _unprefer(team, user, store):
-    store.unset_user_pref(team, user)
+async def _unprefer(team, user, store: ChannelStore):
+    await store.delete_route_pref("slack", f"{team}:{user}")
     return Result(message="Your preference cleared.")
 
 
-def _status(team, channel, user, store):
-    binding = store.channel_binding(team, channel)
-    pref = store.user_pref(team, user)
+async def _status(team, channel, user, store: ChannelStore):
+    binding = await store.get_thread_binding("slack", team, f"{channel}:")
+    pref = await store.get_route_pref("slack", f"{team}:{user}")
     parts = []
     if binding:
         parts.append(f"Channel routed to: {binding}")
@@ -135,3 +144,38 @@ def _help_text(agents: list[str]) -> str:
         "  /vystak status            — show current routing\n"
         f"\nAvailable agents: {', '.join(agents)}"
     )
+
+
+def register(
+    app: Any,
+    config: dict,
+    store: ChannelStore,
+    inviters: InviterStore,
+) -> None:
+    """Wire the /vystak slash command handler into *app*."""
+    agents: list[str] = config.get("agents", [])
+    route_authority: str = config.get("route_authority", "inviter")
+
+    @app.command("/vystak")
+    async def _on_slash_command(ack, body, client):
+        await ack()
+        team = body.get("team_id", "")
+        channel = body.get("channel_id", "")
+        user = body.get("user_id", "")
+        text = body.get("text", "")
+        cmd = body.get("command", "/vystak")
+        try:
+            result = await handle_command(
+                cmd=cmd,
+                args=text,
+                team=team,
+                channel=channel,
+                user=user,
+                agents=agents,
+                route_authority=route_authority,
+                store=store,
+                inviters=inviters,
+            )
+            await client.chat_postEphemeral(channel=channel, user=user, text=result.message)
+        except NotAuthorized as exc:
+            await client.chat_postEphemeral(channel=channel, user=user, text=str(exc))

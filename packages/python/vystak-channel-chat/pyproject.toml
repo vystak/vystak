@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "vystak>=0.1.0",
+    "vystak-channel-runtime>=0.1.0",
 ]
 
 [project.urls]
@@ -37,6 +38,7 @@ packages = ["src/vystak_channel_chat"]
 
 [tool.uv.sources]
 vystak = { workspace = true }
+vystak-channel-runtime = { workspace = true }
 
 [tool.hatch.version]
 source = "vcs"

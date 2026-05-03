@@ -1,0 +1,53 @@
+[project]
+name = "vystak-channel-runtime"
+dynamic = ["version"]
+description = "Vystak channel runtime — shared base for all channel containers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Anatoliy Kolodkin", email = "11351966+akolodkin@users.noreply.github.com" },
+]
+keywords = ["vystak", "channel", "runtime", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "vystak>=0.1.0",
+    "httpx>=0.27",
+    "aiosqlite>=0.20",
+    "asyncpg>=0.29",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+test-endpoint = ["fastapi>=0.110"]
+
+[project.urls]
+Homepage = "https://vystak.dev"
+Repository = "https://github.com/vystak/vystak"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vystak_channel_runtime"]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}
+
+[tool.uv.sources]
+vystak = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

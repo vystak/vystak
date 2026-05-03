@@ -236,7 +236,9 @@ def hash_channel(
     config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()
     routes = _hash_list(channel.agents)
     mode = channel.runtime_mode.value if channel.runtime_mode else "default"
-    runtime = _hash_str(f"{channel.type.value}|{mode}")
+    pkg_ver = channel.channel_package_version or "null"
+    rt_ver = channel.channel_runtime_version or "null"
+    runtime = _hash_str(f"{channel.type.value}|{mode}|{pkg_ver}|{rt_ver}")
     secrets = _hash_list(channel.secrets)
     codegen = codegen_hash if codegen_hash is not None else _hash_str(None)
 

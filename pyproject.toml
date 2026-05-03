@@ -30,6 +30,8 @@ dev-dependencies = [
     "vystak-transport-http",
     "vystak-transport-nats",
     "vystak-workspace-rpc",
+    "vystak-channel-runtime",
+    "vystak-channel-discord",
     "hatch-vcs>=0.5.0",
 ]
 
@@ -47,6 +49,8 @@ vystak-provider-azure = { workspace = true }
 vystak-transport-http = { workspace = true }
 vystak-transport-nats = { workspace = true }
 vystak-workspace-rpc = { workspace = true }
+vystak-channel-runtime = { workspace = true }
+vystak-channel-discord = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
@@ -82,4 +86,5 @@ markers = [
     "release_integration: Integration-tier cells from test_plan.md.",
     "release_slack: Require SLACK_BOT_TOKEN + SLACK_APP_TOKEN for a test workspace.",
     "release_live_chat: Real LLM round-trip. Requires a real ANTHROPIC_API_KEY on the host. Run with -m release_live_chat.",
+    "release_discord: Discord release-cell tests gated on DISCORD_BOT_TOKEN",
 ]
