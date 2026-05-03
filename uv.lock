@@ -1586,6 +1586,7 @@ source = { editable = "packages/python/vystak-channel-runtime" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "asyncpg" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "vystak" },
@@ -1595,6 +1596,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "asyncpg", specifier = ">=0.29" },
+    { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "vystak", editable = "packages/python/vystak" },

@@ -10,6 +10,7 @@ from vystak_channel_runtime.store import (
     SqliteChannelStore,
     make_channel_store,
 )
+from vystak_channel_runtime.test_endpoint import build_test_app, is_test_endpoint_enabled
 from vystak_channel_runtime.types import (
     AgentCallError,
     AgentChunk,
@@ -23,6 +24,8 @@ from vystak_channel_runtime.types import (
 __all__ = [
     "A2AAgentClient",
     "build_runtime",
+    "build_test_app",
+    "is_test_endpoint_enabled",
     "launch",
     "AgentCallError",
     "AgentChunk",
