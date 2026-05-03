@@ -50,6 +50,62 @@ class DiscordChannelRuntime(ChannelRuntime):
         async def on_interaction(interaction: discord.Interaction):
             await self.handle_event({"kind": "interaction", "interaction": interaction})
 
+        from discord import app_commands
+
+        from vystak_channel_discord import commands as cmd
+        from vystak_channel_discord.welcome import auto_bind_single_agent, render_welcome
+
+        if self.config.get("register_slash_commands", True):
+            tree = app_commands.CommandTree(self._client)
+
+            @tree.command(name="vystak-route", description="Bind this channel to an agent")
+            async def _route(interaction, agent: str):  # noqa: ANN001
+                scope_id = self._scope_id_from_interaction(interaction)
+                thread_id = f"{scope_id}:"
+                msg = await cmd.handle_route(self.store, scope_id, thread_id, agent)
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            @tree.command(name="vystak-unroute", description="Remove channel routing")
+            async def _unroute(interaction):  # noqa: ANN001
+                scope_id = self._scope_id_from_interaction(interaction)
+                thread_id = f"{scope_id}:"
+                msg = await cmd.handle_unroute(self.store, scope_id, thread_id)
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            @tree.command(name="vystak-prefer", description="Set DM/per-scope preference")
+            async def _prefer(interaction, agent: str):  # noqa: ANN001
+                scope_id = self._scope_id_from_interaction(interaction)
+                msg = await cmd.handle_prefer(self.store, scope_id, agent)
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            @tree.command(name="vystak-unprefer", description="Remove preference")
+            async def _unprefer(interaction):  # noqa: ANN001
+                scope_id = self._scope_id_from_interaction(interaction)
+                msg = await cmd.handle_unprefer(self.store, scope_id)
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            @tree.command(name="vystak-status", description="Show current routing")
+            async def _status(interaction):  # noqa: ANN001
+                scope_id = self._scope_id_from_interaction(interaction)
+                msg = await cmd.handle_status(self.store, scope_id)
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            await tree.sync()
+
+        @self._client.event
+        async def on_guild_join(guild):  # noqa: ANN001
+            scope_id = f"{guild.id}/{getattr(getattr(guild, 'system_channel', None), 'id', '0')}"
+            await auto_bind_single_agent(
+                self.store, scope_id, self.config.get("agents", [])
+            )
+            text = render_welcome(self.config.get("welcome_message"), self.config.get("agents", []))
+            sys_chan = getattr(guild, "system_channel", None)
+            if sys_chan is not None:
+                try:
+                    await sys_chan.send(text)
+                except Exception:  # noqa: BLE001
+                    logger.warning("welcome send failed", exc_info=True)
+
         await self._client.start(self._token)
 
     async def stop(self) -> None:
@@ -193,6 +249,15 @@ class DiscordChannelRuntime(ChannelRuntime):
             await msg.channel.send(f"Agent error ({route}): {str(exc)[:300]}")
         except Exception:  # noqa: BLE001
             logger.warning("on_agent_error send failed", exc_info=True)
+
+    @staticmethod
+    def _scope_id_from_interaction(interaction) -> str:  # noqa: ANN001
+        guild_id = getattr(interaction, "guild_id", None)
+        channel_id = getattr(interaction, "channel_id", None)
+        if guild_id is None:
+            user_id = getattr(getattr(interaction, "user", None), "id", "?")
+            return f"dm/{user_id}"
+        return f"{guild_id}/{channel_id}"
 
 
 def _chunk(text: str, size: int) -> list[str]:
