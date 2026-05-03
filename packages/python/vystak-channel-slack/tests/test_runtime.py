@@ -3,7 +3,7 @@
 import pytest
 from vystak.schema.common import ChannelType
 from vystak_channel_runtime.store import MemoryChannelStore
-from vystak_channel_runtime.types import SkipEvent
+from vystak_channel_runtime.types import AgentReply, SkipEvent
 from vystak_channel_slack.runtime import SlackChannelRuntime
 
 
@@ -108,3 +108,42 @@ def test_parse_event_skips_own_message():
     raw = {"type": "message", "event": {**_bolt_event(), "user": "U_BOT"}, "say": None}
     with pytest.raises(SkipEvent):
         rt.parse_event(raw)
+
+
+class _FakeSay:
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_post_reply_uses_say_with_thread_ts():
+    say = _FakeSay()
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "app_mention", "event": _bolt_event(thread_ts="1.0"), "say": say}
+    ev = rt.parse_event(raw)
+    await rt.post_reply(ev, "hero", AgentReply(text="hello back"))
+    assert len(say.calls) == 1
+    assert say.calls[0]["text"] == "hello back"
+    assert say.calls[0]["thread_ts"] == "1.0"
+
+
+@pytest.mark.asyncio
+async def test_fetch_history_returns_empty_when_no_thread_ts(monkeypatch):
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "message", "event": _bolt_event(channel_type="im"), "say": None}
+    ev = rt.parse_event(raw)
+    history = await rt.fetch_history(ev)
+    assert history == []

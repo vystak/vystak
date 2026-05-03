@@ -13,6 +13,7 @@ from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.types import (
     AgentReply,
     InboundEvent,
+    Message,
     SkipEvent,
 )
 
@@ -96,5 +97,33 @@ class SlackChannelRuntime(ChannelRuntime):
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
-        # Real implementation in Task 2.4
-        raise NotImplementedError
+        say = event.metadata.get("say")
+        if say is None:
+            logger.warning("no `say` callable in event metadata; cannot post reply")
+            return
+        thread_ts = event.metadata.get("thread_ts") or event.metadata.get("ts")
+        kwargs: dict[str, Any] = {"text": reply.text}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        await say(**kwargs)
+
+    async def fetch_history(self, event: InboundEvent) -> list[Message]:
+        thread_ts = event.metadata.get("thread_ts")
+        channel_id = event.metadata.get("channel_id")
+        if not thread_ts or not channel_id or self._app is None:
+            return []
+        try:
+            client = self._app.client
+            limit = self.config.get("thread", {}).get("initial_history_limit", 20)
+            resp = await client.conversations_replies(
+                channel=channel_id, ts=thread_ts, limit=limit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("conversations.replies failed: %s", exc)
+            return []
+        out: list[Message] = []
+        bot_user_id = getattr(self, "_bot_user_id", None)
+        for msg in resp.get("messages", [])[:-1]:  # exclude the trigger msg itself
+            role = "assistant" if msg.get("user") == bot_user_id else "user"
+            out.append(Message(role=role, content=msg.get("text", "")))
+        return out
