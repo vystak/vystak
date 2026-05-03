@@ -2050,10 +2050,14 @@ name = "vystak-channel-chat"
 source = { editable = "packages/python/vystak-channel-chat" }
 dependencies = [
     { name = "vystak" },
+    { name = "vystak-channel-runtime" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
+requires-dist = [
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
+]
 
 [[package]]
 name = "vystak-channel-runtime"
@@ -2082,6 +2086,7 @@ name = "vystak-channel-slack"
 source = { editable = "packages/python/vystak-channel-slack" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "aiosqlite" },
     { name = "psycopg", extra = ["binary"] },
     { name = "slack-bolt" },
     { name = "vystak" },
@@ -2091,6 +2096,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9" },
+    { name = "aiosqlite", specifier = ">=0.19" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.0" },
     { name = "slack-bolt", specifier = ">=1.21" },
     { name = "vystak", editable = "packages/python/vystak" },
