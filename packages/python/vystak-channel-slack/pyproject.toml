@@ -24,6 +24,8 @@ dependencies = [
     "vystak>=0.1.0",
     "psycopg[binary]>=3.0",
     "vystak-channel-runtime>=0.1.0",
+    "slack-bolt>=1.21",
+    "aiohttp>=3.9",
 ]
 
 [project.urls]
