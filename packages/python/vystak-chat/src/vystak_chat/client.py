@@ -143,15 +143,43 @@ async def stream_response(
                 return
 
 
-async def get_response(url: str, response_id: str) -> dict | None:
-    """Get a response by ID (for background polling)."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{url}/v1/responses/{response_id}")
-            response.raise_for_status()
-            return response.json()
-    except Exception:
-        return None
+async def get_response(base_url: str, *, response_id: str) -> dict:
+    """GET /v1/responses/{response_id} — used to resolve thread_id from previous_response_id."""
+    url = f"{base_url.rstrip('/')}/v1/responses/{response_id}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def compact(
+    base_url: str, *, thread_id: str, instructions: str | None = None
+) -> dict:
+    """POST /v1/sessions/{thread_id}/compact."""
+    url = f"{base_url.rstrip('/')}/v1/sessions/{thread_id}/compact"
+    payload = {"instructions": instructions} if instructions else {}
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(url, json=payload)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def list_compactions(base_url: str, *, thread_id: str) -> list[dict]:
+    """GET /v1/sessions/{thread_id}/compactions."""
+    url = f"{base_url.rstrip('/')}/v1/sessions/{thread_id}/compactions"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+    resp.raise_for_status()
+    return resp.json().get("compactions", [])
+
+
+async def get_compaction(base_url: str, *, thread_id: str, generation: int) -> dict:
+    """GET /v1/sessions/{thread_id}/compactions/{generation}."""
+    url = f"{base_url.rstrip('/')}/v1/sessions/{thread_id}/compactions/{generation}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def list_models(url: str) -> list[dict]:

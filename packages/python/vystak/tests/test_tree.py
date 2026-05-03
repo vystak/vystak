@@ -127,6 +127,25 @@ class TestAgentHashTreeServices:
         tree2 = hash_agent(agent2)
         assert tree1.root != tree2.root
 
+    def test_compaction_change_changes_agent_hash(self):
+        from vystak.schema.compaction import Compaction
+
+        base = make_agent()
+        with_compaction = base.model_copy(
+            update={"compaction": Compaction(mode="conservative")}
+        )
+        aggressive = base.model_copy(
+            update={"compaction": Compaction(mode="aggressive")}
+        )
+
+        h_base = hash_agent(base)
+        h_cons = hash_agent(with_compaction)
+        h_agg = hash_agent(aggressive)
+
+        assert h_base.root != h_cons.root
+        assert h_cons.root != h_agg.root
+        assert h_base.root != h_agg.root
+
 
 class TestChannelHashTree:
     def test_deterministic(self):

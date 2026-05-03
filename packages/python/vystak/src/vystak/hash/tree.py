@@ -28,6 +28,8 @@ class AgentHashTree:
     # v1 Secret Manager additions
     workspace_identity: str
     grants: str
+    # Compaction policy
+    compaction: str
     # Codegen output digest. Captures the actual generated server.py / Dockerfile /
     # requirements bundle so changes to framework-adapter codegen modules
     # (turn_core.py, a2a.py, templates.py, …) trigger redeploy even when the
@@ -175,6 +177,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
         else _hash_str(None)
     )
     grants = compute_grants_hash(agent)
+    compaction = _hash_optional(agent.compaction)
     codegen = codegen_hash if codegen_hash is not None else _hash_str(None)
 
     sections = "|".join(
@@ -192,6 +195,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
             subagents,
             workspace_identity,
             grants,
+            compaction,
             codegen,
         ]
     )
@@ -211,6 +215,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
         subagents=subagents,
         workspace_identity=workspace_identity,
         grants=grants,
+        compaction=compaction,
         codegen=codegen,
         root=root,
     )

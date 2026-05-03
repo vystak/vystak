@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "vystak>=0.1.0",
     "asyncssh>=2.14",
+    "langchain-core>=0.1",
 ]
 
 [project.urls]

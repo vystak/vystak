@@ -5,6 +5,7 @@ from typing import Self
 from pydantic import model_validator
 
 from vystak.schema.common import NamedModel
+from vystak.schema.compaction import Compaction
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
@@ -43,6 +44,8 @@ class Agent(NamedModel):
     resources: list[Resource] = []
 
     subagents: list["Agent"] = []
+
+    compaction: Compaction | None = None
 
     @property
     def canonical_name(self) -> str:

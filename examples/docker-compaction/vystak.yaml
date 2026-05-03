@@ -1,0 +1,56 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  # The agent's main model. ANTHROPIC_API_URL in .env routes to MiniMax,
+  # so we use MiniMax-M2.7 (the model name MiniMax serves on its
+  # Anthropic-compatible endpoint). Switch to claude-* if you point the
+  # API URL at api.anthropic.com.
+  agent_model:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    api_keys: {name: ANTHROPIC_API_KEY}
+
+agents:
+  - name: chatty
+    instructions: |
+      You are a verbose assistant. Always include a fresh 30-50 word
+      preamble before answering. The preamble should describe what
+      you're about to do, then the answer follows.
+    model: agent_model
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+    sessions:
+      type: postgres
+      provider: {name: docker, type: docker}
+    compaction:
+      mode: aggressive
+      context_window: 5000     # pretend the model only has a 5K window
+      trigger_pct: 0.3         # fire when prefill ≥ 1500 tokens (dev-tight)
+      keep_recent_pct: 0.2     # keep last 20% of messages verbatim
+      summarizer:              # same provider as the agent (MiniMax via
+        name: summarizer       # the Anthropic-compatible endpoint).
+        provider: {name: anthropic, type: anthropic}
+        model_name: MiniMax-M2.7
+        api_keys: {name: ANTHROPIC_API_KEY}
+
+channels:
+  - name: chat
+    type: chat
+    platform: local
+    config: {port: 18080}
+    agents: [chatty]
+
+  - name: slack-main
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [chatty]

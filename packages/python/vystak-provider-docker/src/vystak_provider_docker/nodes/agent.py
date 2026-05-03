@@ -116,13 +116,22 @@ class DockerAgentNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
-            # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
+            # Bundle unpublished vystak + vystak_adapter_langchain + transports
             # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            # vystak_adapter_langchain is bundled because the generated server.py
+            # imports from its `compaction` subpackage when compaction is enabled.
             import vystak
+            import vystak_adapter_langchain
             import vystak_transport_http
             import vystak_transport_nats
 
-            for _mod in (vystak, vystak_transport_http, vystak_transport_nats):
+            _bundled_mods = (
+                vystak,
+                vystak_adapter_langchain,
+                vystak_transport_http,
+                vystak_transport_nats,
+            )
+            for _mod in _bundled_mods:
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():

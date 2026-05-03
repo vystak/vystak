@@ -22,6 +22,7 @@ const sidebars = {
         'concepts/providers-and-platforms',
         'concepts/transport',
         'concepts/services',
+        'concepts/compaction',
         'concepts/channels',
       ],
     },
