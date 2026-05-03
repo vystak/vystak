@@ -2,6 +2,40 @@
 
 All notable changes to Vystak are documented here.
 
+## Unreleased
+
+### Added
+
+- New package `vystak-channel-runtime` — shared template-method runtime for
+  all channel containers (`ChannelRuntime`, `AgentClient`, `ChannelStore`).
+- New package `vystak-channel-discord` — Discord channel built on the
+  shared runtime. Slack-parity routing, threads, slash commands, single-agent
+  auto-bind; streaming and status reactions are deferred.
+
+### Changed
+
+- `vystak-channel-slack` and `vystak-channel-chat` retrofitted onto
+  `vystak-channel-runtime`. User-visible behavior preserved.
+- Channel containers no longer have generated `server.py` files. Each channel
+  package is now a real importable library invoked as
+  `python -m vystak_channel_<type>`. The plugin's `generate_code()` emits
+  only `Dockerfile`, `requirements.txt`, `channel_config.json`, and
+  `routes.json`.
+
+### Breaking
+
+- **Slack thread bindings + route prefs reset on upgrade.** The runtime store
+  uses a new generic schema keyed by `(channel_type, scope_id, thread_id)`.
+  Existing `routes.db` (SQLite) and `routes` table (Postgres) are ignored.
+  Re-route via `/vystak route ...` after upgrade — auto-bind on mention
+  repopulates organically.
+- **Container entrypoint changed** from `python server.py` to
+  `python -m vystak_channel_<type>`. `vystak apply` regenerates the
+  Dockerfile so most users will not notice; downstream consumers with custom
+  Dockerfiles will need to update.
+
+---
+
 ## [Unreleased]
 
 ### Secrets (default path + opt-in Vault)
