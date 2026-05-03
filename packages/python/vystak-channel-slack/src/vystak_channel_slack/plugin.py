@@ -11,7 +11,7 @@ from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
 
-from vystak_channel_slack.server_template import DOCKERFILE, REQUIREMENTS, SERVER_PY
+from vystak_channel_slack.server_template import DOCKERFILE, REQUIREMENTS
 
 if TYPE_CHECKING:
     from vystak.provisioning import Provisionable
@@ -35,7 +35,20 @@ class SlackChannelPlugin(ChannelPlugin):
     def generate_code(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
-        # Build channel_config.json — shape consumed by server.py at runtime.
+        channel_config = self._build_channel_config(channel)
+
+        return GeneratedCode(
+            files={
+                "Dockerfile": DOCKERFILE,
+                "requirements.txt": REQUIREMENTS,
+                "channel_config.json": json.dumps(channel_config, indent=2),
+                "routes.json": json.dumps(resolved_routes, indent=2),
+            },
+            entrypoint="python -m vystak_channel_slack",
+        )
+
+    def _build_channel_config(self, channel: Channel) -> dict:
+        """Build the channel_config dict consumed by the runtime at startup."""
         agent_names = [a.name for a in channel.agents]
         default_agent_name = channel.default_agent.name if channel.default_agent else None
 
@@ -57,7 +70,9 @@ class SlackChannelPlugin(ChannelPlugin):
         if channel.state is not None:
             state_cfg = channel.state.model_dump(exclude_none=True)
 
-        channel_config = {
+        return {
+            "channel_type": "slack",
+            "agent_protocol": "a2a-turn",
             "agents": agent_names,
             "group_policy": channel.group_policy.value
             if hasattr(channel.group_policy, "value")
@@ -87,17 +102,6 @@ class SlackChannelPlugin(ChannelPlugin):
             "stream_tool_calls": bool(channel.config.get("stream_tool_calls", False)),
             "state": state_cfg,
         }
-
-        return GeneratedCode(
-            files={
-                "server.py": SERVER_PY,
-                "Dockerfile": DOCKERFILE,
-                "requirements.txt": REQUIREMENTS,
-                "routes.json": json.dumps(resolved_routes, indent=2),
-                "channel_config.json": json.dumps(channel_config, indent=2),
-            },
-            entrypoint="server.py",
-        )
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list[Provisionable]:
         # Platform provider wraps GeneratedCode in its native container node.
