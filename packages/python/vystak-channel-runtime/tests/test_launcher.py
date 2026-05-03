@@ -30,3 +30,17 @@ def test_build_runtime_with_sqlite_state(tmp_path):
     }
     rt = build_runtime(_Trivial, config=cfg, routes={})
     assert isinstance(rt.store, SqliteChannelStore)
+
+
+def test_launch_skips_test_endpoint_when_env_unset(monkeypatch):
+    """Without VYSTAK_TEST_EVENTS=1, the sidecar isn't spawned."""
+    monkeypatch.delenv("VYSTAK_TEST_EVENTS", raising=False)
+    from vystak_channel_runtime.test_endpoint import is_test_endpoint_enabled
+    assert is_test_endpoint_enabled() is False
+    # _start_test_endpoint is a private helper; just confirm the gate works.
+
+
+def test_launch_test_endpoint_gate_enabled(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TEST_EVENTS", "1")
+    from vystak_channel_runtime.test_endpoint import is_test_endpoint_enabled
+    assert is_test_endpoint_enabled() is True
