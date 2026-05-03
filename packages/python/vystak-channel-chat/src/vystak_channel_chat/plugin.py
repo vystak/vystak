@@ -9,8 +9,6 @@ from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
 
-from vystak_channel_chat.server_template import DOCKERFILE, REQUIREMENTS, SERVER_PY
-
 if TYPE_CHECKING:
     from vystak.provisioning import Provisionable
 
@@ -36,15 +34,27 @@ class ChatChannelPlugin(ChannelPlugin):
     def generate_code(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
-        routes_json = json.dumps(resolved_routes, indent=2)
+        from vystak_channel_chat.server_template import DOCKERFILE, REQUIREMENTS
+
+        channel_config = {
+            "channel_type": "chat",
+            "agent_protocol": "a2a-turn",
+            "agents": [a.name for a in channel.agents],
+            "default_agent": channel.default_agent.name if channel.default_agent else None,
+            "port": 8080,
+            "state": (
+                channel.state.model_dump(exclude_none=True)
+                if channel.state is not None else None
+            ),
+        }
         return GeneratedCode(
             files={
-                "server.py": SERVER_PY,
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,
-                "routes.json": routes_json,
+                "channel_config.json": json.dumps(channel_config, indent=2),
+                "routes.json": json.dumps(resolved_routes, indent=2),
             },
-            entrypoint="server.py",
+            entrypoint="python -m vystak_channel_chat",
         )
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list["Provisionable"]:
