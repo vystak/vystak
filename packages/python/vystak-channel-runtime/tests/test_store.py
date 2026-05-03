@@ -1,9 +1,12 @@
 """Tests for ChannelStore impls."""
 
+from pathlib import Path
+
 import pytest
 from vystak_channel_runtime.store import (
     ChannelStore,
     MemoryChannelStore,
+    SqliteChannelStore,
 )
 
 
@@ -64,3 +67,41 @@ async def test_isolation_by_channel_type():
     s = MemoryChannelStore()
     await s.set_thread_binding("slack", "T1", "x", "hero")
     assert await s.get_thread_binding("discord", "T1", "x") is None
+
+
+@pytest.fixture
+def sqlite_store(tmp_path: Path):
+    return SqliteChannelStore(str(tmp_path / "channel.db"))
+
+
+@pytest.mark.asyncio
+async def test_sqlite_store_implements_protocol(sqlite_store):
+    assert isinstance(sqlite_store, ChannelStore)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_thread_binding_round_trip(sqlite_store):
+    assert await sqlite_store.get_thread_binding("slack", "T1", "C:1") is None
+    await sqlite_store.set_thread_binding("slack", "T1", "C:1", "hero")
+    assert await sqlite_store.get_thread_binding("slack", "T1", "C:1") == "hero"
+    await sqlite_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_route_pref_round_trip(sqlite_store):
+    await sqlite_store.set_route_pref("slack", "T1", "hero")
+    assert await sqlite_store.get_route_pref("slack", "T1") == "hero"
+    await sqlite_store.delete_route_pref("slack", "T1")
+    assert await sqlite_store.get_route_pref("slack", "T1") is None
+    await sqlite_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_persists_across_instances(tmp_path):
+    path = str(tmp_path / "channel.db")
+    s1 = SqliteChannelStore(path)
+    await s1.set_thread_binding("slack", "T1", "C:1", "hero")
+    await s1.close()
+    s2 = SqliteChannelStore(path)
+    assert await s2.get_thread_binding("slack", "T1", "C:1") == "hero"
+    await s2.close()
