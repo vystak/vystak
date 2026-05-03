@@ -6,6 +6,7 @@ import pytest
 from vystak_channel_runtime.store import (
     ChannelStore,
     MemoryChannelStore,
+    PostgresChannelStore,
     SqliteChannelStore,
 )
 
@@ -105,3 +106,24 @@ async def test_sqlite_persists_across_instances(tmp_path):
     s2 = SqliteChannelStore(path)
     assert await s2.get_thread_binding("slack", "T1", "C:1") == "hero"
     await s2.close()
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_store_round_trip(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    await s.set_thread_binding("slack", "T1", "C:1", "hero")
+    assert await s.get_thread_binding("slack", "T1", "C:1") == "hero"
+    await s.delete_thread_binding("slack", "T1", "C:1")
+    assert await s.get_thread_binding("slack", "T1", "C:1") is None
+    await s.close()
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_route_pref(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    await s.set_route_pref("slack", "T1", "hero")
+    assert await s.get_route_pref("slack", "T1") == "hero"
+    await s.delete_route_pref("slack", "T1")
+    await s.close()

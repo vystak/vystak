@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 import aiosqlite
+import asyncpg
 
 from vystak_channel_runtime.types import ThreadBinding
 
@@ -315,3 +316,170 @@ class SqliteChannelStore:
     async def close(self) -> None:
         # No persistent connection to close.
         pass
+
+
+_PG_SCHEMA_SQL = [
+    """
+    CREATE TABLE IF NOT EXISTS thread_bindings (
+        channel_type TEXT NOT NULL,
+        scope_id     TEXT NOT NULL,
+        thread_id    TEXT NOT NULL,
+        agent_name   TEXT NOT NULL,
+        user_id      TEXT,
+        created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel_type, scope_id, thread_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS route_prefs (
+        channel_type TEXT NOT NULL,
+        scope_id     TEXT NOT NULL,
+        agent_name   TEXT NOT NULL,
+        created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel_type, scope_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_thread_bindings_scope
+        ON thread_bindings (channel_type, scope_id)
+    """,
+]
+
+
+class PostgresChannelStore:
+    """ChannelStore backed by asyncpg."""
+
+    def __init__(self, dsn: str) -> None:
+        self._dsn = dsn
+        self._pool: asyncpg.Pool | None = None
+
+    async def _ensure(self) -> asyncpg.Pool:
+        if self._pool is None:
+            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=4)
+            async with self._pool.acquire() as conn:
+                for stmt in _PG_SCHEMA_SQL:
+                    await conn.execute(stmt)
+        return self._pool
+
+    async def get_thread_binding(
+        self, channel_type: str, scope_id: str, thread_id: str
+    ) -> str | None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT agent_name FROM thread_bindings "
+                "WHERE channel_type=$1 AND scope_id=$2 AND thread_id=$3",
+                channel_type, scope_id, thread_id,
+            )
+            return row["agent_name"] if row else None
+
+    async def set_thread_binding(
+        self,
+        channel_type: str,
+        scope_id: str,
+        thread_id: str,
+        agent_name: str,
+        user_id: str | None = None,
+    ) -> None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO thread_bindings
+                    (channel_type, scope_id, thread_id, agent_name, user_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (channel_type, scope_id, thread_id) DO UPDATE SET
+                    agent_name=EXCLUDED.agent_name,
+                    user_id=EXCLUDED.user_id,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                channel_type, scope_id, thread_id, agent_name, user_id,
+            )
+
+    async def delete_thread_binding(
+        self, channel_type: str, scope_id: str, thread_id: str
+    ) -> None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM thread_bindings "
+                "WHERE channel_type=$1 AND scope_id=$2 AND thread_id=$3",
+                channel_type, scope_id, thread_id,
+            )
+
+    async def get_route_pref(
+        self, channel_type: str, scope_id: str
+    ) -> str | None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT agent_name FROM route_prefs "
+                "WHERE channel_type=$1 AND scope_id=$2",
+                channel_type, scope_id,
+            )
+            return row["agent_name"] if row else None
+
+    async def set_route_pref(
+        self, channel_type: str, scope_id: str, agent_name: str
+    ) -> None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO route_prefs (channel_type, scope_id, agent_name)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (channel_type, scope_id) DO UPDATE SET
+                    agent_name=EXCLUDED.agent_name,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                channel_type, scope_id, agent_name,
+            )
+
+    async def delete_route_pref(
+        self, channel_type: str, scope_id: str
+    ) -> None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM route_prefs WHERE channel_type=$1 AND scope_id=$2",
+                channel_type, scope_id,
+            )
+
+    async def list_thread_bindings(
+        self, channel_type: str, scope_id: str | None = None
+    ) -> list[ThreadBinding]:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            if scope_id is None:
+                rows = await conn.fetch(
+                    "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+                    "created_at, updated_at FROM thread_bindings "
+                    "WHERE channel_type=$1",
+                    channel_type,
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+                    "created_at, updated_at FROM thread_bindings "
+                    "WHERE channel_type=$1 AND scope_id=$2",
+                    channel_type, scope_id,
+                )
+            return [
+                ThreadBinding(
+                    channel_type=r["channel_type"],
+                    scope_id=r["scope_id"],
+                    thread_id=r["thread_id"],
+                    agent_name=r["agent_name"],
+                    user_id=r["user_id"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                )
+                for r in rows
+            ]
+
+    async def close(self) -> None:
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
