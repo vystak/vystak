@@ -11,16 +11,13 @@ the slack-bolt runtime in server_template.py just calls it.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vystak_channel_runtime.store import ChannelStore
 
 
-class _ThreadStore(Protocol):
-    def thread_binding(
-        self, team: str, channel: str, thread_ts: str
-    ) -> str | None: ...
-
-
-def route_thread_message(
+async def route_thread_message(
     *,
     is_dm: bool,
     require_explicit_mention: bool,
@@ -29,7 +26,7 @@ def route_thread_message(
     thread_ts: str | None,
     text: str,
     bot_user_id: str,
-    store: _ThreadStore,
+    store: ChannelStore,
 ) -> str | None:
     """Return the agent name to forward to, or None to ignore the message.
 
@@ -47,4 +44,22 @@ def route_thread_message(
         return None
     if bot_user_id and f"<@{bot_user_id}>" in text:
         return None
-    return store.thread_binding(team, channel, thread_ts)
+    return await store.get_thread_binding("slack", team, f"{channel}:{thread_ts}")
+
+
+def register(
+    app: Any,
+    config: dict,
+    store: ChannelStore,
+) -> None:
+    """Register thread routing as a no-op hook (routing handled in message events).
+
+    The thread routing logic is called directly by SlackChannelRuntime.handle_event
+    (via the parent ChannelRuntime). This register() exists to satisfy the
+    symmetric register() contract; actual bolt event wiring lives in runtime.py.
+    """
+    # Thread routing is handled by the ChannelRuntime base class which calls
+    # store.get_thread_binding via route(). No additional bolt event registration
+    # is needed here — the message handler in runtime.start() already calls
+    # handle_event which flows into the store lookups.
+    pass  # intentional no-op

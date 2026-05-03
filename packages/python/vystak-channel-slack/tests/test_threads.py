@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+from vystak_channel_runtime.store import MemoryChannelStore
 from vystak_channel_slack.threads import route_thread_message
 
 
-class _FakeStore:
-    """Minimal store stub exposing only thread_binding()."""
+async def _make_store(bindings: dict[tuple[str, str, str], str] | None = None) -> MemoryChannelStore:
+    """Build a MemoryChannelStore pre-seeded with given bindings."""
+    store = MemoryChannelStore()
+    if bindings:
+        for (team, channel, thread_ts), agent in bindings.items():
+            await store.set_thread_binding("slack", team, f"{channel}:{thread_ts}", agent)
+    return store
 
-    def __init__(self, bindings: dict[tuple[str, str, str], str] | None = None):
-        self._b = bindings or {}
 
-    def thread_binding(self, team: str, channel: str, thread_ts: str) -> str | None:
-        return self._b.get((team, channel, thread_ts))
-
-
-def _call(**overrides):
+async def _call(**overrides):
     """Build a route_thread_message call with sensible defaults."""
+    store = overrides.pop("store", await _make_store({("T1", "C1", "1700.111"): "weather-agent"}))
     args = {
         "is_dm": False,
         "require_explicit_mention": False,
@@ -25,45 +26,46 @@ def _call(**overrides):
         "thread_ts": "1700.111",
         "text": "hey",
         "bot_user_id": "UBOT",
-        "store": _FakeStore({("T1", "C1", "1700.111"): "weather-agent"}),
+        "store": store,
     }
     args.update(overrides)
-    return route_thread_message(**args)
+    return await route_thread_message(**args)
 
 
-def test_routes_to_bound_agent_when_thread_is_bound():
-    assert _call() == "weather-agent"
+async def test_routes_to_bound_agent_when_thread_is_bound():
+    assert await _call() == "weather-agent"
 
 
-def test_returns_none_for_dm():
-    assert _call(is_dm=True) is None
+async def test_returns_none_for_dm():
+    assert await _call(is_dm=True) is None
 
 
-def test_returns_none_when_explicit_mention_required():
-    assert _call(require_explicit_mention=True) is None
+async def test_returns_none_when_explicit_mention_required():
+    assert await _call(require_explicit_mention=True) is None
 
 
-def test_returns_none_when_no_thread_ts():
-    assert _call(thread_ts=None) is None
+async def test_returns_none_when_no_thread_ts():
+    assert await _call(thread_ts=None) is None
 
 
-def test_returns_none_when_text_mentions_bound_bot():
+async def test_returns_none_when_text_mentions_bound_bot():
     """on_mention will already handle these — avoid double-reply."""
-    assert _call(text="hi <@UBOT> please help") is None
+    assert await _call(text="hi <@UBOT> please help") is None
 
 
-def test_text_mentioning_other_agent_still_routes_to_bound_agent():
+async def test_text_mentioning_other_agent_still_routes_to_bound_agent():
     """Sticky binding: <@U_other> in text doesn't release the thread."""
-    assert _call(text="<@U_OTHER> what about you?") == "weather-agent"
+    assert await _call(text="<@U_OTHER> what about you?") == "weather-agent"
 
 
-def test_returns_none_when_thread_unbound():
-    assert _call(store=_FakeStore({})) is None
+async def test_returns_none_when_thread_unbound():
+    empty_store = await _make_store({})
+    assert await _call(store=empty_store) is None
 
 
-def test_empty_bot_user_id_does_not_short_circuit():
+async def test_empty_bot_user_id_does_not_short_circuit():
     """A misconfigured BOT_USER_ID="" must not block all routing."""
     # text contains "<@>" which would never appear from real Slack; this just
     # checks the empty-string guard.
-    result = _call(bot_user_id="", text="hello <@> world")
+    result = await _call(bot_user_id="", text="hello <@> world")
     assert result == "weather-agent"

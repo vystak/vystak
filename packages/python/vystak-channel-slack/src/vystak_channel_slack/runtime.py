@@ -29,11 +29,22 @@ class SlackChannelRuntime(ChannelRuntime):
         self._app_token: str | None = None
         self._app: AsyncApp | None = None
         self._handler: AsyncSocketModeHandler | None = None
+        self._inviters: Any = None
 
     async def start(self) -> None:
+        from vystak_channel_slack import commands, threads, welcome
+        from vystak_channel_slack.inviters import InviterStore
+
         self._bot_token = os.environ["SLACK_BOT_TOKEN"]
         self._app_token = os.environ["SLACK_APP_TOKEN"]
         self._app = AsyncApp(token=self._bot_token)
+
+        inviter_path = self.config.get("state", {}).get("path", "/data/channel.db")
+        self._inviters = InviterStore(inviter_path)
+
+        welcome.register(self._app, self.config, self.store, self._inviters)
+        commands.register(self._app, self.config, self.store, self._inviters)
+        threads.register(self._app, self.config, self.store)
 
         @self._app.event("message")
         async def _on_message(event, say):  # noqa: ARG001

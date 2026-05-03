@@ -1,5 +1,14 @@
 """Welcome message + bot-invite handler."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vystak_channel_runtime.store import ChannelStore
+
+    from vystak_channel_slack.inviters import InviterStore
+
 
 def render_welcome(*, template: str, agents: list[str]) -> str:
     """Substitute {agent_mentions} with backtick-quoted agent names."""
@@ -18,7 +27,8 @@ async def on_member_joined(
     single_agent_auto_bind: bool,
     welcome_template: str,
     slack,
-    store,
+    store: ChannelStore,
+    inviters: InviterStore,
 ) -> None:
     """Handle a member_joined_channel event.
 
@@ -34,10 +44,39 @@ async def on_member_joined(
         return
 
     if inviter_id is not None:
-        store.record_inviter(team, channel, inviter_id)
+        await inviters.record_inviter(team, channel, inviter_id)
 
     text = render_welcome(template=welcome_template, agents=agents)
     await slack.chat_postMessage(channel=channel, text=text)
 
     if single_agent_auto_bind and len(agents) == 1:
-        store.set_channel_binding(team, channel, agents[0], inviter_id)
+        await store.set_thread_binding("slack", team, f"{channel}:", agents[0])
+
+
+def register(
+    app: Any,
+    config: dict,
+    store: ChannelStore,
+    inviters: InviterStore,
+) -> None:
+    """Wire the member_joined_channel bolt event handler into *app*."""
+    agents: list[str] = config.get("agents", [])
+    _default_tmpl = "Hello! I can route your messages to: {agent_mentions}"
+    welcome_template: str = config.get("welcome_message") or _default_tmpl
+    single_agent_auto_bind: bool = len(agents) == 1
+
+    @app.event("member_joined_channel")
+    async def _on_member_joined(event, client):  # noqa: ARG001
+        await on_member_joined(
+            bot_user_id=getattr(app, "_bot_user_id", ""),
+            joined_user_id=event.get("user", ""),
+            inviter_id=event.get("inviter"),
+            team=event.get("team", ""),
+            channel=event.get("channel", ""),
+            agents=agents,
+            single_agent_auto_bind=single_agent_auto_bind,
+            welcome_template=welcome_template,
+            slack=client,
+            store=store,
+            inviters=inviters,
+        )
