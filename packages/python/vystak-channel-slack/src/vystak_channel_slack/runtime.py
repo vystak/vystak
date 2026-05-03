@@ -32,7 +32,7 @@ class SlackChannelRuntime(ChannelRuntime):
         self._inviters: Any = None
 
     async def start(self) -> None:
-        from vystak_channel_slack import commands, threads, welcome
+        from vystak_channel_slack import commands, welcome
         from vystak_channel_slack.inviters import InviterStore
 
         self._bot_token = os.environ["SLACK_BOT_TOKEN"]
@@ -44,7 +44,8 @@ class SlackChannelRuntime(ChannelRuntime):
 
         welcome.register(self._app, self.config, self.store, self._inviters)
         commands.register(self._app, self.config, self.store, self._inviters)
-        threads.register(self._app, self.config, self.store)
+        # Thread routing is handled by ChannelRuntime.resolve_route + authorize;
+        # the deleted threads.route_thread_message helper is now redundant.
 
         @self._app.event("message")
         async def _on_message(event, say):  # noqa: ARG001
