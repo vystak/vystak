@@ -30,13 +30,86 @@ class DiscordChannelRuntime(ChannelRuntime):
         self._token: str | None = None
 
     async def start(self) -> None:
+        from discord import app_commands
+
+        from vystak_channel_discord import commands as cmd
+        from vystak_channel_discord.welcome import (
+            auto_bind_single_agent,
+            render_welcome,
+        )
+
         self._token = os.environ["DISCORD_BOT_TOKEN"]
         intents = discord.Intents.none()
         intents.guilds = True
         intents.guild_messages = True
         intents.dm_messages = True
         intents.message_content = True
-        self._client = discord.Client(intents=intents)
+
+        runtime = self
+        register_slash = bool(self.config.get("register_slash_commands", True))
+
+        class _VystakClient(discord.Client):
+            """discord.Client subclass; setup_hook runs after login but before
+            the gateway connection completes. This is the canonical place to
+            call CommandTree.sync() — the bot must be authenticated."""
+
+            async def setup_hook(self_inner) -> None:  # noqa: N805
+                if not register_slash:
+                    return
+                tree = app_commands.CommandTree(self_inner)
+                self_inner.tree = tree
+
+                @tree.command(
+                    name="vystak-route",
+                    description="Bind this channel to an agent",
+                )
+                async def _route(interaction, agent: str):  # noqa: ANN001
+                    scope_id = runtime._scope_id_from_interaction(interaction)
+                    thread_id = f"{scope_id}:"
+                    msg = await cmd.handle_route(
+                        runtime.store, scope_id, thread_id, agent,
+                    )
+                    await interaction.response.send_message(msg, ephemeral=True)
+
+                @tree.command(
+                    name="vystak-unroute", description="Remove channel routing",
+                )
+                async def _unroute(interaction):  # noqa: ANN001
+                    scope_id = runtime._scope_id_from_interaction(interaction)
+                    thread_id = f"{scope_id}:"
+                    msg = await cmd.handle_unroute(
+                        runtime.store, scope_id, thread_id,
+                    )
+                    await interaction.response.send_message(msg, ephemeral=True)
+
+                @tree.command(
+                    name="vystak-prefer",
+                    description="Set DM/per-scope preference",
+                )
+                async def _prefer(interaction, agent: str):  # noqa: ANN001
+                    scope_id = runtime._scope_id_from_interaction(interaction)
+                    msg = await cmd.handle_prefer(runtime.store, scope_id, agent)
+                    await interaction.response.send_message(msg, ephemeral=True)
+
+                @tree.command(
+                    name="vystak-unprefer", description="Remove preference",
+                )
+                async def _unprefer(interaction):  # noqa: ANN001
+                    scope_id = runtime._scope_id_from_interaction(interaction)
+                    msg = await cmd.handle_unprefer(runtime.store, scope_id)
+                    await interaction.response.send_message(msg, ephemeral=True)
+
+                @tree.command(
+                    name="vystak-status", description="Show current routing",
+                )
+                async def _status(interaction):  # noqa: ANN001
+                    scope_id = runtime._scope_id_from_interaction(interaction)
+                    msg = await cmd.handle_status(runtime.store, scope_id)
+                    await interaction.response.send_message(msg, ephemeral=True)
+
+                await tree.sync()
+
+        self._client = _VystakClient(intents=intents)
 
         @self._client.event
         async def on_ready():  # noqa: ARG001
@@ -48,57 +121,23 @@ class DiscordChannelRuntime(ChannelRuntime):
 
         @self._client.event
         async def on_interaction(interaction: discord.Interaction):
-            await self.handle_event({"kind": "interaction", "interaction": interaction})
-
-        from discord import app_commands
-
-        from vystak_channel_discord import commands as cmd
-        from vystak_channel_discord.welcome import auto_bind_single_agent, render_welcome
-
-        if self.config.get("register_slash_commands", True):
-            tree = app_commands.CommandTree(self._client)
-
-            @tree.command(name="vystak-route", description="Bind this channel to an agent")
-            async def _route(interaction, agent: str):  # noqa: ANN001
-                scope_id = self._scope_id_from_interaction(interaction)
-                thread_id = f"{scope_id}:"
-                msg = await cmd.handle_route(self.store, scope_id, thread_id, agent)
-                await interaction.response.send_message(msg, ephemeral=True)
-
-            @tree.command(name="vystak-unroute", description="Remove channel routing")
-            async def _unroute(interaction):  # noqa: ANN001
-                scope_id = self._scope_id_from_interaction(interaction)
-                thread_id = f"{scope_id}:"
-                msg = await cmd.handle_unroute(self.store, scope_id, thread_id)
-                await interaction.response.send_message(msg, ephemeral=True)
-
-            @tree.command(name="vystak-prefer", description="Set DM/per-scope preference")
-            async def _prefer(interaction, agent: str):  # noqa: ANN001
-                scope_id = self._scope_id_from_interaction(interaction)
-                msg = await cmd.handle_prefer(self.store, scope_id, agent)
-                await interaction.response.send_message(msg, ephemeral=True)
-
-            @tree.command(name="vystak-unprefer", description="Remove preference")
-            async def _unprefer(interaction):  # noqa: ANN001
-                scope_id = self._scope_id_from_interaction(interaction)
-                msg = await cmd.handle_unprefer(self.store, scope_id)
-                await interaction.response.send_message(msg, ephemeral=True)
-
-            @tree.command(name="vystak-status", description="Show current routing")
-            async def _status(interaction):  # noqa: ANN001
-                scope_id = self._scope_id_from_interaction(interaction)
-                msg = await cmd.handle_status(self.store, scope_id)
-                await interaction.response.send_message(msg, ephemeral=True)
-
-            await tree.sync()
+            await self.handle_event(
+                {"kind": "interaction", "interaction": interaction},
+            )
 
         @self._client.event
         async def on_guild_join(guild):  # noqa: ANN001
-            scope_id = f"{guild.id}/{getattr(getattr(guild, 'system_channel', None), 'id', '0')}"
-            await auto_bind_single_agent(
-                self.store, scope_id, self.config.get("agents", [])
+            scope_id = (
+                f"{guild.id}/"
+                f"{getattr(getattr(guild, 'system_channel', None), 'id', '0')}"
             )
-            text = render_welcome(self.config.get("welcome_message"), self.config.get("agents", []))
+            await auto_bind_single_agent(
+                self.store, scope_id, self.config.get("agents", []),
+            )
+            text = render_welcome(
+                self.config.get("welcome_message"),
+                self.config.get("agents", []),
+            )
             sys_chan = getattr(guild, "system_channel", None)
             if sys_chan is not None:
                 try:
