@@ -37,3 +37,10 @@ def test_channel_config_includes_channel_type_and_protocol():
     cfg = json.loads(out.files["channel_config.json"])
     assert cfg["channel_type"] == "discord"
     assert cfg["agent_protocol"] == "a2a-turn"
+
+
+def test_plugin_writes_version_fields():
+    out = DiscordChannelPlugin().generate_code(_channel(), resolved_routes={})
+    cfg = json.loads(out.files["channel_config.json"])
+    assert "channel_package_version" in cfg
+    assert "channel_runtime_version" in cfg

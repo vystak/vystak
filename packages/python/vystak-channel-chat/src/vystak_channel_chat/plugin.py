@@ -34,7 +34,12 @@ class ChatChannelPlugin(ChannelPlugin):
     def generate_code(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
+        from vystak_channel_runtime import channel_package_version, runtime_version
+
         from vystak_channel_chat.server_template import DOCKERFILE, REQUIREMENTS
+
+        channel.channel_package_version = channel_package_version("vystak-channel-chat")
+        channel.channel_runtime_version = runtime_version()
 
         channel_config = {
             "channel_type": "chat",
@@ -46,6 +51,8 @@ class ChatChannelPlugin(ChannelPlugin):
                 channel.state.model_dump(exclude_none=True)
                 if channel.state is not None else None
             ),
+            "channel_package_version": channel.channel_package_version,
+            "channel_runtime_version": channel.channel_runtime_version,
         }
         return GeneratedCode(
             files={

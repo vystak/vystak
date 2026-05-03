@@ -173,6 +173,12 @@ class TestAutoRegistration:
         plugin = get_plugin(ChannelType.SLACK)
         assert isinstance(plugin, SlackChannelPlugin)
 
+    def test_plugin_writes_version_fields(self):
+        out = SlackChannelPlugin().generate_code(_channel(), resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert "channel_package_version" in cfg
+        assert "channel_runtime_version" in cfg
+
 
 class TestSlackChannelStreamToolCalls:
     """The stream_tool_calls flag round-trips from Channel.config to channel_config.json."""

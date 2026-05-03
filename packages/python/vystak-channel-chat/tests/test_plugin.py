@@ -118,3 +118,11 @@ class TestAutoRegistration:
 
         plugin = get_plugin(ChannelType.CHAT)
         assert isinstance(plugin, ChatChannelPlugin)
+
+    def test_plugin_writes_version_fields(self):
+        import json
+
+        out = ChatChannelPlugin().generate_code(_channel(), resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert "channel_package_version" in cfg
+        assert "channel_runtime_version" in cfg

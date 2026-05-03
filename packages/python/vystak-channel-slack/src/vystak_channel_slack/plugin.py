@@ -35,6 +35,11 @@ class SlackChannelPlugin(ChannelPlugin):
     def generate_code(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
+        from vystak_channel_runtime import channel_package_version, runtime_version
+
+        channel.channel_package_version = channel_package_version("vystak-channel-slack")
+        channel.channel_runtime_version = runtime_version()
+
         channel_config = self._build_channel_config(channel)
 
         return GeneratedCode(
@@ -101,6 +106,8 @@ class SlackChannelPlugin(ChannelPlugin):
             },
             "stream_tool_calls": bool(channel.config.get("stream_tool_calls", False)),
             "state": state_cfg,
+            "channel_package_version": channel.channel_package_version,
+            "channel_runtime_version": channel.channel_runtime_version,
         }
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list[Provisionable]:

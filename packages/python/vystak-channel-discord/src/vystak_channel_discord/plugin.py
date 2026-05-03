@@ -36,6 +36,11 @@ class DiscordChannelPlugin(ChannelPlugin):
     def generate_code(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
     ) -> GeneratedCode:
+        from vystak_channel_runtime import channel_package_version, runtime_version
+
+        channel.channel_package_version = channel_package_version("vystak-channel-discord")
+        channel.channel_runtime_version = runtime_version()
+
         agent_names = [a.name for a in channel.agents]
         default_agent_name = (
             channel.default_agent.name if channel.default_agent else None
@@ -86,6 +91,8 @@ class DiscordChannelPlugin(ChannelPlugin):
             "port": int(channel.config.get("port", 8080)),
             "application_id": channel.config.get("application_id"),
             "state": state_cfg,
+            "channel_package_version": channel.channel_package_version,
+            "channel_runtime_version": channel.channel_runtime_version,
         }
 
         return GeneratedCode(
