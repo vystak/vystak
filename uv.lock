@@ -1608,12 +1608,14 @@ source = { editable = "packages/python/vystak-channel-slack" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "vystak" },
+    { name = "vystak-channel-runtime" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.0" },
     { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
 ]
 
 [[package]]
