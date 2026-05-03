@@ -80,6 +80,48 @@ vystak apply
 
 ---
 
+### `docker-compaction` — Long sessions without context overflow
+
+Builds on `sessions-postgres`: same Postgres-backed agent, plus
+[compaction](../concepts/compaction) so the conversation stays bounded
+no matter how many turns it runs. The example uses an artificial 5K
+context window and `trigger_pct: 0.3` so you can observe compaction
+fire after ~5 turns instead of needing hundreds.
+
+```yaml
+agents:
+  - name: chatty
+    model: agent_model
+    sessions:
+      type: postgres
+      provider: { name: docker, type: docker }
+    compaction:
+      mode: aggressive
+      context_window: 5000
+      trigger_pct: 0.3
+      keep_recent_pct: 0.2
+      summarizer:
+        name: summarizer
+        provider: { name: anthropic, type: anthropic }
+        model_name: MiniMax-M2.7
+        api_keys: { name: ANTHROPIC_API_KEY }
+```
+
+**Run it:**
+```bash
+cd examples/docker-compaction
+cp .env.example .env  # then edit with your real keys
+uv run vystak apply
+# Drive a multi-turn conversation, then:
+curl http://localhost:18080/v1/sessions/$THREAD/compactions | jq
+```
+
+**What it teaches:** the three-layer compaction model (pre-call prune,
+threshold summarize, manual `/compact`), the `vystak_compactions`
+inspection table, and the dev-tight knobs for fast iteration.
+
+---
+
 ### `multi-agent` — A2A collaboration
 
 Three agents in one deployment: a `weather` specialist, a `time` specialist, and an `assistant` that calls both. The assistant's tools (`ask_weather_agent`, `ask_time_agent`) use Vystak's A2A (agent-to-agent) protocol over HTTP.
