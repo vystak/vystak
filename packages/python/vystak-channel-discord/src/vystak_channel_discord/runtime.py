@@ -115,6 +115,11 @@ class DiscordChannelRuntime(ChannelRuntime):
     def parse_event(self, raw_event: Any) -> InboundEvent:
         from vystak.schema.common import ChannelType
 
+        from vystak_channel_discord.threads import (
+            is_forum_channel,
+            is_thread_channel,
+        )
+
         if raw_event.get("kind") != "message":
             raise SkipEvent("not a message")
         msg = raw_event["message"]
@@ -125,7 +130,12 @@ class DiscordChannelRuntime(ChannelRuntime):
         if bot_user is not None and msg.author.id == bot_user.id:
             raise SkipEvent("own message")
 
-        is_dm = getattr(msg.channel, "type", None) in {"dm", "private", discord.ChannelType.private}
+        chan_type = getattr(msg.channel, "type", None)
+        # DM detection: accept the discord.ChannelType enum (production) and
+        # the "dm"/"private" string literals (test stubs).
+        is_dm = chan_type in {"dm", "private"} or (
+            getattr(chan_type, "name", None) in {"private", "group"}
+        )
         if is_dm:
             scope_id = f"dm/{msg.author.id}"
         else:
@@ -134,7 +144,7 @@ class DiscordChannelRuntime(ChannelRuntime):
 
         if getattr(msg, "thread", None) is not None:
             thread_id = str(msg.thread.id)
-        elif getattr(msg.channel, "type", None) in {"thread", "forum"}:
+        elif is_thread_channel(chan_type) or is_forum_channel(chan_type):
             thread_id = str(msg.channel.id)
         else:
             thread_id = str(msg.id)
@@ -200,10 +210,16 @@ class DiscordChannelRuntime(ChannelRuntime):
             await msg.channel.send(chunk)
 
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
+        from vystak_channel_discord.threads import (
+            is_forum_channel,
+            is_thread_channel,
+        )
+
         msg = event.metadata.get("raw_message")
         if msg is None:
             return []
-        in_thread = getattr(msg.channel, "type", None) in {"thread", "forum"}
+        chan_type = getattr(msg.channel, "type", None)
+        in_thread = is_thread_channel(chan_type) or is_forum_channel(chan_type)
         has_thread = getattr(msg, "thread", None) is not None
         if not in_thread and not has_thread:
             return []

@@ -2,13 +2,35 @@
 
 from __future__ import annotations
 
-
-def is_thread_channel(channel_type: str | None) -> bool:
-    return channel_type == "thread"
+from typing import Any
 
 
-def is_forum_channel(channel_type: str | None) -> bool:
-    return channel_type == "forum"
+def _type_name(channel_type: Any) -> str:
+    """Coerce discord.ChannelType enum or plain string to its name string."""
+    if channel_type is None:
+        return ""
+    return getattr(channel_type, "name", str(channel_type))
+
+
+def is_thread_channel(channel_type: Any) -> bool:
+    """Return True for any thread-like discord channel type.
+
+    Accepts a `discord.ChannelType` enum (production), a plain string (tests),
+    or anything with a `.name` attribute. discord.py's enum members for
+    threads are `public_thread`, `private_thread`, `news_thread`. The plain
+    string `"thread"` is also accepted for test stubs.
+    """
+    return _type_name(channel_type) in {
+        "public_thread", "private_thread", "news_thread", "thread",
+    }
+
+
+def is_forum_channel(channel_type: Any) -> bool:
+    """Return True for forum-like discord channel types (forum + media).
+
+    Accepts the same input shapes as `is_thread_channel`.
+    """
+    return _type_name(channel_type) in {"forum", "media"}
 
 
 def should_respond_in_thread(
