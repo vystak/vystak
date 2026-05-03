@@ -109,8 +109,13 @@ production use:
 - `trigger_pct: 0.3` — fire at 30% of the (fake) window, i.e. 1500
   tokens. Tight enough that you'll see compaction within a single
   test session; the conservative-mode default is 0.75.
-- `summarizer: claude-haiku-4-5-20251001` — Haiku is roughly 1/15 the
-  cost of Sonnet, so summaries are cheap during dev.
+- `summarizer: MiniMax-M2.7` — same model as the agent. With
+  `ANTHROPIC_API_URL` pointing at api.minimax.io, this is the model
+  name MiniMax recognises. If you swap the URL back to
+  `api.anthropic.com`, change both the agent and summarizer model
+  names to a real Claude model (e.g. `claude-haiku-4-5-20251001` for
+  the summarizer — Haiku is ~1/15 the cost of Sonnet for cheap dev
+  summaries).
 
 For production use, drop `context_window` (so the real model context
 applies — 200K for Claude Sonnet 4.x) and pick a preset:
