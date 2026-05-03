@@ -20,6 +20,7 @@ class WorkspaceType(StrEnum):
 class ChannelType(StrEnum):
     API = "api"
     SLACK = "slack"
+    DISCORD = "discord"
     WEBHOOK = "webhook"
     VOICE = "voice"
     CRON = "cron"
