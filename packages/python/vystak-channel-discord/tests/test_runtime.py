@@ -202,3 +202,102 @@ async def test_post_reply_splits_long_messages():
     assert len(chan.sent) == 3
     assert all(len(s) <= 2000 for s in chan.sent)
     assert "".join(chan.sent) == long
+
+
+@dataclass
+class _FakeHistMsg:
+    author: _FakeUser
+    content: str
+
+
+@dataclass
+class _FakeChannelWithHistory(_FakeChannelWithSend):
+    history_msgs: list = field(default_factory=list)
+
+    def history(self, limit: int):
+        msgs = self.history_msgs[:limit]
+
+        async def _aiter():
+            for m in msgs:
+                yield m
+
+        return _aiter()
+
+
+@pytest.mark.asyncio
+async def test_fetch_history_returns_messages_for_thread():
+    rt = _make_runtime()
+    chan = _FakeChannelWithHistory(id=400, type_str="thread")
+    chan.history_msgs = [
+        _FakeHistMsg(author=_FakeUser(id=1), content="user-msg"),
+        _FakeHistMsg(author=rt._bot_user, content="bot-msg"),
+    ]
+    msg = _FakeMessage(
+        id=12,
+        author=_FakeUser(id=3),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+        thread=_FakeThread(id=999),
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    history = await rt.fetch_history(ev)
+    assert len(history) == 2
+    assert history[0].role == "user"
+    assert history[1].role == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_fetch_history_empty_for_top_level_message():
+    rt = _make_runtime()
+    chan = _FakeChannelWithHistory(id=200, type_str="text")
+    msg = _FakeMessage(
+        id=10,
+        author=_FakeUser(id=1),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    history = await rt.fetch_history(ev)
+    assert history == []
+
+
+@pytest.mark.asyncio
+async def test_after_reply_persists_thread_binding():
+    rt = _make_runtime()
+    chan = _FakeChannelWithSend(id=200, type_str="thread")
+    msg = _FakeMessage(
+        id=12,
+        author=_FakeUser(id=3),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+        thread=_FakeThread(id=999),
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    await rt.after_reply(ev, "hero", AgentReply(text="ok"))
+    bound = await rt.store.get_thread_binding("discord", ev.scope_id, ev.thread_id)
+    assert bound == "hero"
+
+
+@pytest.mark.asyncio
+async def test_on_no_route_posts_message_when_configured():
+    rt = DiscordChannelRuntime(
+        config={**_config(), "no_route_message": "no agent here"},
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user = _bot_user()
+    chan = _FakeChannelWithSend(id=200, type_str="text")
+    msg = _FakeMessage(
+        id=10,
+        author=_FakeUser(id=1),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+        mentions=[rt._bot_user],
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    await rt.on_no_route(ev)
+    assert chan.sent == ["no agent here"]

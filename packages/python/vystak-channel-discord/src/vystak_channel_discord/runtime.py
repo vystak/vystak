@@ -9,8 +9,10 @@ from typing import Any
 import discord
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.types import (
+    AgentCallError,
     AgentReply,
     InboundEvent,
+    Message,
     SkipEvent,
 )
 
@@ -118,6 +120,57 @@ class DiscordChannelRuntime(ChannelRuntime):
         text = reply.text or ""
         for chunk in _chunk(text, MAX_DISCORD_MESSAGE_CHARS):
             await msg.channel.send(chunk)
+
+    async def fetch_history(self, event: InboundEvent) -> list[Message]:
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            return []
+        in_thread = getattr(msg.channel, "type", None) in {"thread", "forum"}
+        has_thread = getattr(msg, "thread", None) is not None
+        if not in_thread and not has_thread:
+            return []
+        limit = self.config.get("thread", {}).get("initial_history_limit", 20)
+        out: list[Message] = []
+        bot_id = getattr(getattr(self, "_bot_user", None), "id", None)
+        async for hist in msg.channel.history(limit=limit):
+            role = "assistant" if getattr(hist.author, "id", None) == bot_id else "user"
+            out.append(Message(role=role, content=hist.content or ""))
+        return out
+
+    async def before_call(self, event: InboundEvent, route: str) -> None:
+        if not self.config.get("post_placeholder", False):
+            return
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            return
+        try:
+            placeholder = await msg.channel.send("Responding…")
+        except Exception:  # noqa: BLE001
+            return
+        event.metadata["placeholder_message"] = placeholder
+
+    async def on_no_route(self, event: InboundEvent) -> None:
+        text = self.config.get("no_route_message")
+        if not text:
+            return
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            return
+        try:
+            await msg.channel.send(text)
+        except Exception:  # noqa: BLE001
+            logger.warning("on_no_route send failed", exc_info=True)
+
+    async def on_agent_error(
+        self, event: InboundEvent, route: str, exc: AgentCallError
+    ) -> None:
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            return
+        try:
+            await msg.channel.send(f"Agent error ({route}): {str(exc)[:300]}")
+        except Exception:  # noqa: BLE001
+            logger.warning("on_agent_error send failed", exc_info=True)
 
 
 def _chunk(text: str, size: int) -> list[str]:
