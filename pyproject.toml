@@ -30,6 +30,7 @@ dev-dependencies = [
     "vystak-transport-http",
     "vystak-transport-nats",
     "vystak-workspace-rpc",
+    "vystak-channel-runtime",
     "hatch-vcs>=0.5.0",
 ]
 
@@ -47,6 +48,7 @@ vystak-provider-azure = { workspace = true }
 vystak-transport-http = { workspace = true }
 vystak-transport-nats = { workspace = true }
 vystak-workspace-rpc = { workspace = true }
+vystak-channel-runtime = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
