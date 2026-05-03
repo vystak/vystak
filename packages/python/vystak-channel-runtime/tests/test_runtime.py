@@ -5,6 +5,7 @@ from vystak.schema.common import ChannelType
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.store import MemoryChannelStore
 from vystak_channel_runtime.types import (
+    AgentCallError,
     AgentReply,
     InboundEvent,
     SkipEvent,
@@ -207,3 +208,115 @@ async def test_resolve_route_returns_none_when_no_default():
         user_id="U", text="hi", is_dm=False, mentions_bot=True,
     )
     assert await rt.resolve_route(ev) is None
+
+
+# ---------------------------------------------------------------------------
+# Task 1.10 — call_agent + handle_event pipeline
+# ---------------------------------------------------------------------------
+
+
+class FakeAgentClient:
+    def __init__(self):
+        self.calls = []
+
+    async def send_turn(self, agent_url, text, thread_id, history=None, metadata=None):
+        self.calls.append({"url": agent_url, "text": text, "thread_id": thread_id})
+        return AgentReply(text=f"reply to: {text}")
+
+    async def stream_turn(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_handle_event_full_pipeline_happy_path():
+    fc = FakeAgentClient()
+    store = MemoryChannelStore()
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=store,
+        agent_client=fc,
+    )
+    await rt.handle_event({"scope_id": "C1", "thread_id": "T:1", "user_id": "U", "text": "hi"})
+    assert len(rt.posted) == 1
+    ev, route, reply = rt.posted[0]
+    assert route == "hero"
+    assert reply.text == "reply to: hi"
+    assert fc.calls[0]["url"] == "http://hero:8000"
+    # thread binding persisted in after_reply
+    assert await store.get_thread_binding("slack", "C1", "T:1") == "hero"
+
+
+@pytest.mark.asyncio
+async def test_handle_event_skips_when_parse_event_raises_skip():
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=FakeAgentClient(),
+    )
+    await rt.handle_event({"skip": True})
+    assert rt.posted == []
+
+
+@pytest.mark.asyncio
+async def test_handle_event_drops_when_authorize_false():
+    rt = TrivialRuntime(
+        config=_config(group_policy="disabled"),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=FakeAgentClient(),
+    )
+    await rt.handle_event({"scope_id": "C1", "user_id": "U", "text": "hi"})
+    assert rt.posted == []
+
+
+@pytest.mark.asyncio
+async def test_handle_event_no_route_calls_on_no_route():
+    fc = FakeAgentClient()
+
+    class NoRouteRuntime(TrivialRuntime):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.no_route_count = 0
+
+        async def on_no_route(self, event):
+            self.no_route_count += 1
+
+    rt = NoRouteRuntime(
+        config=_config(default_agent=None),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=fc,
+    )
+    await rt.handle_event({"scope_id": "C1", "user_id": "U", "text": "hi"})
+    assert rt.no_route_count == 1
+    assert rt.posted == []
+
+
+@pytest.mark.asyncio
+async def test_handle_event_agent_error_routes_to_handler():
+    class FailingClient:
+        async def send_turn(self, *a, **kw):
+            raise AgentCallError("boom")
+
+        async def stream_turn(self, *a, **kw):
+            raise NotImplementedError
+
+    class CapturingRuntime(TrivialRuntime):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.errors = []
+
+        async def on_agent_error(self, event, route, exc):
+            self.errors.append((route, str(exc)))
+
+    rt = CapturingRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=FailingClient(),
+    )
+    await rt.handle_event({"scope_id": "C1", "user_id": "U", "text": "hi"})
+    assert rt.errors == [("hero", "boom")]
+    assert rt.posted == []

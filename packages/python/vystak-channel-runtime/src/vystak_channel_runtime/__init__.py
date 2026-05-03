@@ -1,6 +1,7 @@
 """Vystak channel runtime — shared base for channel containers."""
 
 from vystak_channel_runtime.agent_client import A2AAgentClient, AgentClient
+from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.store import (
     ChannelStore,
     MemoryChannelStore,
@@ -24,6 +25,7 @@ __all__ = [
     "AgentChunk",
     "AgentClient",
     "AgentReply",
+    "ChannelRuntime",
     "ChannelStore",
     "InboundEvent",
     "MemoryChannelStore",

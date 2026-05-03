@@ -16,6 +16,7 @@ from vystak_channel_runtime.types import (
     AgentReply,
     InboundEvent,
     Message,
+    SkipEvent,
 )
 
 logger = logging.getLogger("vystak.channel.runtime")
@@ -142,3 +143,48 @@ class ChannelRuntime(ABC):
             if event.user_id not in allow_from:
                 return False
         return True
+
+    # --- Call + pipeline (base owns) ----------------------------------------
+
+    async def call_agent(
+        self,
+        event: InboundEvent,
+        route: str,
+        history: list[Message],
+    ) -> AgentReply:
+        route_entry = self.routes.get(route)
+        if route_entry is None:
+            raise AgentCallError(f"unknown route: {route}")
+        agent_url = (
+            route_entry.get("address") if isinstance(route_entry, dict) else route_entry
+        )
+        if not agent_url:
+            raise AgentCallError(f"route {route} has no address")
+        return await self._agent_client.send_turn(
+            agent_url,
+            text=event.text,
+            thread_id=event.thread_id or event.scope_id,
+            history=history,
+            metadata=event.metadata,
+        )
+
+    async def handle_event(self, raw_event: Any) -> None:
+        try:
+            event = self.parse_event(raw_event)
+        except SkipEvent:
+            return
+        if not await self.authorize(event):
+            return
+        route = await self.resolve_route(event)
+        if route is None:
+            await self.on_no_route(event)
+            return
+        history = await self.fetch_history(event)
+        await self.before_call(event, route)
+        try:
+            reply = await self.call_agent(event, route, history)
+        except AgentCallError as exc:
+            await self.on_agent_error(event, route, exc)
+            return
+        await self.post_reply(event, route, reply)
+        await self.after_reply(event, route, reply)
