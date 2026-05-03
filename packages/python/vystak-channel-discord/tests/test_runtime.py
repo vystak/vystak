@@ -1,7 +1,11 @@
 """Tests for DiscordChannelRuntime."""
 
+from dataclasses import dataclass, field
+
+import pytest
 from vystak_channel_discord.runtime import DiscordChannelRuntime
 from vystak_channel_runtime.store import MemoryChannelStore
+from vystak_channel_runtime.types import SkipEvent
 
 
 def _config():
@@ -26,3 +30,130 @@ def test_runtime_constructable():
         store=MemoryChannelStore(),
     )
     assert rt.channel_type == "discord"
+
+
+@dataclass
+class _FakeUser:
+    id: int
+    bot: bool = False
+
+
+@dataclass
+class _FakeChannel:
+    id: int
+    type_str: str = "text"  # "text" | "dm" | "thread" | "forum"
+
+    @property
+    def type(self):
+        # Mimic discord.ChannelType enum lookup we use in parse_event.
+        return self.type_str
+
+
+@dataclass
+class _FakeGuild:
+    id: int
+
+
+@dataclass
+class _FakeThread:
+    id: int
+
+
+@dataclass
+class _FakeMessage:
+    id: int
+    author: _FakeUser
+    channel: _FakeChannel
+    guild: _FakeGuild | None
+    content: str
+    mentions: list[_FakeUser] = field(default_factory=list)
+    thread: _FakeThread | None = None
+    reference: object | None = None
+
+
+def _bot_user():
+    return _FakeUser(id=999, bot=True)
+
+
+def _make_runtime():
+    rt = DiscordChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    bot = _bot_user()
+    rt._bot_user = bot  # type: ignore[attr-defined]
+    return rt
+
+
+def test_parse_event_guild_message_with_mention():
+    rt = _make_runtime()
+    msg = _FakeMessage(
+        id=10,
+        author=_FakeUser(id=1),
+        channel=_FakeChannel(id=200, type_str="text"),
+        guild=_FakeGuild(id=100),
+        content=f"hi <@{rt._bot_user.id}>",
+        mentions=[rt._bot_user],
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    assert ev.scope_id == "100/200"
+    assert ev.thread_id == "10"
+    assert ev.user_id == "1"
+    assert ev.is_dm is False
+    assert ev.mentions_bot is True
+
+
+def test_parse_event_dm_uses_dm_scope():
+    rt = _make_runtime()
+    msg = _FakeMessage(
+        id=11,
+        author=_FakeUser(id=2),
+        channel=_FakeChannel(id=300, type_str="dm"),
+        guild=None,
+        content="hello",
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    assert ev.scope_id == "dm/2"
+    assert ev.is_dm is True
+    assert ev.mentions_bot is False
+
+
+def test_parse_event_in_thread_uses_thread_id():
+    rt = _make_runtime()
+    msg = _FakeMessage(
+        id=12,
+        author=_FakeUser(id=3),
+        channel=_FakeChannel(id=400, type_str="thread"),
+        guild=_FakeGuild(id=100),
+        content="hi",
+        thread=_FakeThread(id=999),
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    assert ev.thread_id == "999"
+
+
+def test_parse_event_skips_own_messages():
+    rt = _make_runtime()
+    msg = _FakeMessage(
+        id=13,
+        author=_FakeUser(id=rt._bot_user.id),
+        channel=_FakeChannel(id=500, type_str="text"),
+        guild=_FakeGuild(id=100),
+        content="self",
+    )
+    with pytest.raises(SkipEvent):
+        rt.parse_event({"kind": "message", "message": msg})
+
+
+def test_parse_event_skips_other_bots_when_disallowed():
+    rt = _make_runtime()
+    msg = _FakeMessage(
+        id=14,
+        author=_FakeUser(id=42, bot=True),
+        channel=_FakeChannel(id=600, type_str="text"),
+        guild=_FakeGuild(id=100),
+        content="hi",
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    assert ev.metadata["is_bot"] is True
