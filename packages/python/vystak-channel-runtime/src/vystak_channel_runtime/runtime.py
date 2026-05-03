@@ -104,6 +104,28 @@ class ChannelRuntime(ABC):
 
     # --- Authorize (base owns) --------------------------------------------
 
+    async def resolve_route(self, event: InboundEvent) -> str | None:
+        """Order: channel_overrides -> thread_binding -> route_pref (DM) -> default_agent."""
+        ov = self.config.get("channel_overrides", {}).get(event.scope_id)
+        if ov is not None and isinstance(ov, dict) and ov.get("agent"):
+            return ov["agent"]
+
+        if event.thread_id is not None:
+            bound = await self.store.get_thread_binding(
+                self.channel_type, event.scope_id, event.thread_id,
+            )
+            if bound:
+                return bound
+
+        if event.is_dm:
+            pref = await self.store.get_route_pref(
+                self.channel_type, event.scope_id,
+            )
+            if pref:
+                return pref
+
+        return self.config.get("default_agent")
+
     async def authorize(self, event: InboundEvent) -> bool:
         is_bot = bool(event.metadata.get("is_bot"))
         if is_bot and not self.config.get("allow_bots", False):

@@ -133,3 +133,77 @@ async def test_authorize_allowlist_admits_known_user():
         user_id="U_OK", text="hi", is_dm=False, mentions_bot=True,
     )
     assert await rt.authorize(ev) is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_uses_channel_override():
+    rt = TrivialRuntime(
+        config=_config(channel_overrides={"C1": {"agent": "villain"}}),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+    )
+    assert await rt.resolve_route(ev) == "villain"
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_uses_thread_binding_when_no_override():
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "C1", "T:1.0", "villain")
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=store,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id="T:1.0",
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+    )
+    assert await rt.resolve_route(ev) == "villain"
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_uses_route_pref_for_dm():
+    store = MemoryChannelStore()
+    await store.set_route_pref("slack", "U", "villain")
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=store,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="U", thread_id=None,
+        user_id="U", text="hi", is_dm=True, mentions_bot=False,
+    )
+    assert await rt.resolve_route(ev) == "villain"
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_falls_back_to_default_agent():
+    rt = TrivialRuntime(
+        config=_config(default_agent="hero"),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+    )
+    assert await rt.resolve_route(ev) == "hero"
+
+
+@pytest.mark.asyncio
+async def test_resolve_route_returns_none_when_no_default():
+    rt = TrivialRuntime(
+        config=_config(default_agent=None),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+    )
+    assert await rt.resolve_route(ev) is None
