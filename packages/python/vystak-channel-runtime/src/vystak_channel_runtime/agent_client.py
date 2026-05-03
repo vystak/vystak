@@ -64,7 +64,10 @@ class A2AAgentClient:
         history: list[Message] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AgentReply:
-        url = agent_url.rstrip("/") + "/a2a"
+        # Address may already include /a2a (current routes.json shape) or
+        # be the bare HTTP root (older shape) — append only when needed.
+        stripped = agent_url.rstrip("/")
+        url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
             "id": thread_id,
@@ -107,7 +110,10 @@ class A2AAgentClient:
         history: list[Message] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AsyncIterator[AgentChunk]:
-        url = agent_url.rstrip("/") + "/a2a"
+        # Address may already include /a2a (current routes.json shape) or
+        # be the bare HTTP root (older shape) — append only when needed.
+        stripped = agent_url.rstrip("/")
+        url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
             "id": thread_id,
@@ -170,9 +176,33 @@ class A2AAgentClient:
 
     @staticmethod
     def _reply_from_jsonrpc(payload: dict[str, Any]) -> AgentReply:
+        """Extract assistant text from an A2A JSON-RPC response.
+
+        Supports two response shapes:
+          1. Google A2A canonical (current vystak-adapter-langchain emission):
+             {result: {status: {message: {parts: [{text: ...}]}}}}
+          2. Simplified messages-list shape (kept for back-compat with
+             older adapters / mocks):
+             {result: {messages: [{role: assistant, content: ...}]}}
+        """
         if "error" in payload:
             raise AgentCallError(f"agent error: {payload['error']}")
         result = payload.get("result", {})
+
+        # Shape 1: A2A status.message.parts[].text
+        status = result.get("status") or {}
+        status_msg = status.get("message") or {}
+        parts = status_msg.get("parts") or []
+        if parts:
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            return AgentReply(
+                text=text,
+                tool_calls=result.get("tool_calls", []),
+                finish_reason=status.get("state") or result.get("finish_reason"),
+                raw=payload,
+            )
+
+        # Shape 2: simple messages list
         messages = result.get("messages", [])
         text = ""
         for m in messages:

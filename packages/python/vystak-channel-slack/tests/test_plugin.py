@@ -117,10 +117,13 @@ class TestSlackChannelPlugin:
         code = plugin.generate_code(_channel(), {})
         assert "rules.json" not in code.files
 
-    def test_requirements_pins_package(self):
+    def test_requirements_lists_third_party_deps(self):
+        """Channel package source is bundled by DockerChannelNode; the
+        emitted requirements.txt only carries third-party deps."""
         plugin = SlackChannelPlugin()
         code = plugin.generate_code(_channel(), {})
-        assert "vystak-channel-slack==" in code.files["requirements.txt"]
+        assert "slack-bolt" in code.files["requirements.txt"]
+        assert "vystak-channel-slack" not in code.files["requirements.txt"]
 
     def test_thread_name_in_channel(self):
         plugin = SlackChannelPlugin()
@@ -151,12 +154,15 @@ class TestNoCodegenShape:
         out = plugin.generate_code(_channel(), resolved_routes={})
         assert out.entrypoint == "python -m vystak_channel_slack"
 
-    def test_dockerfile_pins_package_version(self):
+    def test_dockerfile_uses_bundled_source(self):
+        """Dockerfile bundles source via COPY . . and runs `python -m`,
+        not `pip install vystak-channel-slack==X.Y.Z` from PyPI."""
         plugin = SlackChannelPlugin()
         out = plugin.generate_code(_channel(), resolved_routes={})
         df = out.files["Dockerfile"]
-        assert "vystak-channel-slack==" in df
-        assert "ENTRYPOINT" in df
+        assert "COPY . ." in df
+        assert "python" in df and "vystak_channel_slack" in df
+        assert "vystak-channel-slack==" not in df
 
     def test_channel_config_includes_channel_type_and_protocol(self):
         plugin = SlackChannelPlugin()

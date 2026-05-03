@@ -75,10 +75,13 @@ class TestChatChannelPlugin:
         code = plugin.generate_code(_channel(), {})
         assert "FROM python:3.11-slim" in code.files["Dockerfile"]
 
-    def test_requirements_pins_package(self):
+    def test_requirements_lists_third_party_deps(self):
+        """Channel package source is bundled by DockerChannelNode; the
+        emitted requirements.txt only carries third-party deps."""
         plugin = ChatChannelPlugin()
         code = plugin.generate_code(_channel(), {})
-        assert "vystak-channel-chat==" in code.files["requirements.txt"]
+        assert "fastapi" in code.files["requirements.txt"]
+        assert "vystak-channel-chat" not in code.files["requirements.txt"]
 
     def test_thread_name_format(self):
         plugin = ChatChannelPlugin()

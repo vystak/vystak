@@ -100,19 +100,33 @@ class DockerChannelNode(Provisionable):
             # Bundle unpublished vystak + vystak_transport_http + vystak_transport_nats
             # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
             import vystak
+            import vystak_channel_runtime
             import vystak_transport_http
             import vystak_transport_nats
 
-            _bundle_mods = [vystak, vystak_transport_http, vystak_transport_nats]
+            _bundle_mods = [
+                vystak,
+                vystak_transport_http,
+                vystak_transport_nats,
+                vystak_channel_runtime,
+            ]
 
-            # For Slack channels also bundle vystak_channel_slack so the runtime
-            # can import store, resolver, commands, and welcome at startup.
+            # Bundle the channel-specific package source so it's importable
+            # at runtime without needing a PyPI release.
             from vystak.schema.common import ChannelType
 
             if self._channel.type == ChannelType.SLACK:
                 import vystak_channel_slack
 
                 _bundle_mods.append(vystak_channel_slack)
+            elif self._channel.type == ChannelType.CHAT:
+                import vystak_channel_chat
+
+                _bundle_mods.append(vystak_channel_chat)
+            elif self._channel.type == ChannelType.DISCORD:
+                import vystak_channel_discord
+
+                _bundle_mods.append(vystak_channel_discord)
 
             for _mod in _bundle_mods:
                 _src = Path(_mod.__file__).parent

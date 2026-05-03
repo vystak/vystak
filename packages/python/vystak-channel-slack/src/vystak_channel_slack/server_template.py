@@ -1,28 +1,36 @@
 """Build-time artifacts for the Slack channel container.
 
-We no longer emit a SERVER_PY string. The container is built from the
-installed `vystak-channel-slack` package; its __main__ entrypoint reads
-config files mounted into /etc/vystak/.
+The runnable code is the `vystak_channel_slack` package itself.
+DockerChannelNode bundles that package's source (plus vystak,
+vystak-channel-runtime, vystak_transport_*) into the build context via
+COPY . .; PYTHONPATH=/app makes them importable. requirements.txt
+lists only third-party deps.
 """
 
 from __future__ import annotations
 
-from importlib.metadata import version
+REQUIREMENTS = """\
+slack-bolt>=1.21
+aiohttp>=3.9
+fastapi>=0.115
+uvicorn>=0.34
+httpx>=0.28
+pydantic>=2.0
+pyyaml>=6.0
+aiosqlite>=0.20
+asyncpg>=0.29
+nats-py>=2.6
+psycopg[binary]>=3.0
+"""
 
-
-def package_version() -> str:
-    try:
-        return version("vystak-channel-slack")
-    except Exception:
-        return "0.1.0"
-
-
-REQUIREMENTS = f"vystak-channel-slack=={package_version()}\n"
-
-DOCKERFILE = f"""\
+DOCKERFILE = """\
 FROM python:3.11-slim
-RUN pip install --no-cache-dir vystak-channel-slack=={package_version()}
-COPY channel_config.json routes.json /etc/vystak/
-ENV VYSTAK_CONFIG_DIR=/etc/vystak
-ENTRYPOINT ["python", "-m", "vystak_channel_slack"]
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /data /etc/vystak
+COPY . .
+RUN cp channel_config.json routes.json /etc/vystak/ 2>/dev/null || true
+ENV VYSTAK_CONFIG_DIR=/etc/vystak PYTHONPATH=/app
+CMD ["python", "-m", "vystak_channel_slack"]
 """

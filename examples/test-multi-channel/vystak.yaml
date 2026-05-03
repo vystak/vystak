@@ -1,0 +1,81 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist. Use the get_weather tool to fetch real
+      weather data for the city the user asks about. Answer concisely.
+    model: minimax
+    platform: local
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist. Use the get_time tool to fetch the current
+      UTC time. Answer concisely.
+    model: minimax
+    platform: local
+    skills:
+      - {name: time, tools: [get_time]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: assistant-agent
+    instructions: |
+      You are a friendly general-purpose assistant.
+      When the user asks about weather, call ask_weather_agent.
+      When the user asks about time, call ask_time_agent.
+      If the user asks about BOTH weather and time, call BOTH tools at once.
+      Pass user questions through verbatim and return the agent reply
+      without paraphrasing.
+    model: minimax
+    platform: local
+    subagents: [weather-agent, time-agent]
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: chat-api
+    type: chat
+    platform: local
+    config: {port: 8080}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
+
+  - name: slack-main
+    type: slack
+    platform: local
+    config: {port: 8081}
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
+
+  - name: discord-main
+    type: discord
+    platform: local
+    config: {port: 8082}
+    secrets:
+      - {name: DISCORD_BOT_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
