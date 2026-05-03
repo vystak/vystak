@@ -6,7 +6,9 @@ from vystak_channel_runtime.store import MemoryChannelStore
 from vystak_channel_slack.threads import route_thread_message
 
 
-async def _make_store(bindings: dict[tuple[str, str, str], str] | None = None) -> MemoryChannelStore:
+async def _make_store(
+    bindings: dict[tuple[str, str, str], str] | None = None,
+) -> MemoryChannelStore:
     """Build a MemoryChannelStore pre-seeded with given bindings."""
     store = MemoryChannelStore()
     if bindings:
@@ -17,7 +19,8 @@ async def _make_store(bindings: dict[tuple[str, str, str], str] | None = None) -
 
 async def _call(**overrides):
     """Build a route_thread_message call with sensible defaults."""
-    store = overrides.pop("store", await _make_store({("T1", "C1", "1700.111"): "weather-agent"}))
+    default_bindings = {("T1", "C1", "1700.111"): "weather-agent"}
+    store = overrides.pop("store", await _make_store(default_bindings))
     args = {
         "is_dm": False,
         "require_explicit_mention": False,

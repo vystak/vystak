@@ -1,8 +1,7 @@
 import pytest
-
 from vystak_channel_runtime.store import MemoryChannelStore
-from vystak_channel_slack.inviters import InviterStore
 from vystak_channel_slack.commands import NotAuthorized, Result, handle_command
+from vystak_channel_slack.inviters import InviterStore
 
 
 @pytest.fixture
@@ -66,12 +65,18 @@ async def test_unroute_removes_binding(store, inviters):
 
 
 async def test_prefer_sets_user_pref(store, inviters):
-    res = await _cmd(store, inviters, "prefer weather-agent", user="U-anyone", authority="anyone", agents=["weather-agent"])
+    res = await _cmd(
+        store, inviters, "prefer weather-agent",
+        user="U-anyone", authority="anyone", agents=["weather-agent"],
+    )
     assert "weather-agent" in res.message
     assert await store.get_route_pref("slack", "T:U-anyone") == "weather-agent"
 
 
 async def test_authority_anyone_lets_any_user_route(store, inviters):
-    res = await _cmd(store, inviters, "route weather-agent", user="U-other", authority="anyone", agents=["weather-agent"])
+    res = await _cmd(
+        store, inviters, "route weather-agent",
+        user="U-other", authority="anyone", agents=["weather-agent"],
+    )
     assert isinstance(res, Result)
     assert await store.get_thread_binding("slack", "T", "C:") == "weather-agent"
