@@ -79,6 +79,7 @@ class SlackChannelPlugin(ChannelPlugin):
             "channel_type": "slack",
             "agent_protocol": "a2a-turn",
             "agents": agent_names,
+            "require_mention": getattr(channel, "require_mention", True),
             "group_policy": channel.group_policy.value
             if hasattr(channel.group_policy, "value")
             else channel.group_policy,

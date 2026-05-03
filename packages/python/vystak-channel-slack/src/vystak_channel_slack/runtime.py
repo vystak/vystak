@@ -70,8 +70,22 @@ class SlackChannelRuntime(ChannelRuntime):
         if ev.get("user") == getattr(self, "_bot_user_id", None):
             raise SkipEvent("own message")
         subtype = ev.get("subtype")
-        if subtype in {"message_changed", "message_deleted", "channel_join"}:
+        if subtype:
             raise SkipEvent(f"subtype {subtype}")
+
+        # Dedup: Slack fires both `message` AND `app_mention` for the same
+        # user @-mention in non-DM channels.  Drop the `message` copy —
+        # `app_mention` is the canonical event and will be processed instead.
+        # DMs never fire `app_mention`, so skip the dedup there.
+        bot_uid = getattr(self, "_bot_user_id", None)
+        is_dm = ev.get("channel_type") == "im"
+        if (
+            kind == "message"
+            and bot_uid
+            and not is_dm
+            and f"<@{bot_uid}>" in (ev.get("text") or "")
+        ):
+            raise SkipEvent("mention handled by app_mention")
 
         team_id = ev.get("team") or ""
         channel_id = ev.get("channel", "")

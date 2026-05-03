@@ -142,7 +142,11 @@ class ChannelRuntime(ABC):
             allow_from = self.config.get("allow_from", [])
             if event.user_id not in allow_from:
                 return False
-        return True
+        return not (
+            self.config.get("require_mention", False)
+            and not event.is_dm
+            and not event.mentions_bot
+        )
 
     # --- Call + pipeline (base owns) ----------------------------------------
 

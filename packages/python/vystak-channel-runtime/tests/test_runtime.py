@@ -137,6 +137,48 @@ async def test_authorize_allowlist_admits_known_user():
 
 
 @pytest.mark.asyncio
+async def test_authorize_respects_require_mention():
+    rt = TrivialRuntime(
+        config=_config(require_mention=True),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="T1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=False,
+    )
+    assert await rt.authorize(ev) is False
+
+
+@pytest.mark.asyncio
+async def test_authorize_admits_mention_when_require_mention():
+    rt = TrivialRuntime(
+        config=_config(require_mention=True),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="T1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+    )
+    assert await rt.authorize(ev) is True
+
+
+@pytest.mark.asyncio
+async def test_authorize_admits_dm_without_mention_when_require_mention():
+    rt = TrivialRuntime(
+        config=_config(require_mention=True),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="U", thread_id=None,
+        user_id="U", text="hi", is_dm=True, mentions_bot=False,
+    )
+    assert await rt.authorize(ev) is True
+
+
+@pytest.mark.asyncio
 async def test_resolve_route_uses_channel_override():
     rt = TrivialRuntime(
         config=_config(channel_overrides={"C1": {"agent": "villain"}}),

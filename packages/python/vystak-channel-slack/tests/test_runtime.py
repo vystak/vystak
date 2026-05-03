@@ -7,8 +7,8 @@ from vystak_channel_runtime.types import AgentReply, SkipEvent
 from vystak_channel_slack.runtime import SlackChannelRuntime
 
 
-def _config():
-    return {
+def _config(**overrides):
+    base = {
         "channel_type": "slack",
         "agent_protocol": "a2a-turn",
         "agents": ["hero"],
@@ -19,6 +19,8 @@ def _config():
         "allow_bots": False,
         "channel_overrides": {},
     }
+    base.update(overrides)
+    return base
 
 
 def test_runtime_constructable():
@@ -81,7 +83,7 @@ def test_parse_event_thread_reply_keeps_root_thread_id():
         store=MemoryChannelStore(),
     )
     rt._bot_user_id = "U_BOT"
-    raw = {"type": "message", "event": _bolt_event(thread_ts="1.0"), "say": None}
+    raw = {"type": "message", "event": _bolt_event(text="hello", thread_ts="1.0"), "say": None}
     ev = rt.parse_event(raw)
     assert ev.thread_id == "C1:1.0"
 
@@ -93,7 +95,7 @@ def test_parse_event_bot_marked_in_metadata():
         store=MemoryChannelStore(),
     )
     rt._bot_user_id = "U_BOT"
-    raw = {"type": "message", "event": _bolt_event(bot_id="B1"), "say": None}
+    raw = {"type": "message", "event": _bolt_event(text="hello", bot_id="B1"), "say": None}
     ev = rt.parse_event(raw)
     assert ev.metadata.get("is_bot") is True
 
@@ -147,3 +149,45 @@ async def test_fetch_history_returns_empty_when_no_thread_ts(monkeypatch):
     ev = rt.parse_event(raw)
     history = await rt.fetch_history(ev)
     assert history == []
+
+
+def test_parse_event_skips_message_with_subtype():
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "message", "event": {**_bolt_event(), "subtype": "bot_message"}, "say": None}
+    with pytest.raises(SkipEvent):
+        rt.parse_event(raw)
+
+
+def test_parse_event_skips_message_event_when_text_contains_bot_mention():
+    """Slack fires both message AND app_mention for the same user @-mention.
+    The message-side should drop to avoid double-replies."""
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "message", "event": _bolt_event(text="hi <@U_BOT>"), "say": None}
+    with pytest.raises(SkipEvent):
+        rt.parse_event(raw)
+
+
+@pytest.mark.asyncio
+async def test_parse_event_message_without_mention_passes_parse_but_authorize_drops():
+    """Plain message in a guild channel parses successfully, but authorize
+    drops it when require_mention=True."""
+    rt = SlackChannelRuntime(
+        config=_config(require_mention=True),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._bot_user_id = "U_BOT"
+    raw = {"type": "message", "event": _bolt_event(text="hello world"), "say": None}
+    ev = rt.parse_event(raw)
+    assert ev.mentions_bot is False
+    assert await rt.authorize(ev) is False
