@@ -38,19 +38,10 @@ def test_off_no_pin():
     assert "langchain>=" not in reqs
 
 
-def test_use_langchain_middleware_pins_langchain_and_prebuilt():
-    """Opt-in middleware needs langchain 1.1+ and a working
-    langgraph-prebuilt pair."""
-    reqs = generate_requirements_txt(
-        _agent(Compaction(mode="conservative", use_langchain_middleware=True))
-    )
-    assert "langchain>=1.1,<1.2" in reqs
-    assert "langgraph-prebuilt<=1.0.5" in reqs
-    assert "langchain-core>=1.0,<2.0" in reqs
-
-
-def test_default_compaction_no_middleware_pins():
-    """Without the opt-in, no langchain middleware pins in requirements."""
+def test_compaction_no_middleware_pins():
+    """The compaction codegen path does not pin langchain or
+    langgraph-prebuilt — it uses only langchain-core types from the
+    default langchain-anthropic dependency."""
     reqs = generate_requirements_txt(_agent(Compaction(mode="conservative")))
     assert "langchain>=1.1" not in reqs
     assert "langgraph-prebuilt" not in reqs

@@ -32,14 +32,23 @@ class Compaction(NamedModel):
     # the table's value (defaults to 200_000 for unknown models).
     context_window: int | None = Field(default=None, gt=0)
 
-    # Opt-in defense-in-depth: when True, codegen also wires LangChain 1.1+'s
-    # `SummarizationMiddleware` into the agent. It runs after our prompt
-    # callable's Layer 3 and provides a second, model-level threshold
-    # check. Off by default — our Layer 3 already covers the threshold path
-    # and the langchain dep brings packaging fragility (see
-    # langgraph/langgraph-prebuilt version skew that this codebase has hit).
-    # Originally intended to wire the autonomous-tool middleware (Layer 2),
-    # which no longer exists upstream as of langchain 1.1.
-    use_langchain_middleware: bool = False
-
     summarizer: Model | None = None
+
+    # NOTE: Layer 2 (LangChain SummarizationMiddleware) is intentionally
+    # not exposed as a schema field. Two upstream realities make it
+    # incompatible with the current codegen:
+    #
+    #  1. The autonomous-tool middleware variant from the original design
+    #     was removed in langchain 1.1.x.
+    #  2. The remaining `SummarizationMiddleware` is threshold-based and
+    #     attaches via `langchain.agents.create_agent(..., middleware=[...])`
+    #     — but our codegen uses `langgraph.prebuilt.create_react_agent`
+    #     with a custom `prompt=` callable (memory recall + Layer 1 prune
+    #     + Layer 3 compact). `create_agent` doesn't accept the callable
+    #     prompt, so wiring middleware would require converting the entire
+    #     prompt-callable chain to middleware too.
+    #
+    # Layer 3 in our prompt callable provides the same threshold guarantee.
+    # If a future user needs the LangChain middleware specifically, the
+    # follow-up is to migrate the codegen to `create_agent` with
+    # middleware-based prompt assembly.

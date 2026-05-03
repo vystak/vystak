@@ -48,25 +48,14 @@ def test_aggressive_emits_compaction_imports():
     assert "create_summarization_tool_middleware" not in code
 
 
-def test_use_langchain_middleware_off_no_emission():
-    """With use_langchain_middleware=False (the default), the codegen
-    should NOT import or wire the langchain SummarizationMiddleware."""
+def test_no_langchain_middleware_emitted():
+    """The compaction codegen never emits langchain SummarizationMiddleware
+    wiring — it's incompatible with the prompt-callable architecture (see
+    vystak.schema.compaction for rationale)."""
     code = generate_agent_py(_agent(Compaction(mode="conservative")))
     assert "SummarizationMiddleware" not in code
     assert "from langchain.agents.middleware" not in code
-
-
-def test_use_langchain_middleware_on_emits_wiring():
-    """With use_langchain_middleware=True, codegen emits the import and
-    threads `middleware=[SummarizationMiddleware(...)]` into create_react_agent."""
-    code = generate_agent_py(
-        _agent(Compaction(mode="conservative", use_langchain_middleware=True))
-    )
-    assert "from langchain.agents.middleware import SummarizationMiddleware" in code
-    assert "SummarizationMiddleware(" in code
-    assert "middleware=[SummarizationMiddleware(" in code
-    assert "trigger=('fraction', _compaction_policy.trigger_pct)" in code
-    assert "keep=('fraction', _compaction_policy.keep_recent_pct)" in code
+    assert "middleware=" not in code
 
 
 def test_explicit_summarizer_model_emitted():
