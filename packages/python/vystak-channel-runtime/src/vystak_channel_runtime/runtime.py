@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -13,6 +14,7 @@ from vystak_channel_runtime.agent_client import (
 from vystak_channel_runtime.store import ChannelStore
 from vystak_channel_runtime.types import (
     AgentCallError,
+    AgentChunk,
     AgentReply,
     InboundEvent,
     Message,
@@ -20,6 +22,23 @@ from vystak_channel_runtime.types import (
 )
 
 logger = logging.getLogger("vystak.channel.runtime")
+
+
+def _json_safe(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Drop non-JSON-serializable entries from event metadata.
+
+    InboundEvent.metadata can carry platform-specific objects (slack-bolt's
+    AsyncSay, discord.Message, etc.) that subclasses' hooks need locally
+    but can't be sent over the wire to the agent.
+    """
+    out: dict[str, Any] = {}
+    for k, v in metadata.items():
+        try:
+            json.dumps(v)
+        except (TypeError, ValueError):
+            continue
+        out[k] = v
+    return out
 
 
 class ChannelRuntime(ABC):
@@ -80,6 +99,16 @@ class ChannelRuntime(ABC):
         return []
 
     async def before_call(self, event: InboundEvent, route: str) -> None:
+        return None
+
+    async def on_chunk(
+        self, event: InboundEvent, route: str, chunk: AgentChunk,
+    ) -> None:
+        """Streaming hook — called for each chunk during streaming turns.
+
+        Default: no-op. Slack/Discord override to surface tool-call statuses
+        (e.g. edit a placeholder message with "Calling get_weather...").
+        """
         return None
 
     async def after_reply(
@@ -165,12 +194,7 @@ class ChannelRuntime(ABC):
 
     # --- Call + pipeline (base owns) ----------------------------------------
 
-    async def call_agent(
-        self,
-        event: InboundEvent,
-        route: str,
-        history: list[Message],
-    ) -> AgentReply:
+    def _resolve_agent_url(self, route: str) -> str:
         route_entry = self.routes.get(route)
         if route_entry is None:
             raise AgentCallError(f"unknown route: {route}")
@@ -179,12 +203,74 @@ class ChannelRuntime(ABC):
         )
         if not agent_url:
             raise AgentCallError(f"route {route} has no address")
+        return agent_url
+
+    async def call_agent(
+        self,
+        event: InboundEvent,
+        route: str,
+        history: list[Message],
+    ) -> AgentReply:
         return await self._agent_client.send_turn(
-            agent_url,
+            self._resolve_agent_url(route),
             text=event.text,
             thread_id=event.thread_id or event.scope_id,
             history=history,
-            metadata=event.metadata,
+            metadata=_json_safe(event.metadata),
+        )
+
+    async def stream_agent(
+        self,
+        event: InboundEvent,
+        route: str,
+        history: list[Message],
+    ) -> AgentReply:
+        """Stream the agent turn, dispatching each chunk to `on_chunk`.
+
+        Returns an `AgentReply` assembled from the streamed text + tool
+        calls so the post-stream `post_reply`/`after_reply` flow stays
+        identical to the non-streaming path.
+        """
+        accumulated: list[str] = []
+        final_text: str | None = None
+        tool_calls: list[dict[str, Any]] = []
+        finish_reason: str | None = None
+
+        async for chunk in self._agent_client.stream_turn(
+            self._resolve_agent_url(route),
+            text=event.text,
+            thread_id=event.thread_id or event.scope_id,
+            history=history,
+            metadata=_json_safe(event.metadata),
+        ):
+            await self.on_chunk(event, route, chunk)
+            if chunk.type == "token":
+                accumulated.append(chunk.delta)
+            elif chunk.type == "status":
+                if chunk.delta:
+                    final_text = chunk.delta
+            elif chunk.type == "tool_call":
+                tool_calls.append({
+                    "type": "start",
+                    "tool_name": chunk.tool_name,
+                    "data": chunk.data,
+                })
+            elif chunk.type == "tool_result":
+                tool_calls.append({
+                    "type": "end",
+                    "tool_name": chunk.tool_name,
+                    "data": chunk.data,
+                })
+            elif chunk.type == "final":
+                finish_reason = chunk.finish_reason or "completed"
+                if chunk.delta:
+                    final_text = chunk.delta
+
+        text = final_text if final_text is not None else "".join(accumulated)
+        return AgentReply(
+            text=text,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
         )
 
     async def handle_event(self, raw_event: Any) -> None:
@@ -201,7 +287,10 @@ class ChannelRuntime(ABC):
         history = await self.fetch_history(event)
         await self.before_call(event, route)
         try:
-            reply = await self.call_agent(event, route, history)
+            if self.agent_protocol == "a2a-stream":
+                reply = await self.stream_agent(event, route, history)
+            else:
+                reply = await self.call_agent(event, route, history)
         except AgentCallError as exc:
             await self.on_agent_error(event, route, exc)
             return

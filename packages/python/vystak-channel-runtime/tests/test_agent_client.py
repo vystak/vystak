@@ -103,8 +103,10 @@ async def test_stream_turn_retries_on_5xx(monkeypatch):
         calls["n"] += 1
         if calls["n"] < 2:
             return _FakeStreamResponse(503)
+        # Real agent SSE shape: token chunk has artifact.parts[].text.
         ok_line = (
-            'data: {"jsonrpc":"2.0","id":"x","result":{"delta":"hi","finish_reason":"stop"}}'
+            'data: {"jsonrpc":"2.0","id":"x","result":'
+            '{"id":"t","artifact":{"parts":[{"text":"hi"}],"index":0,"append":true}}}'
         )
         return _FakeStreamResponse(200, lines=[ok_line])
 
@@ -117,3 +119,49 @@ async def test_stream_turn_retries_on_5xx(monkeypatch):
         chunks.append(c)
     assert calls["n"] == 2
     assert any(c.delta == "hi" for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_chunk_from_sse_parses_token_artifact():
+    """Token shape: result.artifact.parts[].text (real agent emission)."""
+    chunk = A2AAgentClient._chunk_from_sse(
+        '{"jsonrpc":"2.0","id":"x","result":'
+        '{"id":"t","artifact":{"parts":[{"text":"hello "},{"text":"world"}]}}}'
+    )
+    assert chunk is not None
+    assert chunk.type == "token"
+    assert chunk.delta == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_chunk_from_sse_parses_tool_call_event():
+    """Bare A2AEvent dump for tool_call_start."""
+    chunk = A2AAgentClient._chunk_from_sse(
+        '{"type":"tool_call_start","data":{"tool_name":"get_weather"},"final":false}'
+    )
+    assert chunk is not None
+    assert chunk.type == "tool_call"
+    assert chunk.tool_name == "get_weather"
+
+
+@pytest.mark.asyncio
+async def test_chunk_from_sse_parses_tool_result_event():
+    chunk = A2AAgentClient._chunk_from_sse(
+        '{"type":"tool_call_end","data":{"tool_name":"get_weather","duration_ms":120}}'
+    )
+    assert chunk is not None
+    assert chunk.type == "tool_result"
+    assert chunk.tool_name == "get_weather"
+    assert chunk.data == {"tool_name": "get_weather", "duration_ms": 120}
+
+
+@pytest.mark.asyncio
+async def test_chunk_from_sse_parses_status_final():
+    """Status with state=completed becomes final chunk."""
+    chunk = A2AAgentClient._chunk_from_sse(
+        '{"jsonrpc":"2.0","id":"x","result":'
+        '{"id":"t","status":{"state":"completed"},"final":true}}'
+    )
+    assert chunk is not None
+    assert chunk.type == "final"
+    assert chunk.final is True

@@ -169,7 +169,8 @@ class TestNoCodegenShape:
         out = plugin.generate_code(_channel(), resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["channel_type"] == "slack"
-        assert cfg["agent_protocol"] == "a2a-turn"
+        # Slack defaults to streaming so tool-call statuses surface in-thread.
+        assert cfg["agent_protocol"] == "a2a-stream"
 
 
 class TestAutoRegistration:

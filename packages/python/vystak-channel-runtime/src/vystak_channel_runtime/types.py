@@ -27,11 +27,22 @@ class AgentReply(BaseModel):
 
 
 class AgentChunk(BaseModel):
-    """One streaming delta from an agent."""
+    """One streaming event from an agent.
 
-    delta: str
-    tool_call_delta: dict[str, Any] | None = None
+    Maps to the agent's emitted A2A wire shapes:
+      * "token"      — delta text from on_chat_model_stream
+      * "tool_call"  — agent invoked a tool (tool_name in data)
+      * "tool_result"— tool finished (tool_name + duration in data)
+      * "status"     — interim status update (text in delta)
+      * "final"      — turn finished (final=True)
+    """
+
+    type: Literal["token", "tool_call", "tool_result", "status", "final"] = "token"
+    delta: str = ""
+    tool_name: str | None = None
+    data: dict[str, Any] | None = None
     finish_reason: str | None = None
+    final: bool = False
     raw: dict[str, Any] | None = None
 
 

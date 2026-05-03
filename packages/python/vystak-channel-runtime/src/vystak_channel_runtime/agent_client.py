@@ -71,7 +71,10 @@ class A2AAgentClient:
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
             "id": thread_id,
-            "message": {"role": "user", "content": text},
+            # Google A2A canonical message shape — parts list, not bare content.
+            # vystak-adapter-langchain reads raw_message["parts"]; sending
+            # `content` here would surface as an empty message to the agent.
+            "message": {"role": "user", "parts": [{"text": text}]},
         }
         if history:
             params["history"] = [m.model_dump() for m in history]
@@ -117,7 +120,10 @@ class A2AAgentClient:
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
             "id": thread_id,
-            "message": {"role": "user", "content": text},
+            # Google A2A canonical message shape — parts list, not bare content.
+            # vystak-adapter-langchain reads raw_message["parts"]; sending
+            # `content` here would surface as an empty message to the agent.
+            "message": {"role": "user", "parts": [{"text": text}]},
         }
         if history:
             params["history"] = [m.model_dump() for m in history]
@@ -218,19 +224,72 @@ class A2AAgentClient:
 
     @staticmethod
     def _chunk_from_sse(data: str) -> AgentChunk | None:
+        """Parse one SSE `data:` line into a typed AgentChunk.
+
+        Maps the four shapes vystak-adapter-langchain emits over A2A SSE:
+
+          1. token      — JSON-RPC envelope with `result.artifact.parts[0].text`,
+                          accumulated by the agent (`append: True`).
+          2. status     — JSON-RPC envelope with `result.status.message.parts[].text`
+                          plus a `state`. `final=True` ends the turn.
+          3. final      — JSON-RPC envelope with `result.status.state="completed"`,
+                          `final=True`. Followed by a bare A2AEvent dump (#4).
+          4. tool_call /
+             tool_result/
+             final      — bare A2AEvent: `{type, text, data, final}`.
+        """
         import json
 
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
             return None
-        result = payload.get("result", {})
-        delta = result.get("delta", "")
-        if not delta and not result.get("finish_reason"):
+
+        # Shape 4: bare A2AEvent dump (no jsonrpc wrapper).
+        ev_type = payload.get("type")
+        if ev_type in {"tool_call", "tool_call_start", "tool_call_end",
+                       "tool_result", "final", "status"}:
+            tool_name = (payload.get("data") or {}).get("tool_name")
+            normalized = ev_type
+            if ev_type == "tool_call_start":
+                normalized = "tool_call"
+            elif ev_type == "tool_call_end":
+                normalized = "tool_result"
+            return AgentChunk(
+                type=normalized,
+                delta=payload.get("text") or "",
+                tool_name=tool_name,
+                data=payload.get("data"),
+                final=bool(payload.get("final")),
+                raw=payload,
+            )
+
+        # Shapes 1-3: JSON-RPC envelopes.
+        result = payload.get("result")
+        if not isinstance(result, dict):
             return None
-        return AgentChunk(
-            delta=delta,
-            tool_call_delta=result.get("tool_call_delta"),
-            finish_reason=result.get("finish_reason"),
-            raw=payload,
-        )
+
+        # Shape 1: token (artifact)
+        artifact = result.get("artifact")
+        if isinstance(artifact, dict):
+            parts = artifact.get("parts") or []
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            return AgentChunk(type="token", delta=text, raw=payload)
+
+        # Shape 2/3: status
+        status = result.get("status")
+        if isinstance(status, dict):
+            state = status.get("state")
+            msg = status.get("message") or {}
+            parts = msg.get("parts") or []
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            is_final = bool(result.get("final")) or state == "completed"
+            return AgentChunk(
+                type="final" if is_final else "status",
+                delta=text,
+                finish_reason=state,
+                final=is_final,
+                raw=payload,
+            )
+
+        return None

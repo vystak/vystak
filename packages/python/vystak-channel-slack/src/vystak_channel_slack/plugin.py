@@ -75,9 +75,14 @@ class SlackChannelPlugin(ChannelPlugin):
         if channel.state is not None:
             state_cfg = channel.state.model_dump(exclude_none=True)
 
+        # Slack uses a2a-stream by default so tool-call statuses surface as
+        # "Calling get_weather..." messages in the thread. Channels can opt
+        # into the simpler one-shot turn via `config: {agent_protocol: a2a-turn}`.
+        agent_protocol = channel.config.get("agent_protocol", "a2a-stream")
+
         return {
             "channel_type": "slack",
-            "agent_protocol": "a2a-turn",
+            "agent_protocol": agent_protocol,
             "agents": agent_names,
             "require_mention": getattr(channel, "require_mention", True),
             "group_policy": channel.group_policy.value

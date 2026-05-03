@@ -138,17 +138,149 @@ class SlackChannelRuntime(ChannelRuntime):
             return None
         return f"{channel_id}:"
 
+    async def authorize(self, event: InboundEvent) -> bool:
+        """Slack-specific authorize.
+
+        Rules:
+          * Bots / dm_policy=disabled / allowlist filter — base behavior.
+          * DMs always pass.
+          * Explicit @-mentions always pass.
+          * Thread replies: pass only when the bot was previously involved
+            (i.e. a thread_binding row exists for this thread). Without
+            prior involvement, the user must @-mention to start the
+            conversation. Honors `thread.require_explicit_mention=True`
+            as an additional opt-in to require mention on every reply.
+          * Top-level guild messages without mention — gated by require_mention.
+        """
+        is_bot = bool(event.metadata.get("is_bot"))
+        if is_bot and not self.config.get("allow_bots", False):
+            return False
+        policy = (
+            self.config.get("dm_policy") if event.is_dm
+            else self.config.get("group_policy")
+        )
+        if policy == "disabled":
+            return False
+        if policy == "allowlist" and event.user_id not in self.config.get(
+            "allow_from", [],
+        ):
+            return False
+
+        if event.is_dm or event.mentions_bot:
+            return True
+
+        if event.metadata.get("thread_ts"):
+            if self.config.get("thread", {}).get("require_explicit_mention", False):
+                return False
+            # Bot must have been mentioned (responded to) earlier in this
+            # thread for follow-up messages to qualify. Use the persisted
+            # thread_binding as evidence of prior involvement.
+            if event.thread_id is None:
+                return False
+            bound = await self.store.get_thread_binding(
+                self.channel_type, event.scope_id, event.thread_id,
+            )
+            if bound:
+                return True
+            # Fall back to the channel-pinned binding (`/vystak route`).
+            channel_tid = await self.channel_binding_thread_id(event)
+            if channel_tid is not None and channel_tid != event.thread_id:
+                bound = await self.store.get_thread_binding(
+                    self.channel_type, event.scope_id, channel_tid,
+                )
+                if bound:
+                    return True
+            return False
+
+        return not self.config.get("require_mention", True)
+
+    async def _set_assistant_status(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        status: str,
+    ) -> None:
+        """Show the live status indicator under the bot's avatar.
+
+        Uses `assistant.threads.setStatus` — Slack's official method for the
+        "AI is typing…" UX. Requires:
+          * The app has "Agents & AI Apps" enabled in app config.
+          * The bot has the `assistant.threads:write` OAuth scope.
+
+        Calls fail silently if the app isn't configured as an Assistant app
+        (the API returns a `not_an_assistant_thread` / similar error). The
+        warning is logged once per runtime to avoid log spam.
+        """
+        if self._app is None:
+            return
+        try:
+            await self._app.client.api_call(
+                "assistant.threads.setStatus",
+                params={
+                    "channel_id": channel_id,
+                    "thread_ts": thread_ts,
+                    "status": status,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            if not getattr(self, "_assistant_status_unsupported", False):
+                logger.warning(
+                    "assistant.threads.setStatus failed (enable 'Agents & AI Apps' "
+                    "+ assistant.threads:write scope on the Slack app): %s",
+                    exc,
+                )
+                # Throttle — only warn once.
+                self._assistant_status_unsupported = True
+
+    @staticmethod
+    def _resolve_assistant_thread_ts(event: InboundEvent) -> str | None:
+        """Status applies to a thread; root message ts works as the thread root."""
+        return (
+            event.metadata.get("thread_ts")
+            or event.metadata.get("ts")
+        )
+
+    async def before_call(self, event: InboundEvent, route: str) -> None:
+        """Show 'Thinking…' as the assistant typing indicator."""
+        if self.agent_protocol != "a2a-stream":
+            return
+        channel_id = event.metadata.get("channel_id")
+        thread_ts = self._resolve_assistant_thread_ts(event)
+        if not channel_id or not thread_ts:
+            return
+        await self._set_assistant_status(channel_id, thread_ts, "is thinking…")
+
+    async def on_chunk(self, event: InboundEvent, route: str, chunk) -> None:  # noqa: ANN001
+        """Surface tool activity by updating the assistant typing status."""
+        channel_id = event.metadata.get("channel_id")
+        thread_ts = self._resolve_assistant_thread_ts(event)
+        if not channel_id or not thread_ts:
+            return
+        if chunk.type == "tool_call":
+            tool = chunk.tool_name or "tool"
+            await self._set_assistant_status(
+                channel_id, thread_ts, f"is calling `{tool}`…",
+            )
+        elif chunk.type == "tool_result":
+            await self._set_assistant_status(channel_id, thread_ts, "is thinking…")
+
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
+        # Clear the assistant typing status once the reply is ready.
+        channel_id = event.metadata.get("channel_id")
+        thread_ts = self._resolve_assistant_thread_ts(event)
+        if channel_id and thread_ts:
+            await self._set_assistant_status(channel_id, thread_ts, "")
+
         say = event.metadata.get("say")
         if say is None:
             logger.warning("no `say` callable in event metadata; cannot post reply")
             return
-        thread_ts = event.metadata.get("thread_ts") or event.metadata.get("ts")
+        post_thread_ts = event.metadata.get("thread_ts") or event.metadata.get("ts")
         kwargs: dict[str, Any] = {"text": reply.text}
-        if thread_ts:
-            kwargs["thread_ts"] = thread_ts
+        if post_thread_ts:
+            kwargs["thread_ts"] = post_thread_ts
         await say(**kwargs)
 
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
