@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -163,36 +164,43 @@ CREATE INDEX IF NOT EXISTS idx_thread_bindings_scope
 
 
 class SqliteChannelStore:
-    """ChannelStore backed by aiosqlite (single-file SQLite)."""
+    """ChannelStore backed by aiosqlite (single-file SQLite).
+
+    Holds one persistent connection per instance — `_ensure` is idempotent
+    and runs DDL only on the first call. `close()` shuts it down.
+    """
 
     def __init__(self, path: str) -> None:
         self._path = path
-        self._lock = None  # type: ignore[assignment]
+        self._conn: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
 
     async def _ensure(self) -> aiosqlite.Connection:
-        # Lazy connection; aiosqlite is per-connection threadsafe.
-        conn = await aiosqlite.connect(self._path)
-        for stmt in _SCHEMA_SQL.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                await conn.execute(stmt)
-        await conn.commit()
-        return conn
+        if self._conn is not None:
+            return self._conn
+        async with self._lock:
+            if self._conn is not None:
+                return self._conn
+            conn = await aiosqlite.connect(self._path)
+            for stmt in _SCHEMA_SQL.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    await conn.execute(stmt)
+            await conn.commit()
+            self._conn = conn
+            return conn
 
     async def get_thread_binding(
         self, channel_type: str, scope_id: str, thread_id: str
     ) -> str | None:
         conn = await self._ensure()
-        try:
-            cur = await conn.execute(
-                "SELECT agent_name FROM thread_bindings "
-                "WHERE channel_type=? AND scope_id=? AND thread_id=?",
-                (channel_type, scope_id, thread_id),
-            )
-            row = await cur.fetchone()
-            return row[0] if row else None
-        finally:
-            await conn.close()
+        cur = await conn.execute(
+            "SELECT agent_name FROM thread_bindings "
+            "WHERE channel_type=? AND scope_id=? AND thread_id=?",
+            (channel_type, scope_id, thread_id),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     async def set_thread_binding(
         self,
@@ -203,119 +211,104 @@ class SqliteChannelStore:
         user_id: str | None = None,
     ) -> None:
         conn = await self._ensure()
-        try:
-            await conn.execute(
-                """
-                INSERT INTO thread_bindings
-                    (channel_type, scope_id, thread_id, agent_name, user_id)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(channel_type, scope_id, thread_id) DO UPDATE SET
-                    agent_name=excluded.agent_name,
-                    user_id=excluded.user_id,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (channel_type, scope_id, thread_id, agent_name, user_id),
-            )
-            await conn.commit()
-        finally:
-            await conn.close()
+        await conn.execute(
+            """
+            INSERT INTO thread_bindings
+                (channel_type, scope_id, thread_id, agent_name, user_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(channel_type, scope_id, thread_id) DO UPDATE SET
+                agent_name=excluded.agent_name,
+                user_id=excluded.user_id,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (channel_type, scope_id, thread_id, agent_name, user_id),
+        )
+        await conn.commit()
 
     async def delete_thread_binding(
         self, channel_type: str, scope_id: str, thread_id: str
     ) -> None:
         conn = await self._ensure()
-        try:
-            await conn.execute(
-                "DELETE FROM thread_bindings "
-                "WHERE channel_type=? AND scope_id=? AND thread_id=?",
-                (channel_type, scope_id, thread_id),
-            )
-            await conn.commit()
-        finally:
-            await conn.close()
+        await conn.execute(
+            "DELETE FROM thread_bindings "
+            "WHERE channel_type=? AND scope_id=? AND thread_id=?",
+            (channel_type, scope_id, thread_id),
+        )
+        await conn.commit()
 
     async def get_route_pref(
         self, channel_type: str, scope_id: str
     ) -> str | None:
         conn = await self._ensure()
-        try:
-            cur = await conn.execute(
-                "SELECT agent_name FROM route_prefs "
-                "WHERE channel_type=? AND scope_id=?",
-                (channel_type, scope_id),
-            )
-            row = await cur.fetchone()
-            return row[0] if row else None
-        finally:
-            await conn.close()
+        cur = await conn.execute(
+            "SELECT agent_name FROM route_prefs "
+            "WHERE channel_type=? AND scope_id=?",
+            (channel_type, scope_id),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     async def set_route_pref(
         self, channel_type: str, scope_id: str, agent_name: str
     ) -> None:
         conn = await self._ensure()
-        try:
-            await conn.execute(
-                """
-                INSERT INTO route_prefs (channel_type, scope_id, agent_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT(channel_type, scope_id) DO UPDATE SET
-                    agent_name=excluded.agent_name,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (channel_type, scope_id, agent_name),
-            )
-            await conn.commit()
-        finally:
-            await conn.close()
+        await conn.execute(
+            """
+            INSERT INTO route_prefs (channel_type, scope_id, agent_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(channel_type, scope_id) DO UPDATE SET
+                agent_name=excluded.agent_name,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (channel_type, scope_id, agent_name),
+        )
+        await conn.commit()
 
     async def delete_route_pref(
         self, channel_type: str, scope_id: str
     ) -> None:
         conn = await self._ensure()
-        try:
-            await conn.execute(
-                "DELETE FROM route_prefs WHERE channel_type=? AND scope_id=?",
-                (channel_type, scope_id),
-            )
-            await conn.commit()
-        finally:
-            await conn.close()
+        await conn.execute(
+            "DELETE FROM route_prefs WHERE channel_type=? AND scope_id=?",
+            (channel_type, scope_id),
+        )
+        await conn.commit()
 
     async def list_thread_bindings(
         self, channel_type: str, scope_id: str | None = None
     ) -> list[ThreadBinding]:
         conn = await self._ensure()
-        try:
-            if scope_id is None:
-                cur = await conn.execute(
-                    "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
-                    "created_at, updated_at FROM thread_bindings WHERE channel_type=?",
-                    (channel_type,),
-                )
-            else:
-                cur = await conn.execute(
-                    "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
-                    "created_at, updated_at FROM thread_bindings "
-                    "WHERE channel_type=? AND scope_id=?",
-                    (channel_type, scope_id),
-                )
-            rows = await cur.fetchall()
-            return [
-                ThreadBinding(
-                    channel_type=r[0],
-                    scope_id=r[1],
-                    thread_id=r[2],
-                    agent_name=r[3],
-                    user_id=r[4],
-                )
-                for r in rows
-            ]
-        finally:
-            await conn.close()
+        if scope_id is None:
+            cur = await conn.execute(
+                "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+                "created_at, updated_at FROM thread_bindings WHERE channel_type=?",
+                (channel_type,),
+            )
+        else:
+            cur = await conn.execute(
+                "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+                "created_at, updated_at FROM thread_bindings "
+                "WHERE channel_type=? AND scope_id=?",
+                (channel_type, scope_id),
+            )
+        rows = await cur.fetchall()
+        return [
+            ThreadBinding(
+                channel_type=r[0],
+                scope_id=r[1],
+                thread_id=r[2],
+                agent_name=r[3],
+                user_id=r[4],
+                created_at=r[5],
+                updated_at=r[6],
+            )
+            for r in rows
+        ]
 
     async def close(self) -> None:
-        # No persistent connection to close.
-        pass
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
 
 
 _PG_SCHEMA_SQL = [

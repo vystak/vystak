@@ -22,7 +22,7 @@ def is_test_endpoint_enabled() -> bool:
     return os.environ.get("VYSTAK_TEST_EVENTS") == "1"
 
 
-def build_test_app(runtime: ChannelRuntime) -> "FastAPI":
+def build_test_app(runtime: ChannelRuntime) -> FastAPI:
     """Build a small FastAPI app exposing /test/event for synthetic dispatch.
 
     Raises ImportError if fastapi isn't installed — install the
