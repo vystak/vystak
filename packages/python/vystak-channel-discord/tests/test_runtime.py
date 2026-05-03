@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import pytest
 from vystak_channel_discord.runtime import DiscordChannelRuntime
 from vystak_channel_runtime.store import MemoryChannelStore
-from vystak_channel_runtime.types import SkipEvent
+from vystak_channel_runtime.types import AgentReply, SkipEvent
 
 
 def _config():
@@ -157,3 +157,48 @@ def test_parse_event_skips_other_bots_when_disallowed():
     )
     ev = rt.parse_event({"kind": "message", "message": msg})
     assert ev.metadata["is_bot"] is True
+
+
+@dataclass
+class _FakeChannelWithSend(_FakeChannel):
+    sent: list = field(default_factory=list)
+
+    async def send(self, content: str):
+        self.sent.append(content)
+
+
+@pytest.mark.asyncio
+async def test_post_reply_sends_to_channel():
+    rt = _make_runtime()
+    chan = _FakeChannelWithSend(id=200, type_str="text")
+    msg = _FakeMessage(
+        id=10,
+        author=_FakeUser(id=1),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+        mentions=[rt._bot_user],
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    await rt.post_reply(ev, "hero", AgentReply(text="hello back"))
+    assert chan.sent == ["hello back"]
+
+
+@pytest.mark.asyncio
+async def test_post_reply_splits_long_messages():
+    rt = _make_runtime()
+    chan = _FakeChannelWithSend(id=200, type_str="text")
+    msg = _FakeMessage(
+        id=10,
+        author=_FakeUser(id=1),
+        channel=chan,
+        guild=_FakeGuild(id=100),
+        content="hi",
+        mentions=[rt._bot_user],
+    )
+    ev = rt.parse_event({"kind": "message", "message": msg})
+    long = "x" * 4500
+    await rt.post_reply(ev, "hero", AgentReply(text=long))
+    assert len(chan.sent) == 3
+    assert all(len(s) <= 2000 for s in chan.sent)
+    assert "".join(chan.sent) == long

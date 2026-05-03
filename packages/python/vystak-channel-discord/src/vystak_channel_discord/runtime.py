@@ -111,5 +111,16 @@ class DiscordChannelRuntime(ChannelRuntime):
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
-        # Real impl in Task 4.4
-        raise NotImplementedError
+        msg = event.metadata.get("raw_message")
+        if msg is None:
+            logger.warning("no raw_message; cannot post reply")
+            return
+        text = reply.text or ""
+        for chunk in _chunk(text, MAX_DISCORD_MESSAGE_CHARS):
+            await msg.channel.send(chunk)
+
+
+def _chunk(text: str, size: int) -> list[str]:
+    if not text:
+        return [""]
+    return [text[i : i + size] for i in range(0, len(text), size)]
