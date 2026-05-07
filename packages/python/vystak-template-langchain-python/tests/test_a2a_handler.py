@@ -78,3 +78,36 @@ async def test_get_unknown_task_returns_jsonrpc_error(handler):
         "params": {"id": "missing"},
     })
     assert result["error"]["code"] == -32602
+
+
+class FakeStreamingGraph:
+    """Yields canned LangGraph stream events."""
+
+    def __init__(self, events: list[dict]) -> None:
+        self._events = events
+
+    async def astream_events(self, input, config, version="v2"):  # noqa: ANN001
+        for ev in self._events:
+            yield ev
+
+
+@pytest.mark.asyncio
+async def test_tasks_send_subscribe_yields_sse_frames():
+    events = [
+        {"event": "on_chat_model_stream", "data": {"chunk": {"content": "hel"}}},
+        {"event": "on_chat_model_stream", "data": {"chunk": {"content": "lo"}}},
+    ]
+    handler = A2AHandler(agent=None, graph=FakeStreamingGraph(events), task_manager=TaskManager())
+
+    frames = []
+    async for frame in handler.stream_dispatch({
+        "jsonrpc": "2.0", "id": "rpc-1", "method": "tasks/sendSubscribe",
+        "params": {"id": "task-1", "message": {"role": "user", "parts": [{"text": "hi"}]}},
+    }):
+        frames.append(frame)
+
+    assert any("data:" in f for f in frames)
+    joined = "".join(frames)
+    assert "task-1" in joined
+    assert "hel" in joined
+    assert "lo" in joined

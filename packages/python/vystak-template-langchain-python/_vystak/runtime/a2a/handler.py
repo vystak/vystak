@@ -56,6 +56,52 @@ class A2AHandler:
         self.task_manager.cancel(params["id"])
         return _task_payload(self.task_manager.get(params["id"]))
 
+    async def stream_dispatch(self, payload: dict):
+        """Yields SSE frames (str, ending in \\n\\n) for tasks/sendSubscribe."""
+        method = payload.get("method")
+        rpc_id = payload.get("id")
+        params = payload.get("params") or {}
+        if method != "tasks/sendSubscribe":
+            yield _sse(_err(rpc_id, -32601, f"Method not found: {method}"))
+            return
+
+        task_id = params["id"]
+        message = params.get("message", {})
+        self.task_manager.create(task_id, message)
+        self.task_manager.set_state(task_id, TaskState.WORKING)
+        yield _sse({
+            "jsonrpc": "2.0", "id": rpc_id,
+            "result": _task_payload(self.task_manager.get(task_id)),
+        })
+
+        config = {"configurable": {"thread_id": task_id}}
+        try:
+            async for ev in self.graph.astream_events(
+                {"messages": [_to_lc_message(message)]}, config, version="v2"
+            ):
+                if ev.get("event") == "on_chat_model_stream":
+                    chunk = ev.get("data", {}).get("chunk")
+                    text = _extract_text(chunk) if chunk else ""
+                    if text:
+                        yield _sse({
+                            "jsonrpc": "2.0", "id": rpc_id,
+                            "result": {
+                                "id": task_id,
+                                "status": {"state": "working"},
+                                "artifact": {"parts": [{"text": text}]},
+                            },
+                        })
+        except Exception as e:  # noqa: BLE001
+            self.task_manager.set_state(task_id, TaskState.FAILED)
+            yield _sse(_err(rpc_id, -32000, f"Stream error: {e}"))
+            return
+
+        self.task_manager.set_state(task_id, TaskState.COMPLETED)
+        yield _sse({
+            "jsonrpc": "2.0", "id": rpc_id,
+            "result": {"id": task_id, "status": {"state": "completed"}, "final": True},
+        })
+
 
 class _RpcError(Exception):
     def __init__(self, code: int, message: str) -> None:
@@ -92,3 +138,8 @@ def _task_payload(task, final_text: str | None = None) -> dict:  # noqa: ANN001
             "parts": [{"text": final_text}],
         }
     return payload
+
+
+def _sse(payload: dict) -> str:
+    import json
+    return f"data: {json.dumps(payload)}\n\n"
