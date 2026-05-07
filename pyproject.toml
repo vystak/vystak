@@ -32,6 +32,7 @@ dev-dependencies = [
     "vystak-workspace-rpc",
     "vystak-channel-runtime",
     "vystak-channel-discord",
+    "vystak-template-langchain-python",
     "hatch-vcs>=0.5.0",
 ]
 
@@ -51,6 +52,7 @@ vystak-transport-nats = { workspace = true }
 vystak-workspace-rpc = { workspace = true }
 vystak-channel-runtime = { workspace = true }
 vystak-channel-discord = { workspace = true }
+vystak-template-langchain-python = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
