@@ -9,7 +9,6 @@ resolution-markers = [
 [manifest]
 members = [
     "vystak",
-    "vystak-adapter-langchain",
     "vystak-adapter-mastra",
     "vystak-channel-api",
     "vystak-channel-chat",
@@ -2556,22 +2555,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "vystak-adapter-langchain"
-source = { editable = "packages/python/vystak-adapter-langchain" }
-dependencies = [
-    { name = "asyncssh" },
-    { name = "langchain-core" },
-    { name = "vystak" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asyncssh", specifier = ">=2.14" },
-    { name = "langchain-core", specifier = ">=0.1" },
-    { name = "vystak", editable = "packages/python/vystak" },
-]
-
-[[package]]
 name = "vystak-adapter-mastra"
 source = { editable = "packages/python/vystak-adapter-mastra" }
 dependencies = [
@@ -2696,7 +2679,6 @@ source = { editable = "packages/python/vystak-cli" }
 dependencies = [
     { name = "click" },
     { name = "vystak" },
-    { name = "vystak-adapter-langchain" },
     { name = "vystak-channel-chat" },
     { name = "vystak-channel-discord" },
     { name = "vystak-channel-slack" },
@@ -2707,7 +2689,6 @@ dependencies = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "vystak", editable = "packages/python/vystak" },
-    { name = "vystak-adapter-langchain", editable = "packages/python/vystak-adapter-langchain" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
@@ -2874,7 +2855,6 @@ dev = [
     { name = "ruff" },
     { name = "uvicorn" },
     { name = "vystak" },
-    { name = "vystak-adapter-langchain" },
     { name = "vystak-adapter-mastra" },
     { name = "vystak-channel-api" },
     { name = "vystak-channel-chat" },
@@ -2905,7 +2885,6 @@ dev = [
     { name = "ruff", specifier = ">=0.8" },
     { name = "uvicorn", specifier = ">=0.34" },
     { name = "vystak", editable = "packages/python/vystak" },
-    { name = "vystak-adapter-langchain", editable = "packages/python/vystak-adapter-langchain" },
     { name = "vystak-adapter-mastra", editable = "packages/python/vystak-adapter-mastra" },
     { name = "vystak-channel-api", editable = "packages/python/vystak-channel-api" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
