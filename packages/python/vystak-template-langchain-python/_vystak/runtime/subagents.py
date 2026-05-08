@@ -275,6 +275,23 @@ def _make_tool(subagent_name: str, base_url: str, card_path: str, description: s
     return _call
 
 
+def _inject_otel_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Inject the active span's W3C traceparent into envelope metadata.
+
+    Returns the same dict (mutated in place) so callers can chain. No-op
+    when OTel isn't initialized — ``inject`` writes nothing into the
+    carrier when no active span context exists.
+    """
+    try:
+        from opentelemetry.propagate import inject
+
+        inject(metadata)
+    except Exception:  # noqa: BLE001
+        # Telemetry must never break the data path. Logged at debug.
+        logger.debug("traceparent injection failed", exc_info=True)
+    return metadata
+
+
 def _make_nats_tool(
     subagent_name: str, subject: str, nats_url: str, description: str,
 ):
@@ -285,6 +302,10 @@ def _make_nats_tool(
       2. Publishes a JSON-RPC `message/send` envelope on the peer's subject.
       3. Awaits the reply on the auto-generated reply inbox (60s timeout).
       4. Extracts text from `result.status.message.parts[].text`.
+
+    The envelope's ``params.message.metadata`` carries the current
+    span's W3C traceparent so the receiving agent's bridge can extract
+    it and continue the trace under a single root.
 
     Errors (timeout, no responders, malformed reply) are returned as a
     `[<name> error] ...` string — same UX as the HTTP path so the LLM
@@ -308,15 +329,36 @@ def _make_nats_tool(
                     "messageId": uuid.uuid4().hex,
                     "role": "user",
                     "parts": [{"kind": "text", "text": query}],
+                    "metadata": _inject_otel_metadata({}),
                 },
             },
         }
         nc = None
+        # Wrap nc.request in an OTel span so the publish appears as a
+        # child of the current LangChain tool span (when telemetry is
+        # configured). When OTel isn't initialized the no-op tracer
+        # creates inert spans — zero overhead.
+        try:
+            from opentelemetry import trace as _otel_trace
+
+            tracer = _otel_trace.get_tracer("vystak.runtime.subagents")
+        except Exception:  # noqa: BLE001
+            tracer = None  # type: ignore[assignment]
         try:
             nc = await nats.connect(nats_url)
-            reply = await nc.request(
-                subject, json.dumps(envelope).encode(), timeout=60,
-            )
+            payload = json.dumps(envelope).encode()
+            if tracer is not None:
+                with tracer.start_as_current_span(
+                    f"nats.request {subject}",
+                    attributes={
+                        "messaging.system": "nats",
+                        "messaging.destination": subject,
+                        "messaging.operation": "send",
+                    },
+                ):
+                    reply = await nc.request(subject, payload, timeout=60)
+            else:
+                reply = await nc.request(subject, payload, timeout=60)
             try:
                 body = json.loads(reply.data)
             except (json.JSONDecodeError, ValueError) as e:

@@ -437,3 +437,55 @@ async def test_nats_subagent_tool_handles_invalid_json_reply(monkeypatch):
     out = await tools[0].ainvoke({"query": "?"})
     assert "weather error" in out
     assert "invalid reply" in out
+
+
+# ---------------------------------------------------------------------------
+# OTel traceparent propagation through the NATS envelope
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_includes_traceparent_in_metadata(monkeypatch):
+    """When a span is active, params.message.metadata carries traceparent."""
+    pytest.importorskip("opentelemetry.exporter.otlp.proto.grpc.trace_exporter")
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+
+    # Lightweight provider: no exporter, no batch processor — just enough
+    # to make tracer.start_as_current_span() produce a valid context so
+    # propagate.inject() emits a traceparent.
+    provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+    trace.set_tracer_provider(provider)
+
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0", "id": "x",
+        "result": {"status": {"message": {"parts": [{"text": "ok"}]}}},
+    }).encode()
+    _patch_nats(monkeypatch, fake)
+
+    tracer = trace.get_tracer("test")
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    with tracer.start_as_current_span("test-root"):
+        out = await tools[0].ainvoke({"query": "hi"})
+
+    assert out == "ok"
+    assert len(fake.requests) == 1
+    _, payload, _ = fake.requests[0]
+    body = json.loads(payload)
+    metadata = body["params"]["message"]["metadata"]
+    # W3C traceparent has the form `00-<trace-id>-<span-id>-<flags>`.
+    assert "traceparent" in metadata
+    assert metadata["traceparent"].startswith("00-")
+
+    # Cleanup so other tests don't see this provider.
+    provider.shutdown()

@@ -381,9 +381,25 @@ class NatsAgentClient:
         metadata: dict[str, Any] | None = None,
     ) -> AgentReply:
         """Publish a `message/send` envelope on the peer's subject and
-        await the JSON-RPC reply on the auto-generated reply inbox."""
+        await the JSON-RPC reply on the auto-generated reply inbox.
+
+        Injects the active OTel span's W3C traceparent into the
+        message's ``metadata`` field so the receiving agent's NATS
+        bridge can extract it and continue the trace under one root.
+        """
         subject = agent_url
         request_id = str(uuid.uuid4())
+        # Build message metadata with traceparent injected on top of any
+        # caller-supplied metadata. The bridge on the receiver side
+        # extracts these keys back into context.
+        msg_metadata: dict[str, Any] = dict(metadata) if metadata else {}
+        try:
+            from opentelemetry.propagate import inject
+
+            inject(msg_metadata)
+        except Exception:  # noqa: BLE001
+            # OTel not initialized — leave metadata untouched.
+            pass
         params: dict[str, Any] = {
             "message": {
                 "kind": "message",
@@ -391,12 +407,15 @@ class NatsAgentClient:
                 "role": "user",
                 "parts": [{"kind": "text", "text": text}],
                 "contextId": thread_id,
+                "metadata": msg_metadata,
             },
         }
         if history:
             params["history"] = [m.model_dump() for m in history]
-        if metadata:
-            params["metadata"] = metadata
+        # Keep params.metadata for back-compat with consumers that read
+        # the top-level field; populate it with the same traceparent.
+        if metadata or msg_metadata:
+            params["metadata"] = msg_metadata
         body = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -411,8 +430,28 @@ class NatsAgentClient:
             ) from exc
 
         payload = json.dumps(body).encode()
+        # Wrap the request in a `nats.request` span so the publish hop
+        # is visible in Jaeger. When OTel isn't initialized this is a
+        # no-op span — zero overhead.
         try:
-            reply = await nc.request(subject, payload, timeout=self._timeout)
+            from opentelemetry import trace as otel_trace
+
+            tracer = otel_trace.get_tracer("vystak.channel.runtime.nats_client")
+            span_cm = tracer.start_as_current_span(
+                f"nats.request {subject}",
+                attributes={
+                    "messaging.system": "nats",
+                    "messaging.destination": subject,
+                    "messaging.operation": "send",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            from contextlib import nullcontext
+
+            span_cm = nullcontext()
+        try:
+            with span_cm:
+                reply = await nc.request(subject, payload, timeout=self._timeout)
         except Exception as exc:  # noqa: BLE001
             # Covers nats.errors.TimeoutError, NoRespondersError, and any
             # connection-level error. All are surfaced as AgentCallError

@@ -284,3 +284,86 @@ async def test_bridge_silently_drops_when_no_reply_subject(monkeypatch):
     # an empty subject in nats-py).
     assert fake_nc.published == []
     await bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_bridge_propagates_traceparent_to_local_a2a(monkeypatch):
+    """Inbound metadata.traceparent → forwarded as HTTP traceparent header.
+
+    Confirms the bridge extracts the upstream W3C trace context and
+    re-injects it onto the local /a2a call so FastAPIInstrumentor on the
+    receiver can continue the trace.
+    """
+    pytest.importorskip("opentelemetry.exporter.otlp.proto.grpc.trace_exporter")
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+
+    # Bare provider so propagate.inject() emits real traceparent headers
+    # for the active context.
+    provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+    trace.set_tracer_provider(provider)
+
+    fake_nc = _FakeNatsClient()
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_nc
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    captured_headers: list[dict] = []
+
+    class _CapturingClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        async def post(self, url, *, content, headers):  # noqa: ANN001
+            captured_headers.append(dict(headers))
+            return httpx.Response(
+                200,
+                content=json.dumps({
+                    "jsonrpc": "2.0", "id": "x",
+                    "result": {"status": {"message": {"parts": [{"text": "ok"}]}}},
+                }).encode(),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", _CapturingClient)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://localhost:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+    )
+    await bridge.start()
+
+    upstream_tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    envelope = json.dumps({
+        "jsonrpc": "2.0", "id": "rpc-1", "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "messageId": "m1",
+                "parts": [{"text": "hi"}],
+                "metadata": {"traceparent": upstream_tp},
+            },
+        },
+    }).encode()
+
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.abc"))
+
+    assert len(captured_headers) == 1
+    headers = captured_headers[0]
+    # Re-injected via propagate.inject — same trace ID as upstream so the
+    # span chain links back to the publisher.
+    assert "traceparent" in headers
+    parts = headers["traceparent"].split("-")
+    assert len(parts) == 4
+    assert parts[1] == "0af7651916cd43dd8448eb211c80319c"
+
+    await bridge.stop()
+    provider.shutdown()
