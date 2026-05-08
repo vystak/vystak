@@ -20,6 +20,7 @@ from _vystak.runtime.compaction.compactor import ThresholdCompactor
 from _vystak.runtime.compaction.pruner import PreCallPruner
 from _vystak.runtime.graph import build_graph
 from _vystak.runtime.memory import MemoryManager
+from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
 from _vystak.runtime.openai.responses import ResponsesHandler
 from _vystak.runtime.prompt_callable import build_prompt
@@ -79,11 +80,11 @@ def build_agent_app(agent: Any) -> FastAPI:
     # the SDK client, so it MUST be the externally-resolvable hostname (Docker
     # DNS / Azure FQDN / etc.) — NOT localhost. Provider sets it via env. We
     # fall back to localhost only when running locally (tests, dev).
+    port_env = os.environ.get("PORT")
+    listen_port = int(port_env) if port_env else (getattr(agent, "port", None) or 8000)
     public_url = os.environ.get("VYSTAK_AGENT_PUBLIC_URL")
     if not public_url:
-        port_env = os.environ.get("PORT")
-        port = int(port_env) if port_env else (getattr(agent, "port", None) or 8000)
-        public_url = f"http://localhost:{port}"
+        public_url = f"http://localhost:{listen_port}"
     a2a_card = build_agent_card(agent, base_url=public_url)
     a2a_handler = DefaultRequestHandlerV2(
         agent_executor=a2a_executor,
@@ -128,6 +129,17 @@ def build_agent_app(agent: Any) -> FastAPI:
                         setup_fn()
                 if memory_mgr is not None:
                     memory_mgr.store = resolved_store
+
+            # NATS↔HTTP bridge — only starts when VYSTAK_TRANSPORT_TYPE=nats.
+            # On HTTP transport this is a clean no-op (returns None).
+            bridge = maybe_build_bridge(agent, listen_port)
+            if bridge is not None:
+                await bridge.start()
+
+                async def _stop_bridge() -> None:
+                    await bridge.stop()
+
+                stack.push_async_callback(_stop_bridge)
 
             yield
 

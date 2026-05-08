@@ -1,0 +1,286 @@
+"""Tests for the in-container NATS↔HTTP bridge."""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import httpx
+import pytest
+from _vystak.runtime.nats_bridge import NatsHttpBridge, maybe_build_bridge
+
+
+def test_maybe_build_bridge_noop_when_transport_unset(monkeypatch):
+    """HTTP transport (default) → no bridge, lifespan path is clean no-op."""
+    monkeypatch.delenv("VYSTAK_TRANSPORT_TYPE", raising=False)
+    agent = SimpleNamespace(name="hero")
+    assert maybe_build_bridge(agent, port=8000) is None
+
+
+def test_maybe_build_bridge_noop_when_transport_http(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "http")
+    agent = SimpleNamespace(name="hero")
+    assert maybe_build_bridge(agent, port=8000) is None
+
+
+def test_maybe_build_bridge_noop_without_nats_url(monkeypatch):
+    """Misconfig (NATS but no broker URL) → log + skip, never crash."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.delenv("VYSTAK_NATS_URL", raising=False)
+    monkeypatch.setenv("VYSTAK_NATS_SUBJECT", "vystak.default.agents.hero.tasks")
+    agent = SimpleNamespace(name="hero")
+    assert maybe_build_bridge(agent, port=8000) is None
+
+
+def test_maybe_build_bridge_uses_explicit_subject(monkeypatch):
+    """VYSTAK_NATS_SUBJECT (set by provider) wins over derivation."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://localhost:4222")
+    monkeypatch.setenv("VYSTAK_NATS_SUBJECT", "explicit.subject")
+    agent = SimpleNamespace(name="hero")
+    bridge = maybe_build_bridge(agent, port=9000)
+    assert bridge is not None
+    assert bridge._subject == "explicit.subject"
+    assert bridge._local_url == "http://localhost:9000/a2a"
+    assert bridge._queue_group == "agents.hero"
+
+
+def test_maybe_build_bridge_derives_subject_when_unset(monkeypatch):
+    """No explicit subject → derive from name + namespace + prefix."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://localhost:4222")
+    monkeypatch.setenv("VYSTAK_NATS_SUBJECT_PREFIX", "vystak-nats")
+    monkeypatch.setenv("VYSTAK_NATS_NAMESPACE", "multi-nats")
+    monkeypatch.delenv("VYSTAK_NATS_SUBJECT", raising=False)
+    agent = SimpleNamespace(name="weather-agent")
+    bridge = maybe_build_bridge(agent, port=8000)
+    assert bridge is not None
+    assert bridge._subject == "vystak-nats.multi-nats.agents.weather-agent.tasks"
+
+
+# ---------------------------------------------------------------------------
+# Bridge forwarding behavior
+# ---------------------------------------------------------------------------
+
+
+class _FakeMsg:
+    def __init__(self, data: bytes, reply: str = "") -> None:
+        self.data = data
+        self.reply = reply
+
+
+class _FakeNatsClient:
+    """Records publishes; stops shutdown from blocking on real I/O."""
+
+    def __init__(self) -> None:
+        self.is_closed = False
+        self.published: list[tuple[str, bytes]] = []
+        self.subscribed: tuple[str, str, Any] | None = None
+
+    async def subscribe(self, subject, queue=None, cb=None):  # noqa: ANN001
+        self.subscribed = (subject, queue, cb)
+
+        class _Sub:
+            async def unsubscribe(_self):  # noqa: ANN001
+                return None
+
+        return _Sub()
+
+    async def publish(self, subject, payload):  # noqa: ANN001
+        self.published.append((subject, payload))
+
+    async def close(self) -> None:
+        self.is_closed = True
+
+
+@pytest.mark.asyncio
+async def test_bridge_forwards_envelope_to_local_a2a(monkeypatch):
+    """Inbound NATS message → POST /a2a → publish HTTP body on reply inbox."""
+    fake_nc = _FakeNatsClient()
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_nc
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    # Capture the POST body and return a synthetic JSON-RPC success.
+    posted_url: list[str] = []
+    posted_body: list[bytes] = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        async def post(self, url, *, content, headers):  # noqa: ANN001
+            posted_url.append(url)
+            posted_body.append(content)
+            return httpx.Response(
+                200,
+                content=json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": "rpc-1",
+                    "result": {"status": {"state": "completed",
+                                          "message": {"parts": [{"text": "pong"}]}}},
+                }).encode(),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://localhost:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+    )
+    await bridge.start()
+
+    envelope = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "rpc-1",
+        "method": "message/send",
+        "params": {"message": {"role": "user", "messageId": "m1",
+                               "parts": [{"text": "hi"}]}},
+    }).encode()
+    msg = _FakeMsg(data=envelope, reply="_INBOX.abc")
+
+    await bridge._forward(msg)
+
+    # The bridge POSTed the original bytes to the local /a2a.
+    assert posted_url == ["http://localhost:8000/a2a"]
+    assert posted_body == [envelope]
+    # The bridge published the HTTP response back on the reply inbox.
+    assert len(fake_nc.published) == 1
+    reply_subject, reply_payload = fake_nc.published[0]
+    assert reply_subject == "_INBOX.abc"
+    body = json.loads(reply_payload)
+    assert body["result"]["status"]["state"] == "completed"
+
+    await bridge.stop()
+    assert fake_nc.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_bridge_returns_jsonrpc_error_on_local_http_failure(monkeypatch):
+    """Localhost POST fails → publish a JSON-RPC error envelope on inbox."""
+    fake_nc = _FakeNatsClient()
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_nc
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    class _FailingClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        async def post(self, url, *, content, headers):  # noqa: ANN001
+            raise httpx.ConnectError("connection refused")
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FailingClient)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://localhost:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+    )
+    await bridge.start()
+
+    envelope = json.dumps({"jsonrpc": "2.0", "id": "rpc-9",
+                           "method": "message/send", "params": {}}).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.xyz"))
+
+    assert len(fake_nc.published) == 1
+    _, payload = fake_nc.published[0]
+    body = json.loads(payload)
+    assert body["error"]["code"] == -32603
+    assert "local /a2a request failed" in body["error"]["message"]
+
+    await bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_bridge_handles_invalid_json_payload(monkeypatch):
+    """Malformed inbound bytes → publish parse-error envelope, don't crash."""
+    fake_nc = _FakeNatsClient()
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_nc
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    class _NoCallClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        async def post(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("HTTP should not be called for invalid payload")
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", _NoCallClient)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://localhost:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+    )
+    await bridge.start()
+
+    await bridge._forward(_FakeMsg(data=b"not-json", reply="_INBOX.bad"))
+
+    assert any(b"parse error" in p[1] for p in fake_nc.published)
+
+    await bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_bridge_silently_drops_when_no_reply_subject(monkeypatch):
+    """A NATS message without a reply inbox (fire-and-forget) → no publish."""
+    fake_nc = _FakeNatsClient()
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_nc
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    class _OkClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        async def post(self, url, *, content, headers):  # noqa: ANN001
+            return httpx.Response(200, content=b'{"jsonrpc":"2.0","id":"x","result":{}}')
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", _OkClient)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://localhost:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+    )
+    await bridge.start()
+    envelope = json.dumps({"jsonrpc": "2.0", "id": "rpc-9",
+                           "method": "message/send", "params": {}}).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply=""))
+
+    # No reply inbox → bridge must not attempt a publish (would crash with
+    # an empty subject in nats-py).
+    assert fake_nc.published == []
+    await bridge.stop()
