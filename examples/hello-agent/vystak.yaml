@@ -1,4 +1,5 @@
 name: hello-agent
+framework: langchain-python
 instructions: |
   You are a helpful assistant built with Vystak.
   Be concise, friendly, and always show your reasoning.
