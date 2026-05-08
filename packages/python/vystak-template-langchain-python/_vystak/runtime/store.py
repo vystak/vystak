@@ -21,9 +21,10 @@ def build_checkpointer(agent: Any):
 
     engine = getattr(sessions, "engine", None)
     if engine == "sqlite":
+        path = getattr(sessions, "path", None) or ":memory:"
         async def _make():
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            return AsyncSqliteSaver.from_conn_string(":memory:")
+            return AsyncSqliteSaver.from_conn_string(path)
         return _LazyCheckpointer(_make)
 
     if engine == "postgres":

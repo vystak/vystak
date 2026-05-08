@@ -9,20 +9,22 @@ PROVIDER_FACTORIES = {
 
 
 def build_model(agent: Any):
+    """Construct a LangChain chat model from the agent's Model schema.
+
+    Credentials are read from environment variables (ANTHROPIC_API_KEY,
+    OPENAI_API_KEY, etc.) by the LangChain provider classes. Provider config
+    overrides (base_url, api_key) will land via agent.model.parameters in a
+    future phase; the schema doesn't carry them today.
+    """
+    import importlib
+
     provider_type = agent.model.provider.type
     if provider_type not in PROVIDER_FACTORIES:
         raise ValueError(f"Unsupported provider: {provider_type}")
     module_name, cls_name = PROVIDER_FACTORIES[provider_type]
-    module = __import__(module_name, fromlist=[cls_name])
+    module = importlib.import_module(module_name)
     cls = getattr(module, cls_name)
-    kwargs: dict[str, Any] = {"model": agent.model.model_name}
-    api_key = getattr(agent.model.provider, "api_key", None)
-    if api_key:
-        kwargs["api_key"] = api_key
-    base_url = getattr(agent.model.provider, "base_url", None)
-    if base_url:
-        kwargs["base_url"] = base_url
-    return cls(**kwargs)
+    return cls(model=agent.model.model_name)
 
 
 def build_graph(agent: Any, *, prompt, tools: list[Any], checkpointer: Any | None):
