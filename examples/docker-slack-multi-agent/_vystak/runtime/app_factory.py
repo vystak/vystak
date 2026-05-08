@@ -17,17 +17,27 @@ from _vystak.runtime.memory import MemoryManager
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
 from _vystak.runtime.openai.responses import ResponsesHandler
 from _vystak.runtime.prompt_callable import build_prompt
-from _vystak.runtime.store import _LazyCheckpointer, build_checkpointer
+from _vystak.runtime.store import (
+    _LazyCheckpointer,
+    _LazyStore,
+    build_checkpointer,
+    build_memory_store,
+)
 from _vystak.runtime.tools import load_user_tools
 
 
 def build_agent_app(agent: Any) -> FastAPI:
     checkpointer = build_checkpointer(agent)
+    memory_store = build_memory_store(agent)
     user_tools = load_user_tools(agent, Path("tools"))
     # TODO(later-phase): wire build_workspace_tools(agent) once builtin
     # workspace tools land. For now agents only see user-defined tools.
     workspace_tools: list[Any] = []
-    memory_mgr = MemoryManager(agent, store=None) if agent.memory else None
+    # If memory_store is a _LazyStore, the lifespan resolves it before any
+    # request runs. Until then, MemoryManager is wired with `None` and its
+    # recall/handle_tool_output are safe no-ops.
+    memory_mgr_store = memory_store if not isinstance(memory_store, _LazyStore) else None
+    memory_mgr = MemoryManager(agent, store=memory_mgr_store) if agent.memory else None
 
     pruner = PreCallPruner(agent.compaction) if agent.compaction else None
     compactor = (
@@ -73,6 +83,24 @@ def build_agent_app(agent: Any) -> FastAPI:
                 app_.state.graph = new_graph
             else:
                 app_.state.graph = graph
+
+            if isinstance(memory_store, _LazyStore):
+                resolved_store = await stack.enter_async_context(
+                    memory_store.context_manager()
+                )
+                # Postgres-backed stores create their schema on first use; SQLite
+                # / in-memory stores ignore setup. Always call when present.
+                setup_fn = getattr(resolved_store, "setup", None)
+                if setup_fn is not None:
+                    import inspect
+
+                    if inspect.iscoroutinefunction(setup_fn):
+                        await setup_fn()
+                    else:
+                        setup_fn()
+                if memory_mgr is not None:
+                    memory_mgr.store = resolved_store
+
             yield
 
     app = FastAPI(lifespan=lifespan)

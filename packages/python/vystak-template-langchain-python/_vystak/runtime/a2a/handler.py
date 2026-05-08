@@ -120,9 +120,28 @@ def _to_lc_message(msg: dict) -> dict:
 
 
 def _extract_text(message: Any) -> str:
-    if isinstance(message, dict):
-        return str(message.get("content", ""))
-    return getattr(message, "content", "")
+    """Flatten LangChain message content into a plain string.
+
+    Anthropic extended-thinking returns content as a list of typed blocks:
+    [{"type": "thinking", ...}, {"type": "text", "text": "..."}, ...]
+    A2A wire format expects a string in the text field, so we concatenate
+    all `type: text` blocks (dropping thinking, tool_use, etc.) and fall
+    back to repr for unknown block shapes.
+    """
+    content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                # silently drop thinking/tool_use/etc.
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return str(content)
 
 
 def _task_payload(task, final_text: str | None = None) -> dict:  # noqa: ANN001

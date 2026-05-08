@@ -51,3 +51,48 @@ def build_checkpointer(agent: Any):
 
     from langgraph.checkpoint.memory import MemorySaver
     return MemorySaver()
+
+
+class _LazyStore:
+    """Async-context-manager factory for a long-term memory store.
+
+    Same shape as _LazyCheckpointer; the lifespan opens the context via
+    AsyncExitStack and keeps the resolved store for the app's lifetime.
+    """
+
+    def __init__(self, cm_factory):  # noqa: ANN001
+        self._cm_factory = cm_factory
+
+    def context_manager(self):
+        return self._cm_factory()
+
+
+def build_memory_store(agent: Any):
+    """Build a LangGraph BaseStore for long-term memory.
+
+    Reads agent.memory.engine. Returns InMemoryStore (sync, no lifespan) or
+    a _LazyStore wrapping AsyncPostgresStore (resolved via lifespan).
+    """
+    import os
+
+    memory = getattr(agent, "memory", None)
+    if memory is None:
+        return None
+
+    engine = getattr(memory, "engine", None)
+
+    if engine == "postgres":
+        conn = (
+            os.environ.get("MEMORY_STORE_URL")
+            or getattr(memory, "connection_string", None)
+        )
+
+        def _make_cm():
+            from langgraph.store.postgres.aio import AsyncPostgresStore
+            return AsyncPostgresStore.from_conn_string(conn)
+
+        return _LazyStore(_make_cm)
+
+    # in-memory fallback for any other / unset engine
+    from langgraph.store.memory import InMemoryStore
+    return InMemoryStore()
