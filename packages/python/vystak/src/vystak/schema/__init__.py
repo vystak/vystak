@@ -49,6 +49,7 @@ from vystak.schema.resource import (
 from vystak.schema.secret import Secret
 from vystak.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from vystak.schema.skill import Skill, SkillRequirements
+from vystak.schema.telemetry import Telemetry
 from vystak.schema.transport import (
     HttpConfig,
     NatsConfig,
@@ -92,6 +93,7 @@ __all__ = [
     "Skill",
     "SkillRequirements",
     "Sqlite",
+    "Telemetry",
     "Transport",
     "TransportConfig",
     "TransportConnection",

@@ -6,6 +6,7 @@ from pydantic import model_validator
 
 from vystak.schema.common import NamedModel
 from vystak.schema.provider import Provider
+from vystak.schema.telemetry import Telemetry
 from vystak.schema.transport import Transport
 
 
@@ -17,6 +18,7 @@ class Platform(NamedModel):
     namespace: str = "default"
     config: dict = {}
     transport: Transport | None = None
+    telemetry: Telemetry | None = None
 
     @model_validator(mode="after")
     def _default_transport(self) -> Self:
