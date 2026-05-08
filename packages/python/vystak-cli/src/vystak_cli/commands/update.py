@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from vystak_cli.manifest import _hash_tree, scaffold_template
+from vystak_cli.manifest import _hash_tree
 from vystak_cli.templates import resolve_template
 
 
@@ -72,10 +72,52 @@ def update_command(
         return 0
 
     cli_version = _cli_version()
-    shutil.rmtree(target_path / "_vystak", ignore_errors=True)
-    scaffold_template(info.path, target_path, cli_version=cli_version, force=True)
+    _refresh_vystak_dir(info.path, target_path, cli_version=cli_version)
     click.echo(f"Updated _vystak/ from {current_version} -> {bundled_version}.")
     return 0
+
+
+def _refresh_vystak_dir(source: Path, target: Path, *, cli_version: str) -> None:
+    """Refresh ONLY the managed _vystak/ namespace; never touch user-owned files.
+
+    User-owned files (vystak.yaml, server.py, Dockerfile, requirements.txt,
+    tools/, .env.example, README.md, pyproject.toml) are preserved. Only the
+    _vystak/ directory contents are replaced and the manifest re-stamped.
+    """
+    import hashlib
+    import json
+    from datetime import UTC, datetime
+
+    src_vystak = source / "_vystak"
+    dst_vystak = target / "_vystak"
+
+    shutil.rmtree(dst_vystak, ignore_errors=True)
+    shutil.copytree(
+        src_vystak,
+        dst_vystak,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+    seed = json.loads((dst_vystak / "manifest.template.json").read_text())
+    files: dict[str, str] = {}
+    for path in dst_vystak.rglob("*"):
+        if not path.is_file() or path.name == "manifest.json":
+            continue
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        rel = path.relative_to(target).as_posix()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        files[rel] = f"sha256:{digest}"
+
+    manifest = {
+        "schema_version": 1,
+        "template": seed["template"],
+        "vystak": seed["vystak"],
+        "scaffolded_at": datetime.now(UTC).isoformat(),
+        "scaffolded_by_cli": cli_version,
+        "files": files,
+    }
+    (dst_vystak / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
 
 def _read_framework(yaml_path: Path) -> str | None:

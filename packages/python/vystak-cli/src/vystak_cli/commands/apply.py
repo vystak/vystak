@@ -113,7 +113,7 @@ def apply(files, file_path, force, env, env_file, allow_missing):
     base_dir = (
         paths[0].parent
         if paths[0].is_file()
-        else paths[0].parent
+        else paths[0]
         if paths[0].is_dir()
         else Path.cwd()
     )

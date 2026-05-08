@@ -38,16 +38,25 @@ async def test_create_includes_usage_block(handler):
 
 
 @pytest.mark.asyncio
-async def test_create_no_thread_id_passed_to_graph(fake_agent):
-    captured = {}
+async def test_create_uses_ephemeral_thread_id_per_call(fake_agent):
+    """Stateless: each call gets a fresh thread_id so no state survives."""
+    captured = []
 
     class CapturingGraph:
         async def ainvoke(self, input, config):
-            captured["config"] = config
+            captured.append(config)
             return {"messages": [{"role": "assistant", "content": "x"}]}
 
     handler = ChatCompletionsHandler(agent=fake_agent, graph=CapturingGraph())
     await handler.create(
         {"model": "vystak/weather", "messages": [{"role": "user", "content": "p"}]}
     )
-    assert "thread_id" not in (captured["config"].get("configurable") or {})
+    await handler.create(
+        {"model": "vystak/weather", "messages": [{"role": "user", "content": "q"}]}
+    )
+
+    t1 = captured[0]["configurable"]["thread_id"]
+    t2 = captured[1]["configurable"]["thread_id"]
+    assert t1.startswith("chat-")
+    assert t2.startswith("chat-")
+    assert t1 != t2
