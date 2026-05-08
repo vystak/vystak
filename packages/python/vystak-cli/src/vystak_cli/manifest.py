@@ -32,6 +32,8 @@ def scaffold_template(
         else:
             shutil.copy2(entry, dest)
 
+    _sanitize_pyproject(target / "pyproject.toml")
+
     seed = json.loads((target / "_vystak" / "manifest.template.json").read_text())
     file_hashes = _hash_tree(target / "_vystak")
 
@@ -57,3 +59,29 @@ def _hash_tree(root: Path) -> dict[str, str]:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         out[rel] = f"sha256:{digest}"
     return out
+
+
+def _sanitize_pyproject(target_pyproject: Path) -> None:
+    """Remove dev-only sections from a scaffolded pyproject.toml.
+
+    The template's pyproject.toml carries [tool.uv.sources] for workspace
+    development. User projects aren't in our workspace, so this section
+    must not survive the scaffold copy.
+    """
+    if not target_pyproject.exists():
+        return
+
+    text = target_pyproject.read_text()
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[tool.uv.sources]":
+            skip = True
+            continue
+        if skip and stripped.startswith("["):
+            skip = False
+        if not skip:
+            out.append(line)
+    target_pyproject.write_text("".join(out))

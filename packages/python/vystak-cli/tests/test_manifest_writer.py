@@ -68,3 +68,31 @@ def test_scaffold_overwrites_when_force(tmp_path):
 
     scaffold_template(src, target, cli_version="1.4.0", force=True)
     assert not (target / "_vystak" / "stale.py").exists()
+
+
+def test_scaffold_strips_workspace_section_from_pyproject(tmp_path):
+    src = tmp_path / "src_template"
+    (src / "_vystak").mkdir(parents=True)
+    (src / "_vystak" / "manifest.template.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "template": {"name": "t", "version": "0.1.0"},
+            "vystak": {"schema_version": "0.5", "min_compat": "0.4", "max_compat": "0.5"},
+        })
+    )
+    (src / "pyproject.toml").write_text(
+        '[project]\n'
+        'name = "user-agent"\n\n'
+        '[tool.uv.sources]\n'
+        'vystak = { workspace = true }\n\n'
+        '[build-system]\n'
+        'requires = ["hatchling"]\n'
+    )
+    target = tmp_path / "dest"
+    scaffold_template(src, target, cli_version="1.4.0")
+
+    py = (target / "pyproject.toml").read_text()
+    assert "[tool.uv.sources]" not in py
+    assert "workspace = true" not in py
+    assert '[project]' in py  # other sections preserved
+    assert '[build-system]' in py
