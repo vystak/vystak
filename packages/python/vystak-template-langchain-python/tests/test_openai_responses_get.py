@@ -17,16 +17,10 @@ class FakeGraph:
         return _Snapshot()
 
 
-def _fake_agent():
-    class _A:
-        name = "weather"
-    return _A()
-
-
 @pytest.mark.asyncio
-async def test_get_returns_stored_response():
+async def test_get_returns_stored_response(fake_agent):
     graph = FakeGraph()
-    h = ResponsesHandler(agent=_fake_agent(), graph=graph, store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=graph, store=None)
     resp = await h.get("resp_abc")
     assert resp["id"] == "resp_abc"
     assert resp["status"] == "completed"
@@ -34,13 +28,13 @@ async def test_get_returns_stored_response():
 
 
 @pytest.mark.asyncio
-async def test_get_unknown_response_raises():
+async def test_get_unknown_response_raises(fake_agent):
     class EmptyGraph:
         async def aget_state(self, config):
             class _S:
                 values = {}
             return _S()
 
-    h = ResponsesHandler(agent=_fake_agent(), graph=EmptyGraph(), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=EmptyGraph(), store=None)
     with pytest.raises(KeyError):
         await h.get("resp_missing")

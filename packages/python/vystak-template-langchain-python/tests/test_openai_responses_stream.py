@@ -15,12 +15,6 @@ class FakeStreamingGraph:
             yield ev
 
 
-def _fake_agent():
-    class _A:
-        name = "weather"
-    return _A()
-
-
 def _parse_sse(frames: list[str]) -> list[dict]:
     out = []
     for f in frames:
@@ -31,12 +25,12 @@ def _parse_sse(frames: list[str]) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_streaming_emits_created_then_deltas_then_completed():
+async def test_streaming_emits_created_then_deltas_then_completed(fake_agent):
     events = [
         {"event": "on_chat_model_stream", "data": {"chunk": {"content": "he"}}},
         {"event": "on_chat_model_stream", "data": {"chunk": {"content": "llo"}}},
     ]
-    h = ResponsesHandler(agent=_fake_agent(), graph=FakeStreamingGraph(events), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
     body = {"model": "vystak/weather", "input": "hi", "stream": True, "store": True}
 
     frames = []
@@ -52,11 +46,11 @@ async def test_streaming_emits_created_then_deltas_then_completed():
 
 
 @pytest.mark.asyncio
-async def test_streaming_delta_events_carry_text():
+async def test_streaming_delta_events_carry_text(fake_agent):
     events = [
         {"event": "on_chat_model_stream", "data": {"chunk": {"content": "hi"}}},
     ]
-    h = ResponsesHandler(agent=_fake_agent(), graph=FakeStreamingGraph(events), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
     body = {"model": "vystak/weather", "input": "x", "stream": True, "store": True}
 
     frames = []
@@ -68,9 +62,9 @@ async def test_streaming_delta_events_carry_text():
 
 
 @pytest.mark.asyncio
-async def test_streaming_response_id_threaded_through_events():
+async def test_streaming_response_id_threaded_through_events(fake_agent):
     events = [{"event": "on_chat_model_stream", "data": {"chunk": {"content": "x"}}}]
-    h = ResponsesHandler(agent=_fake_agent(), graph=FakeStreamingGraph(events), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
     body = {"model": "vystak/weather", "input": "x", "stream": True, "store": True}
 
     frames = []

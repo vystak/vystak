@@ -9,15 +9,9 @@ class FakeGraph:
         return {"messages": [{"role": "assistant", "content": "pong"}]}
 
 
-def _fake_agent():
-    class _A:
-        name = "weather"
-    return _A()
-
-
 @pytest.fixture
-def handler():
-    return ResponsesHandler(agent=_fake_agent(), graph=FakeGraph(), store=None)
+def handler(fake_agent):
+    return ResponsesHandler(agent=fake_agent, graph=FakeGraph(), store=None)
 
 
 @pytest.mark.asyncio
@@ -32,7 +26,7 @@ async def test_create_non_streaming_returns_response_envelope(handler):
 
 
 @pytest.mark.asyncio
-async def test_create_with_store_true_persists_via_thread_id(handler):
+async def test_create_with_store_true_persists_via_thread_id(fake_agent):
     captured_configs = []
 
     class CapturingGraph:
@@ -40,14 +34,14 @@ async def test_create_with_store_true_persists_via_thread_id(handler):
             captured_configs.append(config)
             return {"messages": [{"role": "assistant", "content": "x"}]}
 
-    h = ResponsesHandler(agent=_fake_agent(), graph=CapturingGraph(), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=CapturingGraph(), store=None)
     resp = await h.create({"model": "vystak/weather", "input": "p", "store": True})
     assert "configurable" in captured_configs[0]
     assert captured_configs[0]["configurable"]["thread_id"] == resp["id"]
 
 
 @pytest.mark.asyncio
-async def test_create_with_previous_response_id_reuses_thread(handler):
+async def test_create_with_previous_response_id_reuses_thread(fake_agent):
     captured = []
 
     class CapturingGraph:
@@ -55,7 +49,7 @@ async def test_create_with_previous_response_id_reuses_thread(handler):
             captured.append(config)
             return {"messages": [{"role": "assistant", "content": "x"}]}
 
-    h = ResponsesHandler(agent=_fake_agent(), graph=CapturingGraph(), store=None)
+    h = ResponsesHandler(agent=fake_agent, graph=CapturingGraph(), store=None)
     await h.create({
         "model": "vystak/weather", "input": "p",
         "store": True, "previous_response_id": "resp_existing",

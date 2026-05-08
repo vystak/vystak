@@ -9,15 +9,9 @@ class FakeGraph:
         return {"messages": [{"role": "assistant", "content": "pong"}]}
 
 
-def _fake_agent():
-    class _A:
-        name = "weather"
-    return _A()
-
-
 @pytest.fixture
-def handler():
-    return ChatCompletionsHandler(agent=_fake_agent(), graph=FakeGraph())
+def handler(fake_agent):
+    return ChatCompletionsHandler(agent=fake_agent, graph=FakeGraph())
 
 
 @pytest.mark.asyncio
@@ -44,7 +38,7 @@ async def test_create_includes_usage_block(handler):
 
 
 @pytest.mark.asyncio
-async def test_create_no_thread_id_passed_to_graph():
+async def test_create_no_thread_id_passed_to_graph(fake_agent):
     captured = {}
 
     class CapturingGraph:
@@ -52,7 +46,7 @@ async def test_create_no_thread_id_passed_to_graph():
             captured["config"] = config
             return {"messages": [{"role": "assistant", "content": "x"}]}
 
-    handler = ChatCompletionsHandler(agent=_fake_agent(), graph=CapturingGraph())
+    handler = ChatCompletionsHandler(agent=fake_agent, graph=CapturingGraph())
     await handler.create(
         {"model": "vystak/weather", "messages": [{"role": "user", "content": "p"}]}
     )
