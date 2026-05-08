@@ -116,18 +116,17 @@ class DockerAgentNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
-            # Bundle unpublished vystak + vystak_adapter_langchain + transports
-            # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
-            # vystak_adapter_langchain is bundled because the generated server.py
-            # imports from its `compaction` subpackage when compaction is enabled.
+            # Bundle unpublished vystak + transport source trees onto the
+            # container's PYTHONPATH (via COPY . . in the Dockerfile). The
+            # framework template ships its own runtime under _vystak/ (already
+            # bundled above via _generated_code.files), so no framework adapter
+            # source needs to be copied here.
             import vystak
-            import vystak_adapter_langchain
             import vystak_transport_http
             import vystak_transport_nats
 
             _bundled_mods = (
                 vystak,
-                vystak_adapter_langchain,
                 vystak_transport_http,
                 vystak_transport_nats,
             )
