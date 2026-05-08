@@ -43,7 +43,7 @@ class ThresholdCompactor:
         await self._persist(thread_id, summary_text, len(older))
 
         return [
-            SystemMessage(content=summary_text),
+            SystemMessage(content=f"[Summary of earlier conversation]\n{summary_text}"),
             *recent,
         ]
 

@@ -61,7 +61,7 @@ async def test_above_threshold_summarizes_older_slice():
     )
     result = await cmp.maybe_compact("t1", msgs, prefill_token_estimate=600)
     assert len(result) < len(msgs)
-    assert any(getattr(m, "content", "") == "summarized" for m in result)
+    assert any("summarized" in getattr(m, "content", "") for m in result)
     assert len(store.rows) == 1
 
 
