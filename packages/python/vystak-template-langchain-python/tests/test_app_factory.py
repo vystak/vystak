@@ -51,3 +51,35 @@ def test_app_chat_completions_route_exists():
     assert "/v1/responses" in routes
     assert "/v1/responses/{response_id}" in routes
     assert "/a2a" in routes
+
+
+def test_app_builds_with_sqlite_sessions_config():
+    """Agent with sessions: sqlite must build without TypeError.
+
+    `build_checkpointer` returns a `_LazyCheckpointer` for sqlite/postgres
+    engines because their savers are async-only context managers. LangGraph's
+    compile() rejects `_LazyCheckpointer` as not a `BaseCheckpointSaver`. The
+    fix builds the graph with checkpointer=None initially and swaps in the
+    resolved saver during the FastAPI lifespan startup.
+    """
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+    from vystak.schema.service import Sqlite
+
+    agent = Agent(
+        name="test",
+        instructions="x",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+        sessions=Sqlite(name="sessions"),
+    )
+    # This should NOT raise TypeError("Invalid checkpointer provided").
+    app = build_agent_app(agent)
+    assert app is not None
+    # The graph compiled (we used checkpointer=None for the lazy case).
+    routes = [r.path for r in app.routes]
+    assert "/healthz" in routes
