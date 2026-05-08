@@ -120,6 +120,30 @@ class ResponsesHandler:
         })
         yield "data: [DONE]\n\n"
 
+    async def get(self, response_id: str) -> dict:
+        config = {"configurable": {"thread_id": response_id}}
+        snapshot = await self.graph.aget_state(config)
+        messages = (snapshot.values or {}).get("messages")
+        if not messages:
+            raise KeyError(f"Unknown response: {response_id}")
+
+        last = messages[-1]
+        text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+
+        return {
+            "id": response_id,
+            "object": "response",
+            "model": f"vystak/{self.agent.name}",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                }
+            ],
+        }
+
 
 def _new_response_id() -> str:
     return f"resp_{uuid.uuid4().hex[:24]}"
