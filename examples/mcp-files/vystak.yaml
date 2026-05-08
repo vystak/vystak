@@ -1,4 +1,5 @@
 name: mcp-files-agent
+framework: langchain-python
 instructions: |
   You are a file analysis agent. You can read files from the /docs directory
   using your MCP tools. When asked about files, use your tools to read and
