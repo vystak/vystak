@@ -63,5 +63,5 @@ chat = ast.Channel(
     type=ast.ChannelType.CHAT,
     platform=platform,
     config={"port": 8080},
-    routes=[ast.RouteRule(match={}, agent="weather-agent")],
+    agents=[weather_agent],
 )
