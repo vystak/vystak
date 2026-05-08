@@ -51,22 +51,41 @@ class LangGraphExecutor(AgentExecutor):
         config = {"configurable": {"thread_id": context.task_id}}
 
         try:
-            # Drive the graph to completion. We don't surface intermediate
-            # token chunks for now — the SDK SSE pipe still emits status
-            # transitions and the final completion frame, which is what
-            # vystak-channel-runtime keys off.
-            async for _ev in self._graph.astream_events(
+            # Drive the graph and surface token-stream events as WORKING-state
+            # status updates so subscribers (vystak-channel-slack, vystak-chat)
+            # can render incremental output. Each non-empty `on_chat_model_stream`
+            # chunk publishes a status frame carrying the partial-token text in
+            # message.parts[0].text — channel runtime accumulates these on its end.
+            running_text: list[str] = []
+            async for ev in self._graph.astream_events(
                 {"messages": [{"role": "user", "content": text}]},
                 config,
                 version="v2",
             ):
-                pass
+                if ev.get("event") == "on_chat_model_stream":
+                    chunk = ev.get("data", {}).get("chunk")
+                    delta = _flatten_content(
+                        getattr(chunk, "content", "") if chunk is not None else ""
+                    )
+                    if delta:
+                        running_text.append(delta)
+                        chunk_msg = updater.new_agent_message(
+                            [Part(text=delta)]
+                        )
+                        await updater.update_status(
+                            TaskState.TASK_STATE_WORKING,
+                            message=chunk_msg,
+                        )
 
             snapshot = await self._graph.aget_state(config)
             messages = (snapshot.values or {}).get("messages") or []
             final_text = _flatten_content(
                 messages[-1].content if messages else ""
             )
+            # Fall back to the streamed accumulation if the snapshot is empty
+            # (some graph/stream patterns clear values on completion).
+            if not final_text and running_text:
+                final_text = "".join(running_text)
         except Exception as e:  # noqa: BLE001
             failure_msg = updater.new_agent_message([Part(text=f"Error: {e}")])
             await updater.failed(message=failure_msg)

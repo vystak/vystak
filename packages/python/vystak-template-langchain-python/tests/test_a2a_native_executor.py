@@ -113,6 +113,50 @@ async def test_executor_cancel_emits_canceled_state():
     assert states == [TaskState.TASK_STATE_CANCELED]
 
 
+class FakeStreamingGraph:
+    """Yields canned on_chat_model_stream events."""
+
+    def __init__(self, deltas: list[str]):
+        self._deltas = deltas
+
+    async def astream_events(self, input, config, version="v2"):  # noqa: ANN001
+        for delta in self._deltas:
+            class _Chunk:
+                content = delta
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _Chunk()},
+            }
+
+    async def aget_state(self, config):  # noqa: ANN001
+        full = "".join(self._deltas)
+
+        class _Msg:
+            content = full
+
+        class _Snap:
+            values = {"messages": [_Msg()]}
+
+        return _Snap()
+
+
+@pytest.mark.asyncio
+async def test_executor_streams_token_deltas_as_working_status_updates():
+    """Each non-empty on_chat_model_stream chunk produces a WORKING status frame
+    so vystak-channel-slack and vystak-chat can render incremental output."""
+    executor = LangGraphExecutor(graph=FakeStreamingGraph(["he", "llo", " world"]))
+    queue = RecordingQueue()
+
+    await executor.execute(FakeContext(), queue)
+
+    status_events = [ev for ev in queue.events if isinstance(ev, TaskStatusUpdateEvent)]
+    working_events = [ev for ev in status_events if ev.status.state == TaskState.TASK_STATE_WORKING]
+    # Initial start_work + 3 token chunks = 4 WORKING events.
+    assert len(working_events) == 4
+    deltas = [ev.status.message.parts[0].text for ev in working_events[1:]]
+    assert deltas == ["he", "llo", " world"]
+
+
 @pytest.mark.asyncio
 async def test_executor_skips_initial_task_when_already_present():
     """If RequestContext already has a current_task (e.g. follow-up call),
