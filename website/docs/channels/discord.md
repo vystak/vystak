@@ -11,7 +11,7 @@ thread — all messages route to your agents.
 
 ## Setup
 
-1. Create a Discord application: <https://discord.com/developers/applications>.
+1. Create a Discord application: [discord.com/developers/applications](https://discord.com/developers/applications).
 2. Add a bot user to the application. Copy the bot token (you will use it as
    `DISCORD_BOT_TOKEN`).
 3. Enable the **`MESSAGE CONTENT`** privileged intent in the bot settings.
