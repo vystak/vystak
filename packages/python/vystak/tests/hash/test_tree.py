@@ -178,3 +178,33 @@ class TestCodegenHashing:
         tree_b = hash_channel(channel, codegen_hash=digest_b)
         assert tree_a.codegen != tree_b.codegen
         assert tree_a.root != tree_b.root
+
+
+def test_changing_framework_changes_root_hash():
+    """Different framework values produce different agent hashes."""
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    a1 = Agent(
+        name="t",
+        framework="langchain-python",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    a2 = Agent(
+        name="t",
+        framework="mastra-typescript",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    h1 = hash_agent(a1)
+    h2 = hash_agent(a2)
+    assert h1.root != h2.root

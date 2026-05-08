@@ -160,6 +160,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
     compatibility with callers that haven't been wired through yet.
     """
     brain = hash_model(agent.model)
+    framework = _hash_str(agent.framework)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
     workspace = _hash_optional(agent.workspace)
@@ -183,6 +184,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
     sections = "|".join(
         [
             brain,
+            framework,
             skills,
             mcp_servers,
             workspace,

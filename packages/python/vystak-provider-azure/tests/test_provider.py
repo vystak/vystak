@@ -17,6 +17,7 @@ from vystak_provider_azure.provider import AzureProvider
 def _make_agent(name="my-agent"):
     agent = MagicMock()
     agent.name = name
+    agent.framework = "langchain-python"
     agent.model = MagicMock()
     agent.skills = []
     agent.mcp_servers = []
