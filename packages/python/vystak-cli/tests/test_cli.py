@@ -90,9 +90,22 @@ def test_apply_success(mock_get_provider, tmp_path):
 
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+        import json
         from pathlib import Path
 
         Path(td).joinpath("vystak.yaml").write_text(yaml.dump(SAMPLE_AGENT_YAML))
+        # apply now requires _vystak/ to be scaffolded with a matching framework
+        # manifest. The sample YAML omits `framework:`, so any template name is
+        # accepted by the validator — but the manifest itself must exist.
+        Path(td).joinpath("_vystak").mkdir()
+        Path(td).joinpath("_vystak", "manifest.json").write_text(json.dumps({
+            "schema_version": 1,
+            "template": {"name": "langchain-python", "version": "0.1.0"},
+            "vystak": {"schema_version": "0.5", "min_compat": "0.4", "max_compat": "0.5"},
+            "scaffolded_at": "2026-05-02T00:00:00Z",
+            "scaffolded_by_cli": "test",
+            "files": {},
+        }))
         result = runner.invoke(cli, ["apply"])
 
     assert result.exit_code == 0, result.output

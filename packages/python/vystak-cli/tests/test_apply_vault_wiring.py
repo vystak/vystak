@@ -8,11 +8,40 @@ the handoff to ``_run_provider_apply``. They do **not** spin up Azure clients.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
 from vystak_cli.cli import cli
+
+
+def _scaffold_vystak_dir(dir_: Path) -> None:
+    """Create a stub _vystak/manifest.json so `apply`'s validator passes.
+
+    These wiring tests don't declare `framework:` in their YAML, so the
+    validator only checks that the manifest exists. We populate it with
+    the langchain-python template metadata since that's what `init`
+    would have produced.
+    """
+    vystak_dir = dir_ / "_vystak"
+    vystak_dir.mkdir(exist_ok=True)
+    (vystak_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "template": {"name": "langchain-python", "version": "0.1.0"},
+                "vystak": {
+                    "schema_version": "0.5",
+                    "min_compat": "0.4",
+                    "max_compat": "0.5",
+                },
+                "scaffolded_at": "2026-05-02T00:00:00Z",
+                "scaffolded_by_cli": "test",
+                "files": {},
+            }
+        )
+    )
 
 FIXTURE_YAML_WITH_VAULT = """\
 providers:
@@ -49,12 +78,14 @@ agents:
 def _write_vault_yaml(dir_: Path) -> Path:
     p = dir_ / "vystak.yaml"
     p.write_text(FIXTURE_YAML_WITH_VAULT)
+    _scaffold_vystak_dir(dir_)
     return p
 
 
 def _write_no_vault_yaml(dir_: Path) -> Path:
     p = dir_ / "vystak.yaml"
     p.write_text(FIXTURE_YAML_NO_VAULT)
+    _scaffold_vystak_dir(dir_)
     return p
 
 
@@ -206,6 +237,7 @@ def test_apply_threads_vault_into_docker_provider(tmp_path):
         td_path = Path(td)
         config = td_path / "vystak.yaml"
         config.write_text(FIXTURE_YAML_WITH_HASHI_VAULT)
+        _scaffold_vystak_dir(td_path)
         env = td_path / ".env"
         env.write_text("ANTHROPIC_API_KEY=v\n")
 

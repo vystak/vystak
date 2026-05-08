@@ -1,5 +1,6 @@
 """vystak apply — deploy or update agents and channels."""
 
+import json
 from pathlib import Path
 
 import click
@@ -12,6 +13,37 @@ from vystak_provider_docker.transport_wiring import (
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
+
+
+def _validate_template_for_apply(project_dir: Path) -> None:
+    """Verify _vystak/manifest.json exists and matches vystak.yaml's framework.
+
+    Run before invoking the platform provider, so apply fails fast with a
+    clear scaffold-first message rather than blowing up deep in code
+    generation when a framework-specific runtime file is missing.
+    """
+    manifest_path = project_dir / "_vystak" / "manifest.json"
+    yaml_path = project_dir / "vystak.yaml"
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"_vystak/manifest.json not found at {project_dir}. "
+            f"Scaffold first: `vystak init --framework <name> --force .`"
+        )
+
+    if yaml_path.exists():
+        import yaml as _yaml
+
+        data = _yaml.safe_load(yaml_path.read_text()) or {}
+        framework = data.get("framework")
+        manifest = json.loads(manifest_path.read_text())
+        template_name = manifest["template"]["name"]
+        if framework and framework != template_name:
+            raise ValueError(
+                f"framework in vystak.yaml ({framework}) does not match "
+                f"_vystak/manifest.json template.name ({template_name}). "
+                f"Run: vystak init --framework {framework} --force ."
+            )
 
 
 @click.command()
@@ -60,6 +92,15 @@ def apply(files, file_path, force, env, env_file, allow_missing):
         if paths[0].is_dir()
         else Path.cwd()
     )
+
+    # Validate _vystak/ is scaffolded and the framework recorded there
+    # matches the framework declared in vystak.yaml. Run this before
+    # loading definitions so a framework mismatch surfaces a clear
+    # "vystak init --framework ... --force ." message, rather than
+    # blowing up later in adapter codegen with a runtime ImportError.
+    project_dir = base_dir if base_dir.is_dir() else Path.cwd()
+    _validate_template_for_apply(project_dir)
+
     defs = load_definitions(paths, base_dir=base_dir)
     click.echo(f"Loaded {len(defs.agents)} agent(s), {len(defs.channels)} channel(s)")
 
