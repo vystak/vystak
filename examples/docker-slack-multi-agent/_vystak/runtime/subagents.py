@@ -4,21 +4,40 @@ For each subagent declared in agent.subagents, produces a LangChain @tool
 named `ask_<subagent_name>` that talks to the subagent over A2A using the
 SDK's `create_client(card_url)`. The card URL is read from the
 `VYSTAK_ROUTES_JSON` env var, which the provider populates per-agent.
+
+Tool descriptions are **card-driven**: at boot, each subagent's
+`/.well-known/agent.json` is fetched and its `description` + `skills` are
+folded into the @tool's docstring. The LLM sees the peer's own
+self-description rather than vystak boilerplate, so routing decisions key
+off accurate, agent-authored guidance. If a peer is unreachable at boot
+(slow startup / DNS race), the tool falls back to local boilerplate
+derived from the parent agent's `subagents` declaration.
 """
 
 import contextlib
 import json
+import logging
 import os
+import time
 import uuid
 from typing import Any
 
+import httpx
 from a2a.client import create_client
 from a2a.types import Message, Part, Role, SendMessageRequest
 from langchain_core.tools import tool
 
+logger = logging.getLogger("vystak.runtime.subagents")
+
 
 def build_subagent_tools(agent: Any) -> list[Any]:
-    """Return LangChain @tool functions, one per declared subagent."""
+    """Return LangChain @tool functions, one per declared subagent.
+
+    Performs a synchronous, best-effort GET on each peer's agent card so the
+    tool's docstring carries the peer's own description. Total bootstrap
+    cost is bounded — ~3 retries per peer with short timeouts; on failure
+    we keep the local boilerplate description and proceed.
+    """
     subagents = getattr(agent, "subagents", []) or []
     if not subagents:
         return []
@@ -26,16 +45,79 @@ def build_subagent_tools(agent: Any) -> list[Any]:
     routes = _load_routes()
 
     tools: list[Any] = []
-    for sub in subagents:
-        name = sub if isinstance(sub, str) else getattr(sub, "name", None)
-        if not name:
-            continue
-        target = _resolve_target(routes.get(name) or {})
-        if target is None:
-            continue
-        base_url, card_path = target
-        tools.append(_make_tool(name, base_url, card_path, _docstring_for(sub)))
+    with httpx.Client(timeout=2.0) as client:
+        for sub in subagents:
+            name = sub if isinstance(sub, str) else getattr(sub, "name", None)
+            if not name:
+                continue
+            target = _resolve_target(routes.get(name) or {})
+            if target is None:
+                continue
+            base_url, card_path = target
+            card = _fetch_card_with_retries(client, base_url + card_path)
+            description = _description_from_card(card) if card else _docstring_for(sub)
+            tools.append(_make_tool(name, base_url, card_path, description))
     return tools
+
+
+def _fetch_card_with_retries(
+    client: httpx.Client,
+    url: str,
+    *,
+    max_attempts: int = 3,
+    base_backoff: float = 0.5,
+) -> dict | None:
+    """GET an agent card with bounded retry. Returns None on all failures.
+
+    Race window: peers may still be booting when this fires. Three attempts
+    with exponential backoff (~0.5s, 1.0s, 2.0s) covers the typical Docker
+    container start-up + uvicorn ready window.
+    """
+    last_err: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            last_err = exc
+            if attempt < max_attempts:
+                time.sleep(base_backoff * (2 ** (attempt - 1)))
+    logger.warning(
+        "subagent card fetch failed after %d attempts: %s (%s)",
+        max_attempts, url, last_err,
+    )
+    return None
+
+
+def _description_from_card(card: dict) -> str:
+    """Build a tool docstring from an agent card.
+
+    Pattern: `<name> — <description>. Skills: <skill1>: <s1desc>; ...`.
+    Falls back gracefully on missing fields.
+    """
+    name = card.get("name") or "subagent"
+    desc = (card.get("description") or "").strip()
+    skills = card.get("skills") or []
+
+    head = f"{name}"
+    if desc:
+        head = f"{name} — {desc.splitlines()[0].strip()}"
+
+    skill_strs: list[str] = []
+    for s in skills:
+        if not isinstance(s, dict):
+            continue
+        s_name = s.get("name") or s.get("id") or ""
+        s_desc = (s.get("description") or "").strip()
+        if s_name and s_desc:
+            skill_strs.append(f"{s_name}: {s_desc}")
+        elif s_name:
+            skill_strs.append(s_name)
+
+    if skill_strs:
+        return f"{head}. Skills: {'; '.join(skill_strs)}"
+    return head
 
 
 def _load_routes() -> dict:
@@ -93,9 +175,8 @@ def _make_tool(subagent_name: str, base_url: str, card_path: str, description: s
     sanitized = subagent_name.replace("-", "_")
     tool_name = f"ask_{sanitized}"
 
-    @tool(tool_name)
+    @tool(tool_name, description=description)
     async def _call(query: str) -> str:
-        """{description}"""
         client = None
         try:
             client = await create_client(agent=base_url, relative_card_path=card_path)
@@ -137,5 +218,4 @@ def _make_tool(subagent_name: str, base_url: str, card_path: str, description: s
                 with contextlib.suppress(Exception):
                     await close()
 
-    _call.__doc__ = description
     return _call

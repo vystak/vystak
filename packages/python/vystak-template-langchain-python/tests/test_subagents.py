@@ -64,6 +64,51 @@ def test_subagent_name_with_hyphen_is_sanitized(monkeypatch):
     assert tools[0].name == "ask_data_agent"
 
 
+def test_tool_description_is_card_driven(monkeypatch):
+    """Bootstrap fetches the peer's card and folds name + description + skills
+    into the @tool docstring so the LLM sees agent-authored guidance."""
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"card_url": "http://w:8000/.well-known/agent.json"}}),
+    )
+
+    def fake_fetch(client, url, **kwargs):
+        return {
+            "name": "weather",
+            "description": "A weather specialist.\nMore detail follows.",
+            "skills": [
+                {"name": "forecast", "description": "Get weather for a city"},
+                {"name": "alerts", "description": "Get severe weather alerts"},
+            ],
+        }
+
+    monkeypatch.setattr(subagents, "_fetch_card_with_retries", fake_fetch)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    assert len(tools) == 1
+    desc = tools[0].description
+    assert "weather — A weather specialist." in desc
+    assert "forecast: Get weather for a city" in desc
+    assert "alerts: Get severe weather alerts" in desc
+
+
+def test_tool_description_falls_back_to_boilerplate_when_card_unreachable(monkeypatch):
+    """Card fetch failure → keep going with local boilerplate."""
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"unreachable": {"card_url": "http://nope:8000/.well-known/agent.json"}}),
+    )
+    monkeypatch.setattr(
+        subagents, "_fetch_card_with_retries", lambda client, url, **kwargs: None
+    )
+
+    agent = SimpleNamespace(subagents=["unreachable"])
+    tools = build_subagent_tools(agent)
+    assert len(tools) == 1
+    assert "unreachable" in tools[0].description
+
+
 class FakeClient:
     """Minimal stand-in for a2a-sdk's Client that yields canned events."""
 
