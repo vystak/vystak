@@ -23,6 +23,7 @@ AZURE_ONE_AGENT_WITH_VAULT = {
     "agents": [
         {
             "name": "assistant",
+            "framework": "langchain-python",
             "model": "sonnet",
             "secrets": [{"name": "ANTHROPIC_API_KEY"}],
             "platform": "aca",
@@ -116,8 +117,8 @@ def test_hashi_vault_valid_pairing_loads():
         },
         "models": {"sonnet": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}},
         "agents": [
-            {"name": "a", "model": "sonnet", "platform": "local",
-             "secrets": [{"name": "ANTHROPIC_API_KEY"}]},
+            {"name": "a", "framework": "langchain-python", "model": "sonnet",
+             "platform": "local", "secrets": [{"name": "ANTHROPIC_API_KEY"}]},
         ],
     }
     agents, channels, vault = load_multi_yaml(data)

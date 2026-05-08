@@ -18,6 +18,7 @@ def _agent(agent_name: str, platform_name: str, transport_type: str = "http") ->
     )
     return Agent(
         name=agent_name,
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),

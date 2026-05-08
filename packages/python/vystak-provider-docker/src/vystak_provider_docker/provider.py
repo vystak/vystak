@@ -5,7 +5,13 @@ from pathlib import Path
 import docker
 import docker.errors
 from vystak.channels import get_plugin
-from vystak.hash import hash_agent, hash_channel, hash_generated_code
+from vystak.hash import (
+    extract_template_ref,
+    hash_agent,
+    hash_channel,
+    hash_generated_code,
+    hash_template_ref,
+)
 from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
@@ -231,8 +237,8 @@ class DockerProvider(PlatformProvider):
                     "Vault, or deploy to Azure for Key Vault support."
                 )
             # type=VAULT is handled by the apply graph; no plan-time rejection.
-        codegen_hash = hash_generated_code(self._generated_code)
-        tree = hash_agent(agent, codegen_hash=codegen_hash)
+        template_hash = hash_template_ref(extract_template_ref(self._generated_code))
+        tree = hash_agent(agent, template_hash=template_hash)
         target_hash = tree.root
         container = self._get_container(agent.name)
 

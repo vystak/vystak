@@ -1,10 +1,12 @@
 """vystak apply — deploy or update agents and channels."""
 
+import contextlib
+import json
 from pathlib import Path
 
 import click
+from vystak.providers.base import GeneratedCode
 from vystak.secrets.env_loader import load_env_file
-from vystak_adapter_langchain import LangChainAdapter
 from vystak_provider_docker.transport_wiring import (
     build_routes_json,
     get_transport_plugin,
@@ -12,6 +14,67 @@ from vystak_provider_docker.transport_wiring import (
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
+
+
+def _bundle_project_dir(project_dir: Path, agent=None) -> GeneratedCode:
+    """Bundle the user's project tree into a GeneratedCode for the provider.
+
+    Skips dot-dirs (.git, .venv, .vystak), __pycache__, and *.pyc. The user's
+    Dockerfile, server.py, _vystak/ runtime, requirements.txt, vystak.yaml,
+    and tools/ all flow through verbatim.
+
+    When `agent` is provided, also drops a per-agent `agent.json` (Pydantic
+    dump) into the bundle. The runtime loader prefers it over `vystak.yaml`,
+    sidestepping multi-doc YAML loading inside the container.
+    """
+    files: dict[str, str] = {}
+    for path in project_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        if any(p.startswith(".") for p in path.parts):
+            # Skip .git, .venv, .vystak, .env, etc.
+            continue
+        rel = path.relative_to(project_dir).as_posix()
+        # Binary files are silently skipped; users shouldn't ship binaries
+        # through this path.
+        with contextlib.suppress(UnicodeDecodeError):
+            files[rel] = path.read_text()
+    if agent is not None:
+        files["agent.json"] = agent.model_dump_json(indent=2)
+    return GeneratedCode(files=files, entrypoint="server.py")
+
+
+def _validate_template_for_apply(project_dir: Path) -> None:
+    """Verify _vystak/manifest.json exists and matches vystak.yaml's framework.
+
+    Run before invoking the platform provider, so apply fails fast with a
+    clear scaffold-first message rather than blowing up deep in code
+    generation when a framework-specific runtime file is missing.
+    """
+    manifest_path = project_dir / "_vystak" / "manifest.json"
+    yaml_path = project_dir / "vystak.yaml"
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"_vystak/manifest.json not found at {project_dir}. "
+            f"Scaffold first: `vystak init --framework <name> --force .`"
+        )
+
+    if yaml_path.exists():
+        import yaml as _yaml
+
+        data = _yaml.safe_load(yaml_path.read_text()) or {}
+        framework = data.get("framework")
+        manifest = json.loads(manifest_path.read_text())
+        template_name = manifest["template"]["name"]
+        if framework and framework != template_name:
+            raise ValueError(
+                f"framework in vystak.yaml ({framework}) does not match "
+                f"_vystak/manifest.json template.name ({template_name}). "
+                f"Run: vystak init --framework {framework} --force ."
+            )
 
 
 @click.command()
@@ -56,10 +119,19 @@ def apply(files, file_path, force, env, env_file, allow_missing):
     base_dir = (
         paths[0].parent
         if paths[0].is_file()
-        else paths[0].parent
+        else paths[0]
         if paths[0].is_dir()
         else Path.cwd()
     )
+
+    # Validate _vystak/ is scaffolded and the framework recorded there
+    # matches the framework declared in vystak.yaml. Run this before
+    # loading definitions so a framework mismatch surfaces a clear
+    # "vystak init --framework ... --force ." message, rather than
+    # blowing up later in adapter codegen with a runtime ImportError.
+    project_dir = base_dir if base_dir.is_dir() else Path.cwd()
+    _validate_template_for_apply(project_dir)
+
     defs = load_definitions(paths, base_dir=base_dir)
     click.echo(f"Loaded {len(defs.agents)} agent(s), {len(defs.channels)} channel(s)")
 
@@ -77,7 +149,13 @@ def apply(files, file_path, force, env, env_file, allow_missing):
     # used during apply to push missing secrets into the vault; they are never
     # persisted by vystak. When the file is absent we silently continue — the
     # user may have pre-populated the vault by other means.
+    # Resolve relative .env against the project's base_dir so `vystak apply
+    # examples/foo` finds examples/foo/.env, not cwd/.env.
     env_path = Path(env_file)
+    if not env_path.is_absolute() and not env_path.exists() and base_dir is not None:
+        candidate = base_dir / env_file
+        if candidate.exists():
+            env_path = candidate
     env_values = load_env_file(env_path, optional=True)
     if env_values:
         click.echo(f"Env file: {env_path}  ({len(env_values)} value(s))")
@@ -112,24 +190,14 @@ def _run_provider_apply(
     env_values, and flags are threaded through correctly without having to
     stub out Azure / Docker clients.
     """
-    adapter = LangChainAdapter()
     deployed_agents: list[dict] = []
 
     for agent in agents:
         click.echo(f"\nAgent: {agent.name}")
 
-        click.echo("  Validating... ", nl=False)
-        errors = adapter.validate(agent)
-        if errors:
-            click.echo("FAILED")
-            for err in errors:
-                click.echo(f"    {err.field}: {err.message}", err=True)
-            raise SystemExit(1)
-        click.echo("OK")
-
-        click.echo("  Generating code... ", nl=False)
+        click.echo("  Bundling project... ", nl=False)
         agent_base = _find_agent_base_dir(agent.name, paths)
-        code = adapter.generate(agent, base_dir=agent_base)
+        code = _bundle_project_dir(agent_base, agent=agent)
         click.echo("OK")
 
         provider = get_provider(agent)
@@ -156,11 +224,11 @@ def _run_provider_apply(
         if hasattr(provider, "set_allow_missing"):
             provider.set_allow_missing(allow_missing)
 
-        # Hand the provider its generated code BEFORE plan() so the
-        # codegen-output digest contributes to the target_hash. Without
-        # this, changes to the framework adapter (turn_core.py, a2a.py,
-        # templates.py, …) wouldn't bump the hash and re-applies would
-        # report "Already up to date" against stale agent containers.
+        # Hand the provider its bundled project code BEFORE plan() so the
+        # bundle digest contributes to the target_hash. Without this,
+        # changes to the user's project files (server.py, tools/, _vystak/
+        # runtime, …) wouldn't bump the hash and re-applies would report
+        # "Already up to date" against stale agent containers.
         provider.set_generated_code(code)
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
@@ -228,9 +296,11 @@ def _run_provider_apply(
                     for sub in agent.subagents:
                         url = peer_urls.get(sub.name)
                         if url and url != "(unchanged)":
+                            base = url.rstrip("/")
                             routes[sub.name] = {
                                 "canonical": sub.canonical_name,
-                                "address": url.rstrip("/") + "/a2a",
+                                "address": base + "/a2a",
+                                "card_url": base + "/.well-known/agent.json",
                             }
                     if routes:
                         peer_routes = json.dumps(routes)

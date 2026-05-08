@@ -22,6 +22,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: local
     secrets: [{name: ANTHROPIC_API_KEY}]
@@ -107,6 +108,7 @@ def test_destroy_skips_default_path_cleanup_when_vault_declared(tmp_path, monkey
         "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
         "agents:\n"
         "  - name: assistant\n"
+        "    framework: langchain-python\n"
         "    model: sonnet\n"
         "    platform: local\n"
         "    secrets: [{name: ANTHROPIC_API_KEY}]\n"

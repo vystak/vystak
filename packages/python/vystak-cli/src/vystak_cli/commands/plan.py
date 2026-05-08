@@ -1,13 +1,36 @@
 """vystak plan — show what would change."""
 
+import contextlib
 from pathlib import Path
 
 import click
 from vystak.hash import hash_agent, hash_channel
-from vystak_adapter_langchain import LangChainAdapter
+from vystak.providers.base import GeneratedCode
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
+
+
+def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
+    """Bundle the user's project tree into a GeneratedCode for the provider.
+
+    Mirrors :func:`vystak_cli.commands.apply._bundle_project_dir` — kept as a
+    duplicate (not a shared import) because the helper is small and the two
+    commands evolve independently. Skips dot-dirs (.git, .venv, .vystak),
+    __pycache__, and *.pyc; binary files are silently dropped.
+    """
+    files: dict[str, str] = {}
+    for path in project_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        if any(p.startswith(".") for p in path.parts):
+            continue
+        rel = path.relative_to(project_dir).as_posix()
+        with contextlib.suppress(UnicodeDecodeError):
+            files[rel] = path.read_text()
+    return GeneratedCode(files=files, entrypoint="server.py")
 
 
 @click.command()
@@ -25,7 +48,7 @@ def plan(files, file_path):
     base_dir = paths[0].parent if paths[0].is_file() else paths[0].parent
     defs = load_definitions(paths, base_dir=base_dir)
 
-    adapter = LangChainAdapter()
+    project_dir = base_dir if base_dir.is_dir() else Path.cwd()
 
     for agent in defs.agents:
         click.echo(f"Agent: {agent.name}  ({agent.canonical_name})")
@@ -33,26 +56,20 @@ def plan(files, file_path):
         if agent.platform:
             click.echo(f"  Platform: {agent.platform.type} ({agent.platform.provider.type})")
 
-        errors = adapter.validate(agent)
-        if errors:
-            for err in errors:
-                click.echo(f"  Validation error: {err.field} — {err.message}", err=True)
-            continue
-
         try:
             provider = get_provider(agent)
             provider.set_agent(agent)
-            # Hand the provider its generated code BEFORE plan() so the
-            # codegen-output digest contributes to target_hash. Without this,
-            # codegen-only changes (e.g. turn_core.py, a2a.py, templates.py)
-            # show as "No changes" against a stale deployment.
+            # Hand the provider its bundled project code BEFORE plan() so the
+            # bundle digest contributes to target_hash. Without this, file-only
+            # changes (e.g. server.py, tools/, _vystak/ runtime) show as "No
+            # changes" against a stale deployment.
             try:
-                code = adapter.generate(agent)
+                code = _bundle_project_dir(project_dir)
                 provider.set_generated_code(code)
             except Exception:
-                # If generation fails (validation already passed, but generate
-                # may still hit edge cases), fall through with no codegen hash —
-                # the schema-only hash still captures most changes.
+                # Bundling failures (e.g. project_dir doesn't exist) fall
+                # through with no codegen hash — the schema-only hash still
+                # captures most changes.
                 pass
             current_hash = provider.get_hash(agent.name)
             deploy_plan = provider.plan(agent, current_hash)

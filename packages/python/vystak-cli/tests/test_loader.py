@@ -12,6 +12,7 @@ from vystak_cli.loader import (
 def sample_agent_yaml():
     return {
         "name": "test-bot",
+        "framework": "langchain-python",
         "model": {
             "name": "claude",
             "provider": {"name": "anthropic", "type": "anthropic"},
@@ -77,7 +78,7 @@ from vystak.schema.provider import Provider
 
 anthropic = Provider(name="anthropic", type="anthropic")
 model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-agent = Agent(name="py-bot", model=model)
+agent = Agent(name="py-bot", framework="langchain-python", model=model)
 """)
         agent = load_agent_from_file(path)
         assert agent.name == "py-bot"
@@ -107,8 +108,8 @@ class TestLoadDefinitions:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
             },
             "agents": [
-                {"name": "a", "model": "claude"},
-                {"name": "b", "model": "claude"},
+                {"name": "a", "framework": "langchain-python", "model": "claude"},
+                {"name": "b", "framework": "langchain-python", "model": "claude"},
             ],
         }
         path = tmp_path / "vystak.yaml"
@@ -129,7 +130,12 @@ class TestLoadDefinitions:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"},
             },
             "agents": [
-                {"name": "bot", "model": "claude", "platform": "local"},
+                {
+                    "name": "bot",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
             ],
             "channels": [
                 {
@@ -157,8 +163,8 @@ class TestLoadDefinitions:
             "anthropic = Provider(name='anthropic', type='anthropic')\n"
             "model = Model(name='claude', provider=anthropic, "
             "model_name='claude-sonnet-4-20250514')\n"
-            "bot_a = Agent(name='bot-a', model=model)\n"
-            "bot_b = Agent(name='bot-b', model=model)\n"
+            "bot_a = Agent(name='bot-a', framework='langchain-python', model=model)\n"
+            "bot_b = Agent(name='bot-b', framework='langchain-python', model=model)\n"
         )
         defs = load_definitions([path])
         assert len(defs.agents) == 2
@@ -179,7 +185,8 @@ class TestLoadDefinitions:
             "platform = Platform(name='local', type='docker', provider=docker)\n"
             "model = Model(name='claude', provider=anthropic, "
             "model_name='claude-sonnet-4-20250514')\n"
-            "bot = Agent(name='bot', model=model, platform=platform)\n"
+            "bot = Agent(name='bot', framework='langchain-python', "
+            "model=model, platform=platform)\n"
             "api = Channel(name='api', type=ChannelType.API, platform=platform)\n"
         )
         defs = load_definitions([path])
@@ -191,6 +198,7 @@ class TestLoadDefinitions:
         for name in ("a", "b"):
             data = {
                 "name": f"bot-{name}",
+                "framework": "langchain-python",
                 "model": {
                     "name": "claude",
                     "provider": {"name": "anthropic", "type": "anthropic"},
@@ -206,6 +214,7 @@ class TestLoadDefinitions:
         subdir.mkdir()
         data = {
             "name": "weather-bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -234,6 +243,7 @@ class TestLoadDefinitions:
         subdir.mkdir()
         agent_data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": "claude",
             "platform": "aca",
         }

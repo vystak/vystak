@@ -16,6 +16,7 @@ from vystak.schema.secret import Secret
 def _make_agent(name: str) -> Agent:
     return Agent(
         name=name,
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),

@@ -36,6 +36,9 @@ Thumbs.db
 .vystak/
 .agentstack/
 
+# Bundled templates copied into vystak-cli wheel at build time (build hook output)
+packages/python/vystak-cli/src/vystak_cli/templates/
+
 # Tooling workspaces (brainstorm sessions, local agent state)
 .superpowers/
 .worktrees/

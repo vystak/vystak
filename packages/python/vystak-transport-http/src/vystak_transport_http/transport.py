@@ -58,7 +58,7 @@ class HttpTransport(Transport):
         timeout: float,
     ) -> A2AResult:
         url = self.resolve_address(agent.canonical_name)
-        payload = self._build_payload("tasks/send", message, metadata)
+        payload = self._build_payload("message/send", message, metadata)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload)
@@ -77,7 +77,7 @@ class HttpTransport(Transport):
         timeout: float,
     ) -> AsyncIterator[A2AEvent]:
         url = self.resolve_address(agent.canonical_name)
-        payload = self._build_payload("tasks/sendSubscribe", message, metadata)
+        payload = self._build_payload("message/stream", message, metadata)
         async with (
             httpx.AsyncClient(timeout=timeout) as client,
             client.stream("POST", url, json=payload) as response,
@@ -180,15 +180,26 @@ class HttpTransport(Transport):
     def _build_payload(
         self, method: str, message: A2AMessage, metadata: dict[str, Any]
     ) -> dict[str, Any]:
+        # A2A v0.3 spec shape (`message/send`, `message/stream`). The SDK's
+        # v0.3 compat layer requires `kind: "message"` plus a non-empty
+        # `messageId` on the wire — using the correlation_id as the
+        # messageId keeps client/server callsites lined up for tracing.
+        # `kind: "text"` on each part is similarly required.
+        parts = [
+            {**(p if isinstance(p, dict) else {}), "kind": "text"}
+            for p in message.parts
+        ]
         return {
             "jsonrpc": "2.0",
             "id": str(uuid.uuid4()),
             "method": method,
             "params": {
-                "id": message.correlation_id,
                 "message": {
+                    "kind": "message",
+                    "messageId": message.correlation_id,
                     "role": message.role,
-                    "parts": message.parts,
+                    "parts": parts,
+                    "contextId": message.correlation_id,
                 },
                 "metadata": {**message.metadata, **metadata},
             },

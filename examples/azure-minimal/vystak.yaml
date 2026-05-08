@@ -1,4 +1,5 @@
 name: azure-bot
+framework: langchain-python
 instructions: |
   You are a minimal agent deployed to Azure Container Apps.
   Just chat and be helpful.

@@ -17,8 +17,18 @@ class TestLoadMultiYaml:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"},
             },
             "agents": [
-                {"name": "bot-a", "model": "claude", "platform": "local"},
-                {"name": "bot-b", "model": "claude", "platform": "local"},
+                {
+                    "name": "bot-a",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
+                {
+                    "name": "bot-b",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
             ],
         }
         agents, channels, _ = load_multi_yaml(data)
@@ -33,8 +43,18 @@ class TestLoadMultiYaml:
             "platforms": {"local": {"type": "docker", "provider": "docker"}},
             "models": {"claude": {"provider": "docker", "model_name": "claude-sonnet-4-20250514"}},
             "agents": [
-                {"name": "a", "model": "claude", "platform": "local"},
-                {"name": "b", "model": "claude", "platform": "local"},
+                {
+                    "name": "a",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
+                {
+                    "name": "b",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
             ],
         }
         agents, _channels, _vault = load_multi_yaml(data)
@@ -48,8 +68,8 @@ class TestLoadMultiYaml:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
             },
             "agents": [
-                {"name": "a", "model": "claude"},
-                {"name": "b", "model": "claude"},
+                {"name": "a", "framework": "langchain-python", "model": "claude"},
+                {"name": "b", "framework": "langchain-python", "model": "claude"},
             ],
         }
         agents, _channels, _vault = load_multi_yaml(data)
@@ -85,7 +105,14 @@ class TestLoadMultiYaml:
             },
             "platforms": {"aca": {"type": "container-apps", "provider": "azure"}},
             "models": {"claude": {"provider": "azure", "model_name": "claude-sonnet-4-20250514"}},
-            "agents": [{"name": "bot", "model": "claude", "platform": "aca"}],
+            "agents": [
+                {
+                    "name": "bot",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "aca",
+                },
+            ],
         }
         agents, _channels, _vault = load_multi_yaml(data)
         assert agents[0].platform.provider.config["location"] == "eastus2"
@@ -98,6 +125,7 @@ class TestLoadMultiYaml:
             "agents": [
                 {
                     "name": "bot",
+                    "framework": "langchain-python",
                     "model": {
                         "name": "claude",
                         "provider": {"name": "anthropic", "type": "anthropic"},
@@ -163,7 +191,14 @@ class TestLoadMultiYamlChannels:
             "models": {
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
             },
-            "agents": [{"name": "bot", "model": "claude", "platform": "local"}],
+            "agents": [
+                {
+                    "name": "bot",
+                    "framework": "langchain-python",
+                    "model": "claude",
+                    "platform": "local",
+                },
+            ],
             "channels": [
                 {"name": "api", "type": "api", "platform": "local"},
             ],

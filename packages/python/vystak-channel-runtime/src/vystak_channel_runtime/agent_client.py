@@ -69,12 +69,18 @@ class A2AAgentClient:
         stripped = agent_url.rstrip("/")
         url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
         request_id = str(uuid.uuid4())
+        # A2A v0.3 message/send shape (the SDK's v0.3 compat layer accepts
+        # this on /a2a). `kind: "message"` and `messageId` are required by
+        # the wire schema; using thread_id as messageId keeps a stable id
+        # per turn so downstream tasks dedupe correctly.
         params: dict[str, Any] = {
-            "id": thread_id,
-            # Google A2A canonical message shape — parts list, not bare content.
-            # vystak-adapter-langchain reads raw_message["parts"]; sending
-            # `content` here would surface as an empty message to the agent.
-            "message": {"role": "user", "parts": [{"text": text}]},
+            "message": {
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "role": "user",
+                "parts": [{"kind": "text", "text": text}],
+                "contextId": thread_id,
+            },
         }
         if history:
             params["history"] = [m.model_dump() for m in history]
@@ -83,7 +89,7 @@ class A2AAgentClient:
         body = {
             "jsonrpc": "2.0",
             "id": request_id,
-            "method": "tasks/send",
+            "method": "message/send",
             "params": params,
         }
         async with httpx.AsyncClient() as client:
@@ -119,11 +125,13 @@ class A2AAgentClient:
         url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
-            "id": thread_id,
-            # Google A2A canonical message shape — parts list, not bare content.
-            # vystak-adapter-langchain reads raw_message["parts"]; sending
-            # `content` here would surface as an empty message to the agent.
-            "message": {"role": "user", "parts": [{"text": text}]},
+            "message": {
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "role": "user",
+                "parts": [{"kind": "text", "text": text}],
+                "contextId": thread_id,
+            },
         }
         if history:
             params["history"] = [m.model_dump() for m in history]
@@ -132,7 +140,7 @@ class A2AAgentClient:
         body = {
             "jsonrpc": "2.0",
             "id": request_id,
-            "method": "tasks/sendSubscribe",
+            "method": "message/stream",
             "params": params,
         }
         # Retry only the pre-stream phase (connect + initial response).
@@ -283,6 +291,22 @@ class A2AAgentClient:
             msg = status.get("message") or {}
             parts = msg.get("parts") or []
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+
+            # Tool-call surfacing — executor tags message.metadata with
+            # {vystak_event: tool_call|tool_result, tool_name: ...} so the
+            # slack runtime can render typing-status hints. Map to a typed
+            # AgentChunk and short-circuit before the regular status path.
+            metadata = msg.get("metadata") or {}
+            ev_type = metadata.get("vystak_event")
+            if ev_type in ("tool_call", "tool_result"):
+                return AgentChunk(
+                    type=ev_type,
+                    delta=text,
+                    tool_name=metadata.get("tool_name"),
+                    data=metadata,
+                    raw=payload,
+                )
+
             is_final = bool(result.get("final")) or state == "completed"
             return AgentChunk(
                 type="final" if is_final else "status",

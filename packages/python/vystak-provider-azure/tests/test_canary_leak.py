@@ -40,6 +40,7 @@ def test_no_sentinel_in_generated_revision_json():
     )
     agent = Agent(
         name="test",
+        framework="langchain-python",
         model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
         secrets=[Secret(name="CANARY_SECRET")],
         workspace=workspace,

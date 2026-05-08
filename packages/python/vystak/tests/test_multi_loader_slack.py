@@ -14,8 +14,18 @@ BASE = {
         "sonnet": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"},
     },
     "agents": [
-        {"name": "weather-agent", "model": "sonnet", "platform": "local"},
-        {"name": "support-agent", "model": "sonnet", "platform": "local"},
+        {
+            "name": "weather-agent",
+            "framework": "langchain-python",
+            "model": "sonnet",
+            "platform": "local",
+        },
+        {
+            "name": "support-agent",
+            "framework": "langchain-python",
+            "model": "sonnet",
+            "platform": "local",
+        },
     ],
     "channels": [
         {

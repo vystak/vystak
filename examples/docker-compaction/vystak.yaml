@@ -17,6 +17,7 @@ models:
 
 agents:
   - name: chatty
+    framework: langchain-python
     instructions: |
       You are a verbose assistant. Always include a fresh 30-50 word
       preamble before answering. The preamble should describe what

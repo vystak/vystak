@@ -30,12 +30,13 @@ class AgentHashTree:
     grants: str
     # Compaction policy
     compaction: str
-    # Codegen output digest. Captures the actual generated server.py / Dockerfile /
-    # requirements bundle so changes to framework-adapter codegen modules
-    # (turn_core.py, a2a.py, templates.py, …) trigger redeploy even when the
-    # Agent schema hasn't moved. Defaults to "null" when callers don't have
-    # generated code in hand at plan time.
-    codegen: str
+    # Template digest. Captures the framework template's identity
+    # (``_vystak/manifest.json`` ``template.{name, version}``) so a template
+    # version bump triggers redeploy even when the Agent schema hasn't moved.
+    # Defaults to "null" when callers don't have a manifest in hand at plan
+    # time. Replaces the pre-Phase-9 ``codegen`` field which hashed emitted
+    # server.py / Dockerfile strings.
+    template: str
     root: str
 
 
@@ -59,7 +60,8 @@ class ChannelHashTree:
     # Codegen output digest. Captures the channel plugin's emitted
     # ``server.py`` / ``channel_config.json`` so changes to the plugin's
     # generator (or to ``server_template.SERVER_PY``) trigger redeploy
-    # even when the channel schema hasn't moved.
+    # even when the channel schema hasn't moved. (Channels still use string
+    # codegen — Phase 9's template-scaffold pivot was scoped to agents.)
     codegen: str
     root: str
 
@@ -140,6 +142,9 @@ def hash_generated_code(generated_code) -> str:
     Empty / None bundles return the canonical "null" hash so the schema-
     only branch and the codegen-aware branch produce the same root when
     no generated code is in hand.
+
+    Used by the channel hashing path. Agents now use
+    :func:`hash_template_ref` instead — see :func:`hash_agent`.
     """
     if generated_code is None or not getattr(generated_code, "files", None):
         return _hash_str(None)
@@ -148,18 +153,62 @@ def hash_generated_code(generated_code) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
-def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTree:
+def hash_template_ref(template_ref: dict | None) -> str:
+    """Hash a framework-template identity dict.
+
+    ``template_ref`` should be the ``{"name": ..., "version": ...}`` block
+    from ``_vystak/manifest.json``. Returns the canonical "null" hash when
+    callers don't have a manifest in hand. Replaces the pre-Phase-9
+    :func:`hash_generated_code` path for agents — instead of hashing the
+    emitted server.py source, we now hash just the template version, since
+    the user's project files are owned by the user (no longer regenerated
+    on every apply).
+    """
+    if not template_ref:
+        return _hash_str(None)
+    name = template_ref.get("name")
+    version = template_ref.get("version")
+    if name is None and version is None:
+        return _hash_str(None)
+    blob = json.dumps({"name": name, "version": version}, sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def extract_template_ref(generated_code) -> dict | None:
+    """Pull the ``{name, version}`` template-ref out of a bundled project.
+
+    Looks for ``_vystak/manifest.json`` in the bundle's files and returns
+    its ``template`` block. Returns ``None`` when the manifest is absent or
+    malformed — callers should fall through to the canonical "null" hash
+    via :func:`hash_template_ref(None)`.
+    """
+    if generated_code is None or not getattr(generated_code, "files", None):
+        return None
+    raw = generated_code.files.get("_vystak/manifest.json")
+    if not raw:
+        return None
+    try:
+        manifest = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    template = manifest.get("template") if isinstance(manifest, dict) else None
+    if not isinstance(template, dict):
+        return None
+    return template
+
+
+def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTree:
     """Compute the full hash tree for an agent definition.
 
-    When ``codegen_hash`` is provided, it contributes to the root so changes
-    to the framework adapter's emitted source (turn_core.py, a2a.py,
-    templates.py, …) bump the deploy hash even when the Agent schema hasn't
-    moved. Callers in providers' ``plan()`` should pass
-    ``hash_generated_code(self._generated_code)`` whenever generated code
-    is in hand. Defaults to the canonical "null" hash for backwards
-    compatibility with callers that haven't been wired through yet.
+    When ``template_hash`` is provided, it contributes to the root so a
+    template version bump (e.g. ``langchain-python 0.1.0 → 0.2.0``) triggers
+    redeploy even when the Agent schema hasn't moved. Callers in providers'
+    ``plan()`` should pass ``hash_template_ref(template_ref)`` derived from
+    the project's ``_vystak/manifest.json``. Defaults to the canonical
+    "null" hash when no manifest is in hand.
     """
     brain = hash_model(agent.model)
+    framework = _hash_str(agent.framework)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
     workspace = _hash_optional(agent.workspace)
@@ -178,11 +227,12 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
     )
     grants = compute_grants_hash(agent)
     compaction = _hash_optional(agent.compaction)
-    codegen = codegen_hash if codegen_hash is not None else _hash_str(None)
+    template = template_hash if template_hash is not None else _hash_str(None)
 
     sections = "|".join(
         [
             brain,
+            framework,
             skills,
             mcp_servers,
             workspace,
@@ -196,7 +246,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
             workspace_identity,
             grants,
             compaction,
-            codegen,
+            template,
         ]
     )
     root = hashlib.sha256(sections.encode()).hexdigest()
@@ -216,7 +266,7 @@ def hash_agent(agent: Agent, *, codegen_hash: str | None = None) -> AgentHashTre
         workspace_identity=workspace_identity,
         grants=grants,
         compaction=compaction,
-        codegen=codegen,
+        template=template,
         root=root,
     )
 

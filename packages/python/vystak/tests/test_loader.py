@@ -14,6 +14,7 @@ from vystak.schema.skill import Skill
 def sample_agent_dict():
     return {
         "name": "test-bot",
+        "framework": "langchain-python",
         "model": {
             "name": "claude",
             "provider": {"name": "anthropic", "type": "anthropic"},
@@ -59,7 +60,7 @@ class TestDumpAgent:
     def test_dump_yaml(self, tmp_path):
         anthropic = Provider(name="anthropic", type="anthropic")
         model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-        agent = Agent(name="test-bot", model=model)
+        agent = Agent(name="test-bot", framework="langchain-python", model=model)
         path = tmp_path / "agent.yaml"
         dump_agent(agent, path)
         loaded = yaml.safe_load(path.read_text())
@@ -68,7 +69,7 @@ class TestDumpAgent:
     def test_dump_json(self, tmp_path):
         anthropic = Provider(name="anthropic", type="anthropic")
         model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-        agent = Agent(name="test-bot", model=model)
+        agent = Agent(name="test-bot", framework="langchain-python", model=model)
         path = tmp_path / "agent.json"
         dump_agent(agent, path, format="json")
         loaded = json.loads(path.read_text())
@@ -79,6 +80,7 @@ class TestDumpAgent:
         model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
         agent = Agent(
             name="test-bot",
+            framework="langchain-python",
             model=model,
             skills=[Skill(name="greeting", tools=["say_hello"])],
         )
@@ -92,6 +94,7 @@ class TestLoadAgentWithServices:
     def test_load_sessions_postgres(self, tmp_path):
         data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -113,6 +116,7 @@ class TestLoadAgentWithServices:
     def test_load_sessions_sqlite(self, tmp_path):
         data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -131,6 +135,7 @@ class TestLoadAgentWithServices:
     def test_load_bring_your_own(self, tmp_path):
         data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -151,6 +156,7 @@ class TestLoadAgentWithServices:
     def test_load_services_list(self, tmp_path):
         data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -173,6 +179,7 @@ class TestLoadAgentWithServices:
     def test_load_old_format_still_works(self, tmp_path):
         data = {
             "name": "bot",
+            "framework": "langchain-python",
             "model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
@@ -198,6 +205,7 @@ class TestLoadAgentWithServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=model,
             sessions=Postgres(provider=docker),
         )

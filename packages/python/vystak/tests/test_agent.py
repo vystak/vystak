@@ -25,7 +25,7 @@ def sonnet(anthropic):
 
 class TestAgent:
     def test_minimal(self, sonnet):
-        agent = Agent(name="bot", model=sonnet)
+        agent = Agent(name="bot", framework="langchain-python", model=sonnet)
         assert agent.name == "bot"
         assert agent.model.model_name == "claude-sonnet-4-20250514"
         assert agent.skills == []
@@ -41,6 +41,7 @@ class TestAgent:
 
         agent = Agent(
             name="support-bot",
+            framework="langchain-python",
             model=sonnet,
             skills=[
                 Skill(name="refund-handling", tools=["lookup_order", "process_refund"]),
@@ -67,13 +68,13 @@ class TestAgent:
         assert agent.platform.type == "docker"
 
     def test_canonical_name_no_platform(self, sonnet):
-        agent = Agent(name="bot", model=sonnet)
+        agent = Agent(name="bot", framework="langchain-python", model=sonnet)
         assert agent.canonical_name == "bot.agents.default"
 
     def test_canonical_name_with_platform(self, sonnet):
         docker = Provider(name="docker", type="docker")
         platform = Platform(name="local", type="docker", provider=docker, namespace="prod")
-        agent = Agent(name="bot", model=sonnet, platform=platform)
+        agent = Agent(name="bot", framework="langchain-python", model=sonnet, platform=platform)
         assert agent.canonical_name == "bot.agents.prod"
 
     def test_model_required(self):
@@ -83,6 +84,7 @@ class TestAgent:
     def test_serialization_roundtrip(self, sonnet):
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             skills=[Skill(name="greeting", tools=["say_hello"])],
         )
@@ -96,6 +98,7 @@ class TestAgentServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             sessions=Postgres(provider=docker),
         )
@@ -107,6 +110,7 @@ class TestAgentServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             memory=Postgres(provider=docker),
         )
@@ -117,6 +121,7 @@ class TestAgentServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             services=[Redis(name="cache", provider=docker)],
         )
@@ -124,29 +129,45 @@ class TestAgentServices:
         assert agent.services[0].engine == "redis"
 
     def test_defaults_none(self, sonnet):
-        agent = Agent(name="bot", model=sonnet)
+        agent = Agent(name="bot", framework="langchain-python", model=sonnet)
         assert agent.sessions is None
         assert agent.memory is None
         assert agent.services == []
 
     def test_auto_name_sessions(self, sonnet):
         docker = Provider(name="docker", type="docker")
-        agent = Agent(name="bot", model=sonnet, sessions=Postgres(provider=docker))
+        agent = Agent(
+            name="bot",
+            framework="langchain-python",
+            model=sonnet,
+            sessions=Postgres(provider=docker),
+        )
         assert agent.sessions.name == "sessions"
 
     def test_auto_name_memory(self, sonnet):
         docker = Provider(name="docker", type="docker")
-        agent = Agent(name="bot", model=sonnet, memory=Postgres(provider=docker))
+        agent = Agent(
+            name="bot",
+            framework="langchain-python",
+            model=sonnet,
+            memory=Postgres(provider=docker),
+        )
         assert agent.memory.name == "memory"
 
     def test_explicit_name_preserved(self, sonnet):
         docker = Provider(name="docker", type="docker")
-        agent = Agent(name="bot", model=sonnet, sessions=Postgres(name="my-db", provider=docker))
+        agent = Agent(
+            name="bot",
+            framework="langchain-python",
+            model=sonnet,
+            sessions=Postgres(name="my-db", provider=docker),
+        )
         assert agent.sessions.name == "my-db"
 
     def test_bring_your_own_sessions(self, sonnet):
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             sessions=Postgres(connection_string_env="DATABASE_URL"),
         )
@@ -156,6 +177,7 @@ class TestAgentServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="support-bot",
+            framework="langchain-python",
             model=sonnet,
             platform=Platform(name="local", type="docker", provider=docker),
             sessions=Postgres(provider=docker),
@@ -170,6 +192,7 @@ class TestAgentServices:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=sonnet,
             sessions=Sqlite(provider=docker),
         )
@@ -186,6 +209,7 @@ def test_agent_subagents_defaults_to_empty_list():
 
     agent = Agent(
         name="solo",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="p", type="anthropic"),
@@ -202,8 +226,13 @@ def test_agent_subagents_accepts_agent_list():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", model=m)
-    assistant = Agent(name="assistant-agent", model=m, subagents=[weather])
+    weather = Agent(name="weather-agent", framework="langchain-python", model=m)
+    assistant = Agent(
+        name="assistant-agent",
+        framework="langchain-python",
+        model=m,
+        subagents=[weather],
+    )
     assert len(assistant.subagents) == 1
     assert assistant.subagents[0].name == "weather-agent"
 
@@ -216,9 +245,9 @@ def test_agent_subagent_self_reference_rejected():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    a = Agent(name="solo", model=m)
+    a = Agent(name="solo", framework="langchain-python", model=m)
     with pytest.raises(ValueError, match="cannot list itself"):
-        Agent(name="solo", model=m, subagents=[a])
+        Agent(name="solo", framework="langchain-python", model=m, subagents=[a])
 
 
 def test_agent_subagent_duplicate_names_rejected():
@@ -229,10 +258,15 @@ def test_agent_subagent_duplicate_names_rejected():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather1 = Agent(name="weather-agent", model=m)
-    weather2 = Agent(name="weather-agent", model=m)
+    weather1 = Agent(name="weather-agent", framework="langchain-python", model=m)
+    weather2 = Agent(name="weather-agent", framework="langchain-python", model=m)
     with pytest.raises(ValueError, match="duplicate"):
-        Agent(name="assistant", model=m, subagents=[weather1, weather2])
+        Agent(
+            name="assistant",
+            framework="langchain-python",
+            model=m,
+            subagents=[weather1, weather2],
+        )
 
 
 def test_agent_default_compaction_is_none():
@@ -242,6 +276,7 @@ def test_agent_default_compaction_is_none():
 
     a = Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -259,6 +294,7 @@ def test_agent_with_compaction_round_trips():
 
     a = Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -279,3 +315,57 @@ def test_compaction_reexported_from_schema():
     from vystak.schema.compaction import Compaction as C2
 
     assert C1 is C2
+
+
+def test_agent_framework_field_is_required():
+    """After Phase 8b, framework has no default — must be passed explicitly."""
+    import pytest
+    from pydantic import ValidationError
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    with pytest.raises(ValidationError, match="framework"):
+        Agent(
+            name="t",
+            model=Model(
+                name="m",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-6",
+            ),
+        )
+
+
+def test_agent_framework_is_serialized_in_dump():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="t",
+        framework="langchain-python",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    data = agent.model_dump()
+    assert data["framework"] == "langchain-python"
+
+
+def test_agent_framework_can_be_overridden():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="t",
+        framework="mastra-typescript",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    assert agent.framework == "mastra-typescript"

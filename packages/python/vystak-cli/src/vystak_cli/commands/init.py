@@ -1,44 +1,73 @@
-"""vystak init — create a starter agent definition."""
+"""vystak init — scaffold a new agent project from a framework template."""
 
 from pathlib import Path
 
 import click
 
-STARTER_YAML = """\
-name: my-agent
-model:
-  name: claude
-  provider:
-    name: anthropic
-    type: anthropic
-  model_name: claude-sonnet-4-20250514
-platform:
-  name: docker
-  type: docker
-  provider:
-    name: docker
-    type: docker
-sessions:
-  type: postgres
-  provider:
-    name: docker
-    type: docker
-skills:
-  - name: assistant
-    tools: []
-    prompt: You are a helpful assistant.
-secrets:
-  - name: ANTHROPIC_API_KEY
-"""
+from vystak_cli.manifest import scaffold_template
+from vystak_cli.templates import list_templates, resolve_template
+
+
+def init_command(
+    target: str,
+    framework: str | None = None,
+    force: bool = False,
+) -> None:
+    """Scaffold a new agent project from a framework template."""
+    framework = framework or "langchain-python"
+    info = resolve_template(framework)
+
+    target_path = Path(target).resolve()
+    cli_version = _cli_version()
+    scaffold_template(info.path, target_path, cli_version=cli_version, force=force)
+    click.echo(f"Scaffolded {framework}@{info.version} into {target_path}")
+
+
+def list_frameworks_command() -> None:
+    """Print bundled frameworks (one per line, name<TAB>version)."""
+    for info in list_templates():
+        click.echo(f"{info.name}\t{info.version}")
+
+
+def _cli_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("vystak-cli")
+    except Exception:  # noqa: BLE001
+        return "dev"
 
 
 @click.command()
-def init():
-    """Create a starter agent definition."""
-    path = Path("vystak.yaml")
-    if path.exists():
-        click.echo("Error: vystak.yaml already exists", err=True)
-        raise SystemExit(1)
-
-    path.write_text(STARTER_YAML)
-    click.echo(f"Created {path}")
+@click.argument("target", default=".")
+@click.option(
+    "--framework",
+    default=None,
+    help="Framework template to scaffold (default: langchain-python).",
+)
+@click.option(
+    "--list-frameworks",
+    "list_frameworks",
+    is_flag=True,
+    default=False,
+    help="List bundled framework templates and exit.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite an existing target directory.",
+)
+def init(target: str, framework: str | None, list_frameworks: bool, force: bool) -> None:
+    """Scaffold a new agent project from a framework template."""
+    if list_frameworks:
+        list_frameworks_command()
+        return
+    try:
+        init_command(target=target, framework=framework, force=force)
+    except ValueError as err:
+        click.echo(f"Error: {err}", err=True)
+        raise SystemExit(1) from err
+    except FileExistsError as err:
+        click.echo(f"Error: {err}", err=True)
+        raise SystemExit(1) from err

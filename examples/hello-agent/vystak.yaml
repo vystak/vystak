@@ -1,4 +1,5 @@
 name: hello-agent
+framework: langchain-python
 instructions: |
   You are a helpful assistant built with Vystak.
   Be concise, friendly, and always show your reasoning.
@@ -17,19 +18,11 @@ platform:
   provider:
     name: docker
     type: docker
-sessions:
-  type: sqlite
-  provider:
-    name: docker
-    type: docker
 skills:
   - name: assistant
     tools:
       - get_weather
       - get_time
-channels:
-  - name: api
-    type: api
 secrets:
   - name: ANTHROPIC_API_KEY
 port: 8085

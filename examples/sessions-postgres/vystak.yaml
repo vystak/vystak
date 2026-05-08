@@ -1,5 +1,6 @@
 # examples/sessions-postgres/vystak.yaml
 name: sessions-agent
+framework: langchain-python
 instructions: |
   You are a helpful assistant with persistent memory of our conversation.
   If the user has told you something before, remember it.

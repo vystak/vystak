@@ -34,11 +34,18 @@ def _build_app(handler) -> FastAPI:
         message = A2AMessage(
             role=msg_params.get("role", "user"),
             parts=msg_params.get("parts", []),
-            correlation_id=params.get("id") or metadata.get("correlation_id", ""),
+            # Phase 10: v0.3 spec puts the correlation/thread id on the
+            # message itself (`messageId`/`contextId`) rather than top-level
+            # `params.id`. Test fake reads either path for compatibility.
+            correlation_id=(
+                params.get("id")
+                or msg_params.get("messageId")
+                or metadata.get("correlation_id", "")
+            ),
             metadata=metadata,
         )
 
-        if body.get("method") == "tasks/sendSubscribe":
+        if body.get("method") == "message/stream":
 
             async def gen():
                 async for ev in handler.dispatch_a2a_stream(message, metadata):
@@ -185,7 +192,7 @@ class TestHttpTransportBasics:
         @app.post("/a2a")
         async def a2a_endpoint(request: Request):
             body = await request.json()
-            assert body.get("method") == "tasks/sendSubscribe"
+            assert body.get("method") == "message/stream"
 
             async def gen():
                 # Frame 1: valid A2AEvent (bare).

@@ -17,6 +17,7 @@ def _agent_fixture():
     anthropic = Provider(name="anthropic", type="anthropic")
     return Agent(
         name="assistant",
+        framework="langchain-python",
         model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-20250514"),
         secrets=[Secret(name="ANTHROPIC_API_KEY")],
         platform=platform,

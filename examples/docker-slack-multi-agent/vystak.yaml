@@ -15,6 +15,7 @@ models:
 
 agents:
   - name: weather-agent
+    framework: langchain-python
     instructions: |
       You are a weather specialist. When asked about weather, use the
       get_weather tool to fetch real data and answer concisely.
@@ -27,6 +28,7 @@ agents:
       - {name: ANTHROPIC_API_URL}
 
   - name: time-agent
+    framework: langchain-python
     instructions: |
       You are a time specialist. Use the get_time tool to fetch the
       current UTC time. Answer concisely.
@@ -39,6 +41,7 @@ agents:
       - {name: ANTHROPIC_API_URL}
 
   - name: assistant-agent
+    framework: langchain-python
     instructions: |
       You are a friendly general-purpose assistant.
       When the user asks about weather, use ask_weather_agent.
@@ -76,6 +79,9 @@ agents:
     memory:
       type: postgres
       provider: {name: docker, type: docker}
+    compaction:
+      name: assistant-compaction
+      mode: conservative
     secrets:
       - {name: ANTHROPIC_API_KEY}
       - {name: ANTHROPIC_API_URL}

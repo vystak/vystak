@@ -10,7 +10,16 @@ import vystak_channel_discord  # noqa: F401 — registers ChannelType.DISCORD pl
 import vystak_channel_slack  # noqa: F401 — registers ChannelType.SLACK plugin
 
 from vystak_cli import __version__
-from vystak_cli.commands import apply, destroy, init, logs, plan, secrets, status
+from vystak_cli.commands import (
+    apply_cmd,
+    destroy_cmd,
+    init_cmd,
+    logs_cmd,
+    plan_cmd,
+    secrets_cmd,
+    status_cmd,
+    update_cmd,
+)
 
 
 @click.group()
@@ -19,13 +28,14 @@ def cli():
     """Vystak — declarative AI agent orchestration."""
 
 
-cli.add_command(init)
-cli.add_command(plan)
-cli.add_command(apply)
-cli.add_command(destroy)
-cli.add_command(status)
-cli.add_command(logs)
-cli.add_command(secrets)
+cli.add_command(init_cmd)
+cli.add_command(plan_cmd)
+cli.add_command(apply_cmd)
+cli.add_command(destroy_cmd)
+cli.add_command(status_cmd)
+cli.add_command(logs_cmd)
+cli.add_command(secrets_cmd)
+cli.add_command(update_cmd)
 
 
 if __name__ == "__main__":

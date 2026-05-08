@@ -38,7 +38,7 @@ def _platform(namespace: str = "default") -> Platform:
 
 
 def _agent(name: str, port: int | None = None) -> Agent:
-    return Agent(name=name, model=_MODEL, port=port)
+    return Agent(name=name, framework="langchain-python", model=_MODEL, port=port)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,11 @@ def test_build_peer_routes_single_agent():
     assert "alpha" in routes
     assert routes["alpha"]["canonical"] == "alpha.agents.default"
     assert routes["alpha"]["address"] == "http://vystak-alpha:8000/a2a"
+    # Phase 10: card_url alongside address so the SDK client can resolve.
+    assert (
+        routes["alpha"]["card_url"]
+        == "http://vystak-alpha:8000/.well-known/agent.json"
+    )
 
 
 def test_build_peer_routes_multiple_agents():
@@ -90,6 +95,14 @@ def test_build_peer_routes_multiple_agents():
     assert set(routes.keys()) == {"svc-a", "svc-b"}
     assert routes["svc-a"]["address"] == "http://vystak-svc-a:8000/a2a"
     assert routes["svc-b"]["address"] == "http://vystak-svc-b:9000/a2a"
+    assert (
+        routes["svc-a"]["card_url"]
+        == "http://vystak-svc-a:8000/.well-known/agent.json"
+    )
+    assert (
+        routes["svc-b"]["card_url"]
+        == "http://vystak-svc-b:9000/.well-known/agent.json"
+    )
 
 
 def test_build_peer_routes_empty():
@@ -113,6 +126,7 @@ def test_build_routes_json_is_valid_json():
 
     assert "bot" in parsed
     assert parsed["bot"]["address"] == "http://vystak-bot:8000/a2a"
+    assert parsed["bot"]["card_url"] == "http://vystak-bot:8000/.well-known/agent.json"
 
 
 def test_build_routes_json_empty_agents():

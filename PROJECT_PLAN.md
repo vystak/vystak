@@ -330,6 +330,155 @@ how clients call the agent — they're transparent under
 
 ---
 
+### Phase 18: Framework Template Scaffold (Complete — May 2026)
+
+**Pivot from runtime codegen to user-owned scaffolds.** The old
+`vystak-adapter-langchain` package emitted literal Python source strings
+on every `vystak apply` — `templates.py` was ~1400 lines emitting ~1500
+lines of `server.py` / `a2a.py` / `responses.py` into each agent's build
+context. That shape made testing shallow, debugging indirect, and
+refactors brittle.
+
+The replacement: a **framework template** package
+(`vystak-template-langchain-python`) that ships a real, testable runtime
+under `_vystak/runtime/` — `app_factory.py`, `graph.py`, `prompt_callable.py`,
+`a2a/`, `compaction/`, `openai/` — plus a thin `server.py` bootstrap that
+the user owns and edits. `vystak init --framework langchain-python` copies
+the scaffold into the user's project directory; `_vystak/manifest.json`
+records `{template.name, template.version}` so the CLI can detect drift
+and offer `vystak update`.
+
+- **No more codegen path.** `vystak plan` / `vystak apply` no longer call
+  any framework adapter. The CLI bundles the user's project tree
+  (`server.py`, `_vystak/runtime/`, `tools/`, `requirements.txt`,
+  `vystak.yaml`) into a `GeneratedCode(files=...)` and hands that to the
+  platform provider verbatim. Skips dot-dirs, `__pycache__`, `*.pyc`,
+  binary files.
+- **Hash-tree change detection.** `AgentHashTree.codegen` field renamed
+  to `template`. Computation changed: instead of hashing emitted source
+  strings, we hash the manifest's `{name, version}` block via new
+  `hash_template_ref()` + `extract_template_ref()` helpers. A template
+  version bump still triggers redeploy, but day-to-day apply is no
+  longer churned by codegen-string deltas.
+- **Schema validation.** `_validate_template_for_apply()` runs before
+  any provider work — verifies `_vystak/manifest.json` exists and that
+  its `template.name` matches `vystak.yaml`'s `framework`. Surfaces a
+  scaffold-first error message rather than blowing up later.
+- **Package deleted.** `packages/python/vystak-adapter-langchain/` is
+  gone (~8200 lines removed across src + tests). Workspace +
+  `vystak-cli` dependencies cleaned up. Per-file E501 ignores for the
+  deleted module's codegen sources removed from `pyproject.toml`.
+- **Release-test cleanup.** `test_C1_postgres_compaction.py` (specific
+  to the codegen-bundled compaction path) deleted in favor of
+  `test_template_smoke.py` from Phase 7.
+- **`vystak update`.** New CLI command re-stamps the manifest and
+  surfaces version drift with strict / minor / major modes.
+
+`just lint-python` clean; `just test-python` green at 1120 passing.
+
+**Post-deploy fixes** (surfaced when the migrated `examples/docker-slack-multi-agent`
+was actually deployed against Docker + real Slack tokens — Phase 9 stopped at
+"scaffold loads in-process," real e2e turned up another wave):
+
+- `vystak apply <dir>` resolved `base_dir` as the dir's *parent* — fixed.
+- Docker provider was overwriting the user-owned `Dockerfile` from the
+  scaffold with its own generated one — now skips generation when the
+  user provided a Dockerfile.
+- `ChatCompletionsHandler` passed `config={}` to `graph.ainvoke`; LangGraph
+  1.x rejects that when the graph has a checkpointer. Fixed via per-call
+  ephemeral `chat-<uuid>` thread_id.
+- Prompt callable's `(state, config)` signature mismatched LangGraph's
+  prompt-as-callable contract (state-only) — `config` made optional.
+- `vystak update --force` was running the full scaffold copy and clobbering
+  user-owned `vystak.yaml` / `server.py` / `Dockerfile`. Now refreshes only
+  the `_vystak/` namespace.
+- Manifest writer didn't deep-filter nested `__pycache__` from the source
+  template — added recursive filter via `shutil.ignore_patterns`.
+- Scaffold's `pyproject.toml` carried `[tool.uv.sources] vystak = { workspace = true }`
+  which broke `uv run` from inside scaffolded user projects — sanitizer
+  strips it during scaffold.
+- Lazy SQLite/Postgres checkpointers: LangGraph's `from_conn_string`
+  returns an async context manager, not the saver. Fixed via
+  `AsyncExitStack` in the FastAPI lifespan to keep the context open for
+  the app's lifetime; postgres store also gets `setup()` called for
+  schema bootstrap.
+- Long-term memory store was never wired. Added `build_memory_store()` +
+  lifespan integration; `MemoryManager(store=None)` is a safe no-op.
+- Multi-doc YAML couldn't load via `_vystak.runtime.config.load_agent`
+  (only single-agent shape). CLI now bundles a per-agent `agent.json`
+  Pydantic dump alongside `vystak.yaml`; runtime loader prefers it.
+- `_extract_text` returned raw Anthropic content blocks (thinking + text
+  mixed) instead of plain strings — Slack's `chat.postMessage` rejected
+  with `no_text`. Fixed: flatten to text-only.
+- `.env` resolved against cwd, not against the project's base_dir.
+- `template.requirements.txt` missed `langgraph-checkpoint-{sqlite,postgres}`,
+  `aiosqlite`, `psycopg[binary,pool]` — added.
+- Subagent tools (the `ask_<peer>` functions for parent agents with
+  `subagents:`) weren't generated by the new template. Added
+  `_vystak/runtime/subagents.py` that reads `VYSTAK_ROUTES_JSON` and
+  produces one LangChain `@tool` per peer.
+
+---
+
+### Phase 19: Native A2A via `a2a-sdk` (Complete — May 2026)
+
+**Replaced ~250 LOC of hand-rolled A2A wire code with Google's official
+[`a2a-sdk`](https://pypi.org/project/a2a-sdk/) Python package** (v1.0.x).
+Phase 9's `_vystak/runtime/a2a/` (handler, tasks, card) was a faithful
+port of what the old codegen emitted, but it tracked an older revision of
+the A2A spec and lacked first-class support for push notifications,
+authenticated cards, and the spec-current `message/send` / `message/stream`
+methods. Going native gets all of that for free.
+
+- **Server side.** `LangGraphExecutor(AgentExecutor)` drives the SDK's
+  task lifecycle from a compiled LangGraph. Mounted via
+  `DefaultRequestHandlerV2` + `create_jsonrpc_routes` +
+  `create_agent_card_routes`. Card URL stays at `/.well-known/agent.json`
+  (with the dot, not the SDK default's hyphen) for back-compat with our
+  existing channel + chat clients.
+- **Client side.** `subagents.py` uses `a2a.client.create_client(card_url)`
+  in place of raw httpx; tool docstrings fold in the peer's own
+  `card.description` + `card.skills` so the LLM sees agent-authored
+  delegation guidance instead of vystak boilerplate. Card fetch is
+  best-effort with bounded retries (~0.5s, 1s, 2s) to handle Docker
+  startup races.
+- **Wire format migration.** `VYSTAK_ROUTES_JSON` (provider-injected
+  per-agent peer URLs) gained a `card_url` field alongside the legacy
+  `address`. The SDK accepts only the spec-current `message/send` and
+  `message/stream` methods — `vystak-channel-runtime/agent_client.py` and
+  `vystak-transport-http/transport.py` were migrated to match. NATS
+  transport stays on the legacy methods (its dispatcher is internal).
+- **Streaming preserved.** Token deltas surface as
+  `update_status(WORKING, message=Message(parts=[Part(text=delta)]))`,
+  which the SDK's v0.3-compat layer serializes into the SSE
+  `status-update` shape that vystak-channel-slack already accumulates
+  for live `chat.update` rendering in Slack.
+- **Tool-call surfacing.** `on_tool_start` / `on_tool_end` events fire
+  status updates with `message.metadata = {vystak_event: tool_call|tool_result, tool_name: ...}`.
+  vystak-channel-slack's `on_chunk` maps these to typing-status hints
+  ("is calling \`get_weather\`…"), restoring the visibility from the
+  pre-Phase-9 codegen path.
+- **SDK quirk: protobuf 5.x compat.** `a2a-sdk` 1.0.2's
+  `validate_proto_required_fields` references `field.label`, removed in
+  protobuf C-extension >=5.x. `_vystak/runtime/a2a_native/_sdk_compat.py`
+  monkey-patches the validator at import time. Once the SDK ships the
+  upstream fix, the patch becomes unnecessary.
+- **Image size.** Adding `a2a-sdk[http-server]` and its transitive deps
+  (protobuf, googleapis-common-protos, json-rpc, sse-starlette, …)
+  grew an agent image from ~444 MB to ~506 MB (+62 MB). Acceptable for
+  the spec-fidelity gain.
+- **Deleted.** The entire `_vystak/runtime/a2a/` namespace plus its
+  ~600 LOC of golden-file + handler tests (the wire shape is now the
+  SDK's responsibility, not ours to pin).
+- **Verified end-to-end.** `examples/docker-slack-multi-agent` —
+  assistant agent + weather + time + Slack channel + Postgres memory +
+  conservative compaction — all containers up, Slack Bolt connected via
+  Socket Mode, real subagent A2A round-trips work
+  (`weather in Berlin in one word` → `Cloudy`), tool-call typing-status
+  hints render in Slack, streaming updates the slack message in place.
+
+---
+
 ## Planned: Phase 16 — Azure Provider Phase 2b/2c
 
 ### Phase 2b: Postgres + VNet + Key Vault
@@ -431,80 +580,6 @@ how clients call the agent — they're transparent under
 
 ---
 
-## Planned: Phase 18 — LangChain Adapter as a Prebuilt Package
-
-**Status:** planned
-
-Today `vystak-adapter-langchain` is a **codegen** package: it emits literal Python source strings (`templates.py`, `a2a.py`, `responses.py`) that get written into each agent's build context as `server.py`, `a2a.py`, etc. The generated container copies them + installs dependencies and runs the result. This shape has real costs:
-
-- **Testing is shallow.** We can only assert against emitted source strings (e.g., "does the output contain `class ResponsesHandler:`?"). Runtime behavior — the actual dispatch paths, error handling, streaming semantics — is tested end-to-end via Docker or not at all.
-- **Debugging is indirect.** A bug inside the emitted code requires tracing back to the `lines.append(...)` call that generated it.
-- **Refactoring is high-friction.** Changing a behavior in the handler means editing string templates; linters and type-checkers don't help.
-- **Generated source bloat.** `templates.py` is ~1400 lines emitting ~1500 lines of Python. The emitted code is verbose by nature because it has to inline every import, every helper.
-- **Version drift.** Multiple agents deployed at different times hold frozen copies of the emitted logic. Fixing a bug requires redeploying every agent.
-
-### Target shape
-
-Refactor `vystak-adapter-langchain` into a **prebuilt, configurable Python package**:
-
-- Ships as `vystak-adapter-langchain` on PyPI (eventually) or bundled as source (today's transport pattern).
-- Exports classes and a factory: `build_langchain_agent_app(agent: Agent) -> FastAPI`.
-- The factory constructs LangGraph + `A2AHandler` + `ResponsesHandler` + `ServerDispatcher` + FastAPI routes at runtime, reading the `Agent` Pydantic model for config.
-- Generated container's `server.py` shrinks to ~10 lines:
-  ```python
-  # Emitted:
-  import logging
-  logging.basicConfig(level="INFO", format="...")
-
-  from vystak_adapter_langchain.runtime import build_agent_app
-  from agent_def import AGENT  # AGENT = Agent(...) — also emitted
-
-  app = build_agent_app(AGENT)
-  ```
-- Docker build context bundles `vystak`, `vystak_transport_*`, `vystak_adapter_langchain` source trees (same mechanism used for transports today).
-
-### What moves / stays
-
-- `a2a.py` → `vystak_adapter_langchain.a2a` — real classes (`A2AHandler`, task manager, agent card builder).
-- `templates.py` → `vystak_adapter_langchain.runtime` + submodules — real FastAPI app builders, model provider factories, MCP integration.
-- `responses.py` → `vystak_adapter_langchain.responses` — real `ResponsesHandler`, event stream builders.
-- Codegen stays only for the thin `server.py` bootstrap + `agent_def.py` (serialized Agent spec the container reads at startup).
-
-### Unit tests
-
-Full coverage becomes possible:
-- `A2AHandler.dispatch()` with a fake LangGraph returning canned events.
-- `ResponsesHandler.create_stream()` asserting each OpenAI event shape.
-- `MCP` integration — mock MCP server, verify tool registration.
-- Memory / session store integration tests in-process.
-- FastAPI route behavior via `fastapi.testclient.TestClient`.
-
-### Migration strategy
-
-1. Extract current emitted logic into real module files one component at a time: `A2AHandler` first (lowest coupling), then `ResponsesHandler`, then `MemoryManager`, then the LangGraph builder, then the FastAPI app factory.
-2. Each extracted component gets unit tests before the codegen template stops emitting its source.
-3. Emitted `server.py` shrinks incrementally: every round of extraction removes ~100-200 lines from the emitted template.
-4. Final state: `templates.py` shrinks to ~50 lines emitting just the bootstrap. `a2a.py` and `responses.py` codegen files are deleted.
-5. The Docker provider's source-bundling loop already has the mechanism — just add `vystak_adapter_langchain` to the bundled list.
-
-### Tasks (high-level)
-
-- [ ] Extract `TaskManager` (current A2A state machine) into `vystak_adapter_langchain.tasks` with unit tests
-- [ ] Extract `A2AHandler` into `vystak_adapter_langchain.a2a` with unit tests (replaces current codegen)
-- [ ] Extract `ResponsesHandler` into `vystak_adapter_langchain.responses` with unit tests
-- [ ] Extract `MemoryManager` + memory tool dispatch into `vystak_adapter_langchain.memory` with unit tests
-- [ ] Extract LangGraph construction into `vystak_adapter_langchain.graph` with unit tests (mock models)
-- [ ] Extract MCP wiring into `vystak_adapter_langchain.mcp` with unit tests
-- [ ] Factory `build_agent_app(agent: Agent) -> FastAPI` in `vystak_adapter_langchain.runtime`
-- [ ] Rewrite `templates.py` to emit a ~50-line bootstrap referencing the factory
-- [ ] Docker provider bundles `vystak_adapter_langchain` source into agent build contexts
-- [ ] End-to-end verification on `docker-multi-chat-nats` — behavior parity with the codegen era
-- [ ] Delete `a2a.py` and `responses.py` codegen modules (their logic now lives in the real package)
-
-Estimated size: 8-10 tasks, comparable to Plan A/B scope. Likely a multi-week effort.
-
----
-
 ## Architecture
 
 ```
@@ -543,7 +618,7 @@ Estimated size: 8-10 tasks, comparable to Plan A/B scope. Likely a multi-week ef
 |---------|-------------|--------|
 | `vystak` | Core SDK — schema, hash, loader, provisioning engine | Complete |
 | `vystak-cli` | CLI — init, plan, apply, destroy, status, logs | Complete |
-| `vystak-adapter-langchain` | LangChain/LangGraph code generator | Complete |
+| `vystak-template-langchain-python` | LangChain/LangGraph framework template (scaffolded into the user's project — replaces the deleted `vystak-adapter-langchain` codegen package) | Complete |
 | `vystak-provider-docker` | Docker deployment provider (provision graph) | Complete |
 | `vystak-provider-azure` | Azure Container Apps provider | Complete (Phase 2a) |
 | `vystak-gateway` | Gateway — routing, registration, health tracking | Complete |

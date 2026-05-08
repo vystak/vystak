@@ -1,5 +1,6 @@
 # examples/memory-agent/vystak.yaml
 name: memory-agent
+framework: langchain-python
 instructions: |
   You are a personal assistant with long-term memory.
   Remember important facts the user tells you (name, preferences, projects).

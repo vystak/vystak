@@ -42,7 +42,7 @@ def test_resolve_address_for_docker_dns():
     pl = Platform(name="main", type="docker", provider=provider, namespace="prod")
     _openai = Provider(name="openai", type="openai", api_key_env="OPENAI_API_KEY")
     model = Model(name="gpt-4o", model_name="gpt-4o", provider=_openai)
-    agent = Agent(name="my-agent", model=model, port=9000)
+    agent = Agent(name="my-agent", framework="langchain-python", model=model, port=9000)
     url = p.resolve_address_for(agent, pl)
     # Matches DockerAgentNode's container naming: `vystak-{agent_name}`.
     assert url == "http://vystak-my-agent:9000/a2a"
@@ -55,6 +55,6 @@ def test_resolve_address_for_default_port():
     pl = Platform(name="main", type="docker", provider=provider, namespace="default")
     _openai = Provider(name="openai", type="openai", api_key_env="OPENAI_API_KEY")
     model = Model(name="gpt-4o", model_name="gpt-4o", provider=_openai)
-    agent = Agent(name="worker", model=model)
+    agent = Agent(name="worker", framework="langchain-python", model=model)
     url = p.resolve_address_for(agent, pl)
     assert url == "http://vystak-worker:8000/a2a"

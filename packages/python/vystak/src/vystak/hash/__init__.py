@@ -6,9 +6,11 @@ from vystak.hash.tree import (
     ChannelHashTree,
     WorkspaceHashTree,
     compute_grants_hash,
+    extract_template_ref,
     hash_agent,
     hash_channel,
     hash_generated_code,
+    hash_template_ref,
     hash_workspace,
 )
 
@@ -17,10 +19,12 @@ __all__ = [
     "ChannelHashTree",
     "WorkspaceHashTree",
     "compute_grants_hash",
+    "extract_template_ref",
     "hash_agent",
     "hash_channel",
     "hash_dict",
     "hash_generated_code",
     "hash_model",
+    "hash_template_ref",
     "hash_workspace",
 ]

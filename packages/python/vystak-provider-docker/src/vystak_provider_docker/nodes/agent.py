@@ -116,18 +116,17 @@ class DockerAgentNode(Provisionable):
             if _openai_src.exists():
                 (build_dir / "openai_types.py").write_text(_openai_src.read_text())
 
-            # Bundle unpublished vystak + vystak_adapter_langchain + transports
-            # source trees onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
-            # vystak_adapter_langchain is bundled because the generated server.py
-            # imports from its `compaction` subpackage when compaction is enabled.
+            # Bundle unpublished vystak + transport source trees onto the
+            # container's PYTHONPATH (via COPY . . in the Dockerfile). The
+            # framework template ships its own runtime under _vystak/ (already
+            # bundled above via _generated_code.files), so no framework adapter
+            # source needs to be copied here.
             import vystak
-            import vystak_adapter_langchain
             import vystak_transport_http
             import vystak_transport_nats
 
             _bundled_mods = (
                 vystak,
-                vystak_adapter_langchain,
                 vystak_transport_http,
                 vystak_transport_nats,
             )
@@ -138,66 +137,75 @@ class DockerAgentNode(Provisionable):
                     shutil.rmtree(_dst)
                 shutil.copytree(_src, _dst)
 
-            # Build Dockerfile
-            mcp_installs = ""
-            needs_node = False
-            if self._agent.mcp_servers:
-                install_cmds = []
-                for mcp in self._agent.mcp_servers:
-                    if mcp.install:
-                        install_cmds.append(f"RUN {mcp.install}")
-                    for field in (mcp.install or "", mcp.command or ""):
-                        if "npm" in field or "npx" in field:
-                            needs_node = True
-                if install_cmds:
-                    mcp_installs = "\n".join(install_cmds) + "\n"
+            # Use the user's Dockerfile when scaffolded by the framework template
+            # (it's already in build_dir from _generated_code.files). Only generate
+            # one when the user hasn't provided one — needed for legacy/vault paths
+            # that customize the build with sidecars or shims.
+            user_dockerfile = build_dir / "Dockerfile"
+            user_provided_dockerfile = user_dockerfile.exists()
 
-            node_install = ""
-            if needs_node:
-                node_install = (
-                    "RUN apt-get update && apt-get install -y nodejs npm "
-                    "&& rm -rf /var/lib/apt/lists/*\n"
+            if not user_provided_dockerfile:
+                mcp_installs = ""
+                needs_node = False
+                if self._agent.mcp_servers:
+                    install_cmds = []
+                    for mcp in self._agent.mcp_servers:
+                        if mcp.install:
+                            install_cmds.append(f"RUN {mcp.install}")
+                        for field in (mcp.install or "", mcp.command or ""):
+                            if "npm" in field or "npx" in field:
+                                needs_node = True
+                    if install_cmds:
+                        mcp_installs = "\n".join(install_cmds) + "\n"
+
+                node_install = ""
+                if needs_node:
+                    node_install = (
+                        "RUN apt-get update && apt-get install -y nodejs npm "
+                        "&& rm -rf /var/lib/apt/lists/*\n"
+                    )
+
+                dockerfile_content = (
+                    "FROM python:3.11-slim\n"
+                    "WORKDIR /app\n"
+                    f"{node_install}"
+                    f"{mcp_installs}"
+                    "COPY requirements.txt .\n"
+                    "RUN pip install --no-cache-dir -r requirements.txt\n"
+                    "COPY . .\n"
                 )
+                if self._vault_secrets_volume:
+                    from vystak_provider_docker.templates import generate_entrypoint_shim
 
-            dockerfile_content = (
-                "FROM python:3.11-slim\n"
-                "WORKDIR /app\n"
-                f"{node_install}"
-                f"{mcp_installs}"
-                "COPY requirements.txt .\n"
-                "RUN pip install --no-cache-dir -r requirements.txt\n"
-                "COPY . .\n"
-            )
-            if self._vault_secrets_volume:
-                from vystak_provider_docker.templates import generate_entrypoint_shim
-
-                (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
+                    (build_dir / "entrypoint-shim.sh").write_text(generate_entrypoint_shim())
+                    dockerfile_content += (
+                        "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh\n"
+                        "RUN chmod +x /vystak/entrypoint-shim.sh\n"
+                        'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]\n'
+                    )
+                if self._workspace_host:
+                    dockerfile_content += (
+                        "RUN mkdir -p /vystak && ln -sf /shared/ssh /vystak/ssh\n"
+                    )
                 dockerfile_content += (
-                    "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh\n"
-                    "RUN chmod +x /vystak/entrypoint-shim.sh\n"
-                    'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]\n'
+                    f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
                 )
-            if self._workspace_host:
-                # Agent-side SSH keys are rendered by the vault-agent sidecar
-                # into /shared/ssh/* (the agent-secrets volume mounted at
-                # /shared). Expose them at the canonical /vystak/ssh/* path
-                # via a symlink — agent-side code reads from /vystak/ssh/.
-                dockerfile_content += (
-                    "RUN mkdir -p /vystak && ln -sf /shared/ssh /vystak/ssh\n"
-                )
-            dockerfile_content += (
-                f'CMD ["python", "{self._generated_code.entrypoint}"]\n'
-            )
-            (build_dir / "Dockerfile").write_text(dockerfile_content)
+                (build_dir / "Dockerfile").write_text(dockerfile_content)
 
             # Build image
             image_tag = f"{container_name}:latest"
             self._client.images.build(path=str(build_dir), tag=image_tag)
 
             # Build env vars
+            agent_port = self._agent.port or 8000
             env: dict[str, str] = {
                 "VYSTAK_TRANSPORT_TYPE": "http",
                 "VYSTAK_ROUTES_JSON": self._peer_routes_json,
+                # Public URL the agent advertises in its AgentCard. Peers
+                # use this URL to call back via the SDK client; it MUST be
+                # the Docker DNS hostname, not localhost (which is the
+                # listener-side default in app_factory).
+                "VYSTAK_AGENT_PUBLIC_URL": f"http://{container_name}:{agent_port}",
             }
             for secret in self._agent.secrets:
                 value = os.environ.get(secret.name)

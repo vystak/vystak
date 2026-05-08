@@ -18,10 +18,23 @@ def _build_agents():
     model = Model(
         name="m", provider=anthropic, model_name="claude-sonnet-4-20250514",
     )
-    weather = Agent(name="weather-agent", model=model, platform=platform)
-    time = Agent(name="time-agent", model=model, platform=platform)
+    weather = Agent(
+        name="weather-agent",
+        framework="langchain-python",
+        model=model,
+        platform=platform,
+    )
+    time = Agent(
+        name="time-agent",
+        framework="langchain-python",
+        model=model,
+        platform=platform,
+    )
     assistant = Agent(
-        name="assistant-agent", model=model, platform=platform,
+        name="assistant-agent",
+        framework="langchain-python",
+        model=model,
+        platform=platform,
         subagents=[weather, time],
     )
     return weather, time, assistant
