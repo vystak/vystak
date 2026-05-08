@@ -1,17 +1,24 @@
 """Subagent tool generation using a2a-sdk's native client.
 
 For each subagent declared in agent.subagents, produces a LangChain @tool
-named `ask_<subagent_name>` that talks to the subagent over A2A using the
-SDK's `create_client(card_url)`. The card URL is read from the
-`VYSTAK_ROUTES_JSON` env var, which the provider populates per-agent.
+named `ask_<subagent_name>` that talks to the subagent over A2A.
 
-Tool descriptions are **card-driven**: at boot, each subagent's
-`/.well-known/agent.json` is fetched and its `description` + `skills` are
-folded into the @tool's docstring. The LLM sees the peer's own
-self-description rather than vystak boilerplate, so routing decisions key
-off accurate, agent-authored guidance. If a peer is unreachable at boot
-(slow startup / DNS race), the tool falls back to local boilerplate
-derived from the parent agent's `subagents` declaration.
+Two transport paths share this module:
+
+* **HTTP** (default) — uses a2a-sdk's `create_client(card_url)`. Tool
+  descriptions are card-driven: at boot, each subagent's
+  `/.well-known/agent.json` is fetched and its `description` + `skills`
+  are folded into the @tool's docstring. The LLM sees the peer's own
+  self-description.
+
+* **NATS** (when `VYSTAK_TRANSPORT_TYPE=nats`) — publishes JSON-RPC
+  envelopes on the peer's NATS subject (read from
+  `routes[<peer>].address`) and parses the reply. Cards are not
+  discoverable over NATS, so descriptions fall back to the local
+  boilerplate derived from `agent.subagents`.
+
+The route map is read from the `VYSTAK_ROUTES_JSON` env var, which the
+provider populates per-agent.
 """
 
 import contextlib
@@ -32,6 +39,18 @@ logger = logging.getLogger("vystak.runtime.subagents")
 
 def build_subagent_tools(agent: Any) -> list[Any]:
     """Return LangChain @tool functions, one per declared subagent.
+
+    Dispatches to the HTTP or NATS implementation based on
+    ``VYSTAK_TRANSPORT_TYPE``.
+    """
+    transport_type = os.environ.get("VYSTAK_TRANSPORT_TYPE", "http")
+    if transport_type == "nats":
+        return _build_nats_subagent_tools(agent)
+    return _build_http_subagent_tools(agent)
+
+
+def _build_http_subagent_tools(agent: Any) -> list[Any]:
+    """HTTP path — card-driven descriptions via /.well-known/agent.json.
 
     Performs a synchronous, best-effort GET on each peer's agent card so the
     tool's docstring carries the peer's own description. Total bootstrap
@@ -57,6 +76,41 @@ def build_subagent_tools(agent: Any) -> list[Any]:
             card = _fetch_card_with_retries(client, base_url + card_path)
             description = _description_from_card(card) if card else _docstring_for(sub)
             tools.append(_make_tool(name, base_url, card_path, description))
+    return tools
+
+
+def _build_nats_subagent_tools(agent: Any) -> list[Any]:
+    """NATS path — publish JSON-RPC envelopes on peer subjects.
+
+    Cards are not discoverable over NATS, so tool descriptions fall back
+    to the local boilerplate derived from `agent.subagents`. The
+    address field in each route entry IS the NATS subject (no scheme,
+    no port — e.g. `vystak.default.agents.weather.tasks`).
+    """
+    subagents = getattr(agent, "subagents", []) or []
+    if not subagents:
+        return []
+
+    nats_url = os.environ.get("VYSTAK_NATS_URL")
+    if not nats_url:
+        logger.warning(
+            "VYSTAK_TRANSPORT_TYPE=nats but VYSTAK_NATS_URL unset; "
+            "subagent tools will be skipped",
+        )
+        return []
+
+    routes = _load_routes()
+    tools: list[Any] = []
+    for sub in subagents:
+        name = sub if isinstance(sub, str) else getattr(sub, "name", None)
+        if not name:
+            continue
+        subject = (routes.get(name) or {}).get("address")
+        if not subject:
+            logger.warning("subagent %s has no NATS address in routes; skipping", name)
+            continue
+        description = _docstring_for(sub)
+        tools.append(_make_nats_tool(name, subject, nats_url, description))
     return tools
 
 
@@ -217,5 +271,70 @@ def _make_tool(subagent_name: str, base_url: str, card_path: str, description: s
                 # Close errors must not mask the call result.
                 with contextlib.suppress(Exception):
                     await close()
+
+    return _call
+
+
+def _make_nats_tool(
+    subagent_name: str, subject: str, nats_url: str, description: str,
+):
+    """Build an `ask_<name>` LangChain tool that talks to a peer over NATS.
+
+    Each call:
+      1. Connects (or re-uses cached connection) to the broker.
+      2. Publishes a JSON-RPC `message/send` envelope on the peer's subject.
+      3. Awaits the reply on the auto-generated reply inbox (60s timeout).
+      4. Extracts text from `result.status.message.parts[].text`.
+
+    Errors (timeout, no responders, malformed reply) are returned as a
+    `[<name> error] ...` string — same UX as the HTTP path so the LLM
+    can surface failures in its reply rather than crashing the turn.
+    """
+    sanitized = subagent_name.replace("-", "_")
+    tool_name = f"ask_{sanitized}"
+
+    @tool(tool_name, description=description)
+    async def _call(query: str) -> str:
+        import nats
+
+        rpc_id = uuid.uuid4().hex
+        envelope = {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "kind": "message",
+                    "messageId": uuid.uuid4().hex,
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": query}],
+                },
+            },
+        }
+        nc = None
+        try:
+            nc = await nats.connect(nats_url)
+            reply = await nc.request(
+                subject, json.dumps(envelope).encode(), timeout=60,
+            )
+            try:
+                body = json.loads(reply.data)
+            except (json.JSONDecodeError, ValueError) as e:
+                return f"[{subagent_name} error] invalid reply: {e}"
+            if "error" in body:
+                err = body["error"]
+                return f"[{subagent_name} error] {err.get('message', '?')}"
+            result = body.get("result") or {}
+            status = result.get("status") or {}
+            msg = status.get("message") or {}
+            parts = msg.get("parts") or []
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            return text or "(no response)"
+        except Exception as e:  # noqa: BLE001
+            return f"[{subagent_name} error] {e}"
+        finally:
+            if nc is not None:
+                with contextlib.suppress(Exception):
+                    await nc.close()
 
     return _call

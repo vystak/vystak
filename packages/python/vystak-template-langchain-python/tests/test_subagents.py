@@ -260,3 +260,180 @@ async def test_subagent_tool_swallows_client_errors(monkeypatch):
     out = await tools[0].ainvoke({"query": "hi"})
     assert "weather error" in out
     assert "connection refused" in out
+
+
+# ---------------------------------------------------------------------------
+# NATS dispatch path
+# ---------------------------------------------------------------------------
+
+
+class _FakeNatsReply:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+
+class _FakeNatsClient:
+    def __init__(self) -> None:
+        self.is_closed = False
+        self.requests: list[tuple[str, bytes, float]] = []
+        self.reply_bytes: bytes | None = None
+        self.raise_on_request: Exception | None = None
+
+    async def request(self, subject, payload, timeout):  # noqa: ANN001
+        self.requests.append((subject, payload, timeout))
+        if self.raise_on_request is not None:
+            raise self.raise_on_request
+        return _FakeNatsReply(self.reply_bytes or b"{}")
+
+    async def close(self) -> None:
+        self.is_closed = True
+
+
+def _patch_nats(monkeypatch, fake: _FakeNatsClient) -> None:
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+
+def test_nats_path_returns_empty_when_url_unset(monkeypatch):
+    """NATS transport but no broker URL → log + skip rather than crash."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.delenv("VYSTAK_NATS_URL", raising=False)
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+    agent = SimpleNamespace(subagents=["weather"])
+    assert build_subagent_tools(agent) == []
+
+
+def test_nats_path_skips_subagent_without_address(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv("VYSTAK_ROUTES_JSON", "{}")
+    agent = SimpleNamespace(subagents=["weather"])
+    assert build_subagent_tools(agent) == []
+
+
+def test_nats_path_uses_address_directly_as_subject(monkeypatch):
+    """The route's `address` field IS the NATS subject (no URL parsing)."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({
+            "weather-agent": {
+                "address": "vystak-nats.multi-nats.agents.weather-agent.tasks",
+            },
+        }),
+    )
+    agent = SimpleNamespace(subagents=["weather-agent"])
+    tools = build_subagent_tools(agent)
+    assert len(tools) == 1
+    assert tools[0].name == "ask_weather_agent"
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_publishes_message_send_envelope(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({
+            "weather": {"address": "vystak.default.agents.weather.tasks"},
+        }),
+    )
+
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "completed",
+                "message": {"parts": [{"text": "17C and clear"}]},
+            },
+        },
+    }).encode()
+    _patch_nats(monkeypatch, fake)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "weather in tokyo?"})
+
+    assert out == "17C and clear"
+    assert len(fake.requests) == 1
+    subject, payload, timeout = fake.requests[0]
+    assert subject == "vystak.default.agents.weather.tasks"
+    assert timeout == 60
+    body = json.loads(payload)
+    assert body["jsonrpc"] == "2.0"
+    assert body["method"] == "message/send"
+    msg = body["params"]["message"]
+    assert msg["role"] == "user"
+    assert msg["parts"][0]["text"] == "weather in tokyo?"
+    # Connection was closed after the call.
+    assert fake.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_returns_error_message_on_jsonrpc_error(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0", "id": "x",
+        "error": {"code": -32603, "message": "agent crashed"},
+    }).encode()
+    _patch_nats(monkeypatch, fake)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "?"})
+    assert "weather error" in out
+    assert "agent crashed" in out
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+    fake = _FakeNatsClient()
+    fake.raise_on_request = TimeoutError("no responders")
+    _patch_nats(monkeypatch, fake)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "?"})
+    assert "weather error" in out
+    assert "no responders" in out
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_handles_invalid_json_reply(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+    fake = _FakeNatsClient()
+    fake.reply_bytes = b"not-json"
+    _patch_nats(monkeypatch, fake)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "?"})
+    assert "weather error" in out
+    assert "invalid reply" in out
