@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # Installation
 
-Vystak is a set of Python packages plus a CLI. You'll install the core SDK, the CLI, the LangChain adapter, and at least one platform provider.
+Vystak is a set of Python packages plus a CLI. You'll install the core SDK, the CLI, and at least one platform provider. The framework runtime (LangChain/LangGraph + A2A SDK) is scaffolded into your project at `vystak init` time — no separate adapter package to install.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Optional, depending on your target:
 ## Install the core packages
 
 ```bash
-pip install vystak vystak-cli vystak-adapter-langchain vystak-provider-docker
+pip install vystak vystak-cli vystak-provider-docker
 ```
 
 That's the minimum to deploy a Docker agent. For Azure, also install:
@@ -39,7 +39,7 @@ pip install vystak-chat
 [uv](https://github.com/astral-sh/uv) is significantly faster than pip:
 
 ```bash
-uv pip install vystak vystak-cli vystak-adapter-langchain vystak-provider-docker
+uv pip install vystak vystak-cli vystak-provider-docker
 ```
 :::
 

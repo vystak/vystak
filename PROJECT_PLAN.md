@@ -12,14 +12,14 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 
 ## Current State
 
-**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway. Long-running sessions stay bounded via three-layer compaction.
+**Status:** Multi-cloud deployment with OpenAI-compatible API — Docker + Azure Container Apps with multi-agent gateway. Long-running sessions stay bounded via three-layer compaction. Agent-to-agent communication runs on Google's official `a2a-sdk` (spec-current `message/send` + `message/stream`). Agents ship as user-owned scaffolds (no codegen) refreshable via `vystak update`.
 
 **Numbers:**
-- 290+ commits
-- 1270+ tests across 65+ test files
-- 9 Python packages + 4 TypeScript stubs
-- 10 examples (Docker + Azure)
-- 5 design sessions (April 11–30, 2026)
+- 790+ commits
+- 1120 tests across 166+ unit test files + 26 release-tier cells
+- 14 Python packages + 4 TypeScript stubs
+- 26 examples (Docker + Azure, including multi-agent + Slack + workspace + memory + compaction)
+- 37 design specs + plans under `docs/superpowers/`
 
 ## What We Built
 
@@ -50,13 +50,13 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
   - ProvisionListener — event callbacks for progress reporting (on_start/on_step/on_complete/on_error)
   - Platform fingerprint grouping for shared infrastructure dedup
 
-### Phase 2: LangChain Adapter (Complete)
+### Phase 2: LangChain Adapter (Complete — superseded by Phase 18)
 
-**Code generation (`vystak-adapter-langchain`):**
-- Generates native LangGraph react agents from schema definitions
-- Generated files: `agent.py`, `server.py`, `requirements.txt`, `tools/`, `store.py`
+**Originally a code-generation package (`vystak-adapter-langchain`)**:
+- Emitted native LangGraph react agents as Python source on every `vystak apply`
+- Generated `agent.py`, `server.py`, `requirements.txt`, `tools/`, `store.py`
 - FastAPI harness with OpenAI-compatible endpoints (see Phase 14)
-- Supports Anthropic and OpenAI model providers
+- Supported Anthropic and OpenAI model providers
 - Custom base URL support (tested with MiniMax's Anthropic-compatible API)
 - `instructions` field for agent system prompt
 - Real tool loading from `tools/` directory with scaffold-on-first-deploy
@@ -69,6 +69,12 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
   - `save_memory` and `forget_memory` tools
   - Ephemeral memory recall via LangGraph `prompt` callable (never checkpointed)
   - Backed by AsyncPostgresStore or AsyncSqliteStore
+
+**Replaced by `vystak-template-langchain-python` in Phase 18.** The functionality
+is unchanged — sessions, memory, MCP, OpenAI endpoints — but it now lives as
+real, testable Python under `_vystak/runtime/` in the user's project tree
+rather than being string-emitted on every apply. The codegen package is
+deleted (~8200 LOC removed).
 
 ### Phase 3: Docker Provider (Complete)
 
@@ -103,16 +109,19 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
 - Python file loading (`vystak.py` with `agent` variable)
 - `--include-resources` flag for destroy
 
-### Phase 5: A2A Protocol (Complete)
+### Phase 5: A2A Protocol (Complete — wire format upgraded in Phase 19)
 
 **Agent-to-Agent communication:**
 - A2A protocol server on every agent:
   - `GET /.well-known/agent.json` — Agent Card (auto-generated from schema)
   - `POST /a2a` — JSON-RPC 2.0 handler
-  - Methods: `tasks/send`, `tasks/get`, `tasks/cancel`, `tasks/sendSubscribe`
+  - Methods (post-Phase-19): spec-current `message/send` + `message/stream`,
+    plus `tasks/get`, `tasks/cancel`. (Phase 5 originally shipped the legacy
+    `tasks/send` / `tasks/sendSubscribe` shape; that was replaced by the
+    spec-current methods when migrating to `a2a-sdk` in Phase 19.)
 - Task lifecycle: submitted → working → completed/failed/canceled/input_required
 - Interrupt/resume support via LangGraph `interrupt()` and `Command(resume=...)`
-- SSE streaming for `tasks/sendSubscribe`
+- SSE streaming for `message/stream`
 - Context propagation across agent calls:
   - `trace_id` — root trace for OpenTelemetry
   - `user_id` — identity for memory scoping
@@ -120,15 +129,21 @@ Terraform/Pulumi didn't build AWS. They gave you one language to describe what y
   - `parent_task_id` — call tree reconstruction
   - `agent_name` — current agent identification
 
-### Phase 6: Multi-Agent (Complete)
+### Phase 6: Multi-Agent (Complete — modernized in Phases 18+19)
 
 **Agent collaboration:**
 - Multiple agents on shared Docker network (`vystak-net`)
-- Agents call each other via A2A protocol tools (async httpx)
+- Agents call each other via A2A protocol tools — `a2a-sdk`'s `Client` (Phase 19)
 - Parallel agent calls (LangGraph runs async tools concurrently)
+- **Card-driven subagent tools.** At parent-agent boot, vystak fetches each
+  peer's `/.well-known/agent.json` and folds `card.description` + `card.skills`
+  into the synthesized `ask_<peer>` tool's docstring. The LLM picks routes
+  based on agent-authored guidance, not vystak boilerplate.
 - Nested streaming — client sees full activity across agent chain:
-  - `tool_call_start` → `agent_call started` → `agent_call completed` → `tool_result` → `token`
-- Custom streaming events via LangGraph `get_stream_writer()`
+  - `task` → `status_update(working, message=delta)` → `status_update(working, metadata={vystak_event: tool_call})` → `status_update(completed, message=final)`
+- Tool-call surfacing via `message.metadata.vystak_event = tool_call|tool_result`
+  — `vystak-channel-slack` renders these as typing-status hints
+  ("is calling \`get_weather\`…")
 
 ### Phase 7: Gateway (Complete)
 
@@ -591,13 +606,12 @@ methods. Going native gets all of that for free.
                 │            │            │
        ┌────────▼──┐  ┌─────▼─────┐  ┌───▼────────┐
        │ Framework  │  │ Platform  │  │  Channel   │
-       │  Adapter   │  │ Provider  │  │  Adapter   │
+       │  Template  │  │ Provider  │  │  Adapter   │
        └────────┬──┘  └─────┬─────┘  └───┬────────┘
                 │            │            │
-          LangChain     Docker       REST API
-          LangGraph   Azure ACA      Slack
-          (future)   Kubernetes     (future)
-                     AWS AgentCore
+          LangChain     Docker       Slack / Discord
+          LangGraph   Azure ACA      Chat / API
+                                     (more: future)
 
                     ┌─────────────────┐
                     │    Gateway      │  ← Unified entry point
@@ -609,22 +623,29 @@ methods. Going native gets all of that for free.
      │ Agent A   │  │  Agent B  │  │  Agent C  │
      │           │←→│           │←→│           │
      └───────────┘  └───────────┘  └───────────┘
-                    A2A Protocol
+                A2A Protocol via a2a-sdk
+              (message/send, message/stream)
 ```
 
 ## Packages
 
 | Package | Description | Status |
 |---------|-------------|--------|
-| `vystak` | Core SDK — schema, hash, loader, provisioning engine | Complete |
-| `vystak-cli` | CLI — init, plan, apply, destroy, status, logs | Complete |
+| `vystak` | Core SDK — schema, hash, loader, provisioning engine, manifest | Complete |
+| `vystak-cli` | CLI — init, plan, apply, destroy, status, logs, update | Complete |
 | `vystak-template-langchain-python` | LangChain/LangGraph framework template (scaffolded into the user's project — replaces the deleted `vystak-adapter-langchain` codegen package) | Complete |
 | `vystak-provider-docker` | Docker deployment provider (provision graph) | Complete |
 | `vystak-provider-azure` | Azure Container Apps provider | Complete (Phase 2a) |
-| `vystak-gateway` | Gateway — routing, registration, health tracking | Complete |
+| `vystak-channel-runtime` | Shared channel runtime — event ingestion, routing, agent client, A2A SDK consumer | Complete |
+| `vystak-channel-chat` | Chat (HTTP) channel — REST + SSE proxy to agents | Complete |
+| `vystak-channel-slack` | Slack channel — Socket Mode, streaming `chat.update`, tool-call typing hints | Complete |
+| `vystak-channel-discord` | Discord channel — built on `vystak-channel-runtime` | Complete |
+| `vystak-channel-api` | REST API channel adapter | Stub |
+| `vystak-transport-http` | HTTP transport for inter-container A2A | Complete |
+| `vystak-transport-nats` | NATS transport (alternative) | Complete |
+| `vystak-workspace-rpc` | Workspace RPC (sandbox / persistent / mounted workspaces) | Complete |
 | `vystak-chat` | Interactive chat client | Complete |
 | `vystak-adapter-mastra` | Mastra framework adapter | Stub |
-| `vystak-channel-api` | REST API channel adapter | Stub |
 | `@vystak/core` | TypeScript core SDK | Stub |
 | `@vystak/cli` | TypeScript CLI | Stub |
 | `@vystak/adapter-mastra` | TypeScript Mastra adapter | Stub |
@@ -860,7 +881,7 @@ Agent modes beyond simple react (respond to message → call tools → respond):
 - [ ] DigitalOcean Gradient provider
 
 **More Channels:**
-- [ ] Discord channel adapter
+- [x] Discord channel adapter — `vystak-channel-discord`, built on the shared `vystak-channel-runtime`
 - [ ] WhatsApp channel adapter
 - [ ] Voice (Twilio) channel adapter
 - [ ] Webhook (generic) channel adapter
@@ -948,6 +969,12 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `specs/2026-04-13-azure-provider-design.md`
 - `specs/2026-04-13-multi-agent-deploy-design.md`
 - `specs/2026-04-25-session-compaction-design.md`
+- `specs/2026-04-25-slack-agent-threads-design.md`
+- `specs/2026-04-25-subagents-design.md`
+- `specs/2026-04-26-langchain-adapter-shared-turn-core-design.md`
+- `specs/2026-04-27-slack-tool-call-streaming-design.md`
+- `specs/2026-05-02-channel-runtime-and-discord-design.md`
+- `specs/2026-05-02-framework-template-design.md`
 
 **Plans:**
 - `plans/2026-04-11-monorepo-scaffold.md`
@@ -964,7 +991,13 @@ All design specs and implementation plans are in `docs/superpowers/`:
 - `plans/2026-04-13-provision-graph.md`
 - `plans/2026-04-13-azure-provider-phase2a.md`
 - `plans/2026-04-14-multi-agent-loader.md`
+- `plans/2026-04-25-slack-agent-threads.md`
+- `plans/2026-04-25-subagents.md`
+- `plans/2026-04-26-langchain-adapter-shared-turn-core.md`
 - `plans/2026-04-26-session-compaction.md`
+- `plans/2026-04-27-slack-tool-call-streaming.md`
+- `plans/2026-05-02-channel-runtime-and-discord.md`
+- `plans/2026-05-02-framework-template-scaffold.md`
 
 ---
 
@@ -978,7 +1011,11 @@ See [docs/principles.md](docs/principles.md) for the full philosophy. Key points
 4. **Code over config** — Python/TypeScript primary, YAML as on-ramp
 5. **Progressive complexity** — 3 lines to start, full IaC when needed
 6. **Stateless tool** — no state files, hash-based change detection
-7. **Framework is a runtime target** — generate native code, no abstractions
+7. **User owns the runtime** — no codegen, no opaque generated source. The
+   framework template scaffolds real Python into the user's project; vystak
+   updates only the managed `_vystak/` namespace.
+8. **Standards over inventions** — A2A via Google's `a2a-sdk`, MCP via
+   `langchain-mcp-adapters`, OpenAI Chat Completions / Responses on the wire
 
 ---
 
@@ -998,18 +1035,35 @@ Additional revenue: unified billing passthrough, skill marketplace, managed conn
 ## Getting Started
 
 ```bash
-# Clone and setup
+# Clone the repo
 git clone <repo-url> && cd Vystak
 uv sync && pnpm install
 
 # Run tests
 just test
 
-# Create and deploy an agent
-cd examples/hello-agent
+# Scaffold a new agent project
+mkdir my-agent
+vystak init my-agent --framework langchain-python
+cd my-agent
 cp .env.example .env  # add your API key
-vystak apply
 
-# Talk to it
-vystak-chat --url http://localhost:8080
+# Deploy
+vystak apply
 ```
+
+After `apply`, your agent is reachable at `http://localhost:<port>` with:
+
+- `GET /.well-known/agent.json` — A2A agent card
+- `POST /a2a` — A2A JSON-RPC (`message/send`, `message/stream`)
+- `POST /v1/chat/completions` + `POST /v1/responses` — OpenAI-compatible
+- `GET /healthz` — health probe
+
+**Existing examples to explore:** `examples/hello-agent` (single agent),
+`examples/docker-slack-multi-agent` (3 agents + Slack channel + Postgres
+memory + compaction), `examples/azure-multi-chat` (Azure deployment),
+`examples/docker-compaction` (long-running session compaction).
+
+To refresh the bundled framework runtime in an existing project after a
+vystak upgrade: `vystak update` (only touches the `_vystak/` namespace,
+leaves your `vystak.yaml` / `server.py` / `Dockerfile` alone).

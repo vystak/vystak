@@ -11,7 +11,7 @@ sidebar_label: Azure Container Apps
 
 - An Azure subscription you can deploy into (`az login`).
 - Docker Desktop running locally (used to build images that get pushed to ACR).
-- `vystak` and `vystak-provider-azure` installed (`uv add vystak vystak-cli vystak-provider-azure vystak-adapter-langchain`).
+- `vystak` and `vystak-provider-azure` installed (`uv add vystak vystak-cli vystak-provider-azure`).
 
 ## Minimal config
 

@@ -193,7 +193,8 @@ class A2AAgentClient:
         """Extract assistant text from an A2A JSON-RPC response.
 
         Supports two response shapes:
-          1. Google A2A canonical (current vystak-adapter-langchain emission):
+          1. Google A2A canonical (current vystak-template-langchain-python
+             emission via a2a-sdk's v0.3-compat layer):
              {result: {status: {message: {parts: [{text: ...}]}}}}
           2. Simplified messages-list shape (kept for back-compat with
              older adapters / mocks):
@@ -234,12 +235,17 @@ class A2AAgentClient:
     def _chunk_from_sse(data: str) -> AgentChunk | None:
         """Parse one SSE `data:` line into a typed AgentChunk.
 
-        Maps the four shapes vystak-adapter-langchain emits over A2A SSE:
+        Maps the four shapes A2A peers emit over SSE. After Phase 19 the
+        primary shape is #2 (status-update) emitted by a2a-sdk's v0.3-compat
+        layer; shapes #1, #3, #4 are retained for back-compat with older
+        agents that may still talk the legacy codegen wire format.
 
           1. token      — JSON-RPC envelope with `result.artifact.parts[0].text`,
                           accumulated by the agent (`append: True`).
           2. status     — JSON-RPC envelope with `result.status.message.parts[].text`
-                          plus a `state`. `final=True` ends the turn.
+                          plus a `state`. `final=True` ends the turn. The
+                          current template also stamps tool-call events here
+                          via `message.metadata.vystak_event`.
           3. final      — JSON-RPC envelope with `result.status.state="completed"`,
                           `final=True`. Followed by a bare A2AEvent dump (#4).
           4. tool_call /

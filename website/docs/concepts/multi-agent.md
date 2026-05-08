@@ -154,11 +154,11 @@ Sub-subagent calls (e.g., a peer that itself declares `subagents:`) inherit the 
 
 When the auto-generated docstring isn't right (e.g., per-caller customisation, parameter shaping, structured arguments beyond a single `question` string), bypass auto-generation and write the tool yourself.
 
-The langchain adapter raises a `ValueError` at codegen time if a user tool name collides with an auto-generated `ask_<peer>` name — that protects you from accidental shadowing but also means you cannot simply drop a `tools/ask_weather_agent.py` alongside `subagents: [weather-agent]` and expect it to override. The two are mutually exclusive: either Vystak generates the tool, or you do.
+The framework template raises a `ValueError` at boot if a user tool name collides with a synthesized `ask_<peer>` name — that protects you from accidental shadowing but also means you cannot simply drop a `tools/ask_weather_agent.py` alongside `subagents: [weather-agent]` and expect it to override. The two are mutually exclusive: either Vystak synthesizes the tool from the peer's agent card, or you write it yourself.
 
 To take ownership of the delegation tool:
 
-1. **Remove the peer from `subagents:`** so codegen no longer emits `ask_<peer>`.
+1. **Remove the peer from `subagents:`** so the runtime no longer synthesizes `ask_<peer>`.
 2. **Write the manual tool** in `tools/`. The transport routes are still scoped by what's left in `subagents:`, so you'll need to keep the peer there OR use a different routing approach. The simplest path is to keep the peer in `subagents:` and rename your tool to avoid the auto-generated name (e.g., `ask_weather_with_region`):
 
 ```python

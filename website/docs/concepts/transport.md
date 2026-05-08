@@ -67,31 +67,38 @@ async def ask_time_agent(question: str) -> str:
 
 The transport is wired up at deploy time; your tool code stays the same regardless of whether the system runs over HTTP locally or over NATS in production.
 
-Compare that to writing the call by hand before the transport abstraction existed:
+Compare that to writing the call by hand:
 
 ```python
-import httpx, json, uuid
+import uuid
+from a2a.client import create_client
+from a2a.types import Message, Part, Role, SendMessageRequest
 
 async def ask_time_agent(question: str) -> str:
-    payload = {
-        "jsonrpc": "2.0",
-        "id": str(uuid.uuid4()),
-        "method": "tasks/send",
-        "params": {
-            "id": str(uuid.uuid4()),
-            "message": {"role": "user", "parts": [{"text": question}]},
-            "metadata": {},
-        },
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post("http://time-agent-default:8000/a2a", json=payload)
-        resp.raise_for_status()
-        body = resp.json()
-    parts = body["result"]["status"]["message"]["parts"]
-    return "".join(p.get("text", "") for p in parts)
+    client = await create_client(
+        agent="http://vystak-time-agent:8000",
+        relative_card_path="/.well-known/agent.json",
+    )
+    request = SendMessageRequest(
+        message=Message(
+            role=Role.ROLE_USER,
+            message_id=uuid.uuid4().hex,
+            parts=[Part(text=question)],
+        ),
+    )
+    parts: list[str] = []
+    async for event in client.send_message(request):
+        kind = event.WhichOneof("payload")
+        if kind == "status_update":
+            msg = event.status_update.status.message
+            if msg and msg.parts:
+                parts = [p.text for p in msg.parts if p.text]
+    return "".join(parts) or "(no response)"
 ```
 
-The three-line version is shorter and transport-agnostic.
+The three-line version is shorter and transport-agnostic. It also lets vystak swap HTTP for NATS without you having to switch SDK contracts.
+
+(For agent-to-agent calls within a project that declares `subagents:`, vystak generates exactly the call above as an `ask_<peer>` LangChain tool — you usually don't write it by hand. See [Multi-agent](/docs/concepts/multi-agent).)
 
 ## Replication and reply correlation
 

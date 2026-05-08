@@ -160,7 +160,7 @@ client                 chat container               agent container
   │                          │                           │
   │ POST /v1/chat/completions│                           │
   ├─────────────────────────►│                           │
-  │                          │ A2A: tasks/send           │
+  │                          │ A2A: message/send         │
   │                          ├──────────────────────────►│
   │                          │                           │ run langgraph
   │                          │ A2A: result               │
