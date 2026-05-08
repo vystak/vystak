@@ -74,5 +74,4 @@ class ThresholdCompactor:
 
 
 def _render(m: BaseMessage) -> str:
-    role = m.__class__.__name__.replace("Message", "").lower()
-    return f"{role}: {m.content}"
+    return f"{getattr(m, 'type', 'message')}: {m.content}"

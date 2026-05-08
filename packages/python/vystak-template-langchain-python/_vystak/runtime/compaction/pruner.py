@@ -22,11 +22,12 @@ class PreCallPruner:
         for i, msg in enumerate(messages):
             if isinstance(msg, ToolMessage) and i < recent_cutoff:
                 content = str(msg.content)
-                if len(content) > self._threshold:
+                content_bytes = len(content.encode("utf-8"))
+                if content_bytes > self._threshold:
                     half = self._threshold // 2 - 10
                     truncated = (
                         content[:half]
-                        + f"\n... [truncated {len(content) - 2 * half} bytes] ...\n"
+                        + f"\n... [truncated {content_bytes - 2 * half} bytes] ...\n"
                         + content[-half:]
                     )
                     out.append(ToolMessage(
