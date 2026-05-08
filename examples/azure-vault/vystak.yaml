@@ -26,8 +26,10 @@ models:
 
 agents:
   - name: assistant
+    framework: langchain-python
     instructions: You are a helpful assistant.
     model: sonnet
     secrets:
       - name: ANTHROPIC_API_KEY
+        framework: langchain-python
     platform: aca
