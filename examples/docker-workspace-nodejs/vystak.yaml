@@ -12,6 +12,7 @@ models:
 
 agents:
   - name: node-coder
+    framework: langchain-python
     instructions: |
       You are a JavaScript/TypeScript coding assistant. The workspace has
       node 20, npm, typescript, prettier, eslint, git, and ripgrep.
@@ -24,10 +25,13 @@ agents:
       - {name: ANTHROPIC_API_URL}
     skills:
       - name: editing
+        framework: langchain-python
         tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]
       - name: shell
+        framework: langchain-python
         tools: [exec.run, exec.shell]
       - name: vcs
+        framework: langchain-python
         tools: [git.status, git.diff, git.commit]
     workspace:
       name: dev
