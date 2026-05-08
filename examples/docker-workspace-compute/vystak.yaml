@@ -19,6 +19,7 @@ models:
 
 agents:
   - name: coder
+    framework: langchain-python
     instructions: |
       You are a coding assistant. Use fs.readFile to read, fs.edit to change,
       exec.run to test, git.status / git.diff to review changes.
@@ -28,12 +29,16 @@ agents:
       - {name: ANTHROPIC_API_KEY}
     skills:
       - name: editing
+        framework: langchain-python
         tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]
       - name: shell
+        framework: langchain-python
         tools: [exec.run, exec.shell]
       - name: vcs
+        framework: langchain-python
         tools: [git.status, git.diff, git.commit]
       - name: search
+        framework: langchain-python
         tools: [search_project]
     workspace:
       name: dev

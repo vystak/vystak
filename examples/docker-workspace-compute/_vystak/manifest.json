@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "template": {
+    "name": "langchain-python",
+    "version": "0.1.0"
+  },
+  "vystak": {
+    "schema_version": "0.5",
+    "min_compat": "0.4",
+    "max_compat": "0.5"
+  },
+  "scaffolded_at": "2026-05-08T15:44:06.623321+00:00",
+  "scaffolded_by_cli": "0.1.1.dev469+g73ca04d25",
+  "files": {
+    "_vystak/manifest.template.json": "sha256:0c6118737bd55bde115f2acc646937b978512aa0f0ef12db6e026f0b63f5e5b4",
+    "_vystak/requirements.txt": "sha256:971b116ab0394998680aca7ee30e11021e7ab6ac84b82d641da951fe18da983b",
+    "_vystak/__init__.py": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "_vystak/runtime/app_factory.py": "sha256:b1c4d540625dd01e64743c5d7c7afcd089b34cd2a64b86730d14ccf3d06fdad0",
+    "_vystak/runtime/store.py": "sha256:c3434441de9484ffcc8cc71700d96cfa27f8c3096c12240517455c8892944ce8",
+    "_vystak/runtime/config.py": "sha256:1554942aeeb2c2eadce5321e0c209d89b9ac20fccd2da1606354fe9abe2d2a73",
+    "_vystak/runtime/memory.py": "sha256:63b4d2563429361152f99d9f820f9c9552d756598abd920a1b5943a2b883e939",
+    "_vystak/runtime/prompt_callable.py": "sha256:9446b2b365f1d89a0a4ee64be1af2f5db6c822b977c0f9da12a9672f38846bef",
+    "_vystak/runtime/tools.py": "sha256:20a393b33a3a70f111668e34c5b46bc2b1ce7032f8513d2372be78a2990fb7eb",
+    "_vystak/runtime/graph.py": "sha256:d1dd52bec6ba401cf74df24a5f60d0ab75b8b887a280a31f35e254daecb8c0c7",
+    "_vystak/runtime/__init__.py": "sha256:394a59398b6ecf962eb3155310091e42cbe13362d390e3a275624ebdf3a3a354",
+    "_vystak/runtime/mcp.py": "sha256:7d85a6518b3284667160654d76e3bf179edbbe5dcde6a903cf2bbbdaeb9c75e9",
+    "_vystak/runtime/a2a/tasks.py": "sha256:7eef124a6f37d283ab99bfb5b0e6996d42145044045d09a330878ce4ea56ab73",
+    "_vystak/runtime/a2a/handler.py": "sha256:d07ee1d988b8917301dc0e408d66859d7c4eb8366639fa9bded3aaccda046bbd",
+    "_vystak/runtime/a2a/__init__.py": "sha256:24d34c7cd6465f8382adc0335801fe5c1fc692dd4face23f552b306044140824",
+    "_vystak/runtime/a2a/card.py": "sha256:309be564852239838656e19e4c3a8436ae16d23424ce604547331fb5eadd9838",
+    "_vystak/runtime/compaction/compactor.py": "sha256:00858788abed44664d1f16abcf4ca4b33e204d943a2213212d36055eee3b8188",
+    "_vystak/runtime/compaction/__init__.py": "sha256:2769af1f2e615e5c4ae70d76df39ce2f2fd768fbbfcc2cdab5a532bd19a1afb6",
+    "_vystak/runtime/compaction/pruner.py": "sha256:e982958d4e0c415c8778613bf1abbef5da907710b3fc222660e6c25cf39a733c",
+    "_vystak/runtime/openai/responses.py": "sha256:2427c46ef6643b973e4ac0852c51ea22c28e3160a7afecd680bf9fa7e9000b0b",
+    "_vystak/runtime/openai/__init__.py": "sha256:17477d5b5f47d1d5388c6c2f22c418a8a8bc5ded44ff29aa207f2060d976d7e4",
+    "_vystak/runtime/openai/chat.py": "sha256:33cbff5f0f5f1b28bddbcdf4757a80877c5486195754963984b797b570e747af"
+  }
+}
