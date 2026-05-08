@@ -48,6 +48,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/vystak_cli"]
 
+[tool.hatch.build.hooks.custom]
+path = "_build_hooks/copy_templates.py"
+
 [tool.uv.sources]
 vystak = { workspace = true }
 vystak-adapter-langchain = { workspace = true }
