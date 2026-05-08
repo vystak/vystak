@@ -1,11 +1,12 @@
 """vystak apply — deploy or update agents and channels."""
 
+import contextlib
 import json
 from pathlib import Path
 
 import click
+from vystak.providers.base import GeneratedCode
 from vystak.secrets.env_loader import load_env_file
-from vystak_adapter_langchain import LangChainAdapter
 from vystak_provider_docker.transport_wiring import (
     build_routes_json,
     get_transport_plugin,
@@ -13,6 +14,30 @@ from vystak_provider_docker.transport_wiring import (
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
+
+
+def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
+    """Bundle the user's project tree into a GeneratedCode for the provider.
+
+    Skips dot-dirs (.git, .venv, .vystak), __pycache__, and *.pyc. The user's
+    Dockerfile, server.py, _vystak/ runtime, requirements.txt, vystak.yaml,
+    and tools/ all flow through verbatim.
+    """
+    files: dict[str, str] = {}
+    for path in project_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        if any(p.startswith(".") for p in path.parts):
+            # Skip .git, .venv, .vystak, .env, etc.
+            continue
+        rel = path.relative_to(project_dir).as_posix()
+        # Binary files are silently skipped; users shouldn't ship binaries
+        # through this path.
+        with contextlib.suppress(UnicodeDecodeError):
+            files[rel] = path.read_text()
+    return GeneratedCode(files=files, entrypoint="server.py")
 
 
 def _validate_template_for_apply(project_dir: Path) -> None:
@@ -153,24 +178,14 @@ def _run_provider_apply(
     env_values, and flags are threaded through correctly without having to
     stub out Azure / Docker clients.
     """
-    adapter = LangChainAdapter()
     deployed_agents: list[dict] = []
 
     for agent in agents:
         click.echo(f"\nAgent: {agent.name}")
 
-        click.echo("  Validating... ", nl=False)
-        errors = adapter.validate(agent)
-        if errors:
-            click.echo("FAILED")
-            for err in errors:
-                click.echo(f"    {err.field}: {err.message}", err=True)
-            raise SystemExit(1)
-        click.echo("OK")
-
-        click.echo("  Generating code... ", nl=False)
+        click.echo("  Bundling project... ", nl=False)
         agent_base = _find_agent_base_dir(agent.name, paths)
-        code = adapter.generate(agent, base_dir=agent_base)
+        code = _bundle_project_dir(agent_base)
         click.echo("OK")
 
         provider = get_provider(agent)
@@ -197,11 +212,11 @@ def _run_provider_apply(
         if hasattr(provider, "set_allow_missing"):
             provider.set_allow_missing(allow_missing)
 
-        # Hand the provider its generated code BEFORE plan() so the
-        # codegen-output digest contributes to the target_hash. Without
-        # this, changes to the framework adapter (turn_core.py, a2a.py,
-        # templates.py, …) wouldn't bump the hash and re-applies would
-        # report "Already up to date" against stale agent containers.
+        # Hand the provider its bundled project code BEFORE plan() so the
+        # bundle digest contributes to the target_hash. Without this,
+        # changes to the user's project files (server.py, tools/, _vystak/
+        # runtime, …) wouldn't bump the hash and re-applies would report
+        # "Already up to date" against stale agent containers.
         provider.set_generated_code(code)
         current_hash = provider.get_hash(agent.name)
         deploy_plan = provider.plan(agent, current_hash)
