@@ -1,0 +1,6 @@
+[
+  {"event": "on_chat_model_stream", "data": {"chunk": {"content": "Let me check."}}},
+  {"event": "on_tool_start", "data": {"name": "get_weather", "input": {"city": "Tokyo"}}},
+  {"event": "on_tool_end", "data": {"name": "get_weather", "output": "22C, sunny"}},
+  {"event": "on_chat_model_stream", "data": {"chunk": {"content": "It is 22C."}}}
+]
