@@ -19,17 +19,21 @@ models:
 
 agents:
   - name: assistant
+    framework: langchain-python
     instructions: Use charge_card for Stripe charges.
     model: sonnet
     secrets:
       - name: ANTHROPIC_API_KEY
+        framework: langchain-python
     workspace:
       name: tools
       type: persistent
       secrets:
         - name: STRIPE_API_KEY
+          framework: langchain-python
       filesystem: true
     skills:
       - name: payments
+        framework: langchain-python
         tools: [charge_card]
     platform: local
