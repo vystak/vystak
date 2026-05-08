@@ -23,6 +23,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: aca
     secrets:
@@ -40,6 +41,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: aca
 """
@@ -153,6 +155,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: local
     secrets:
@@ -212,6 +215,7 @@ vault: {name: v, provider: docker, type: vault, mode: deploy, config: {}}
 models: {sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}}
 agents:
   - name: coder
+    framework: langchain-python
     model: sonnet
     platform: local
     workspace:
@@ -263,6 +267,7 @@ def test_plan_default_path_emits_env_files_section(tmp_path, monkeypatch):
         "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
         "agents:\n"
         "  - name: assistant\n"
+        "    framework: langchain-python\n"
         "    model: sonnet\n"
         "    platform: docker\n"
         "    secrets: [{name: ANTHROPIC_API_KEY}]\n"
@@ -300,6 +305,7 @@ def test_plan_default_path_flags_missing_env_values(tmp_path, monkeypatch):
         "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
         "agents:\n"
         "  - name: assistant\n"
+        "    framework: langchain-python\n"
         "    model: sonnet\n"
         "    platform: docker\n"
         "    secrets: [{name: PRESENT}, {name: ABSENT}]\n"
@@ -330,6 +336,7 @@ def test_plan_detects_orphan_init_json(tmp_path, monkeypatch):
         "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
         "agents:\n"
         "  - name: assistant\n"
+        "    framework: langchain-python\n"
         "    model: sonnet\n"
         "    platform: docker\n"
         "    secrets: [{name: K}]\n"
@@ -447,6 +454,7 @@ def test_plan_env_files_omits_channel_rows(tmp_path, monkeypatch):
         "  sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}\n"
         "agents:\n"
         "  - name: assistant\n"
+        "    framework: langchain-python\n"
         "    model: sonnet\n"
         "    platform: docker\n"
         "    secrets: [{name: ANTHROPIC_API_KEY}]\n"

@@ -58,6 +58,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: aca
@@ -71,6 +72,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
 """
 
@@ -222,6 +224,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: local

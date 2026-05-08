@@ -10,6 +10,7 @@ def _agent():
     from vystak.schema.provider import Provider
     return Agent(
         name="weather",
+        framework="langchain-python",
         instructions="A weather agent.",
         model=Model(
             name="m",
@@ -69,6 +70,7 @@ def test_app_builds_with_sqlite_sessions_config():
 
     agent = Agent(
         name="test",
+        framework="langchain-python",
         instructions="x",
         model=Model(
             name="m",

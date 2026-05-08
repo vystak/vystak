@@ -6,6 +6,7 @@ from vystak_cli.cli import cli
 
 SAMPLE_AGENT_YAML = {
     "name": "test-bot",
+    "framework": "langchain-python",
     "model": {
         "name": "claude",
         "provider": {"name": "anthropic", "type": "anthropic"},

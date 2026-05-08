@@ -9,6 +9,7 @@ from vystak_adapter_langchain.templates import generate_agent_py
 def _agent_with_postgres_and_compaction():
     return Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),

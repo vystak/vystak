@@ -57,6 +57,7 @@ sonnet = ast.Model(
 
 {AGENT_NAME.replace("-", "_")} = ast.Agent(
     name="{AGENT_NAME}",
+    framework="langchain-python",
     instructions="You answer concisely.",
     model=sonnet,
     platform=platform,

@@ -440,6 +440,7 @@ class TestAzureProviderVaultGraph:
         anthropic = Provider(name="anthropic", type="anthropic")
         agent = Agent(
             name="assistant",
+            framework="langchain-python",
             model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
             secrets=[Secret(name="ANTHROPIC_API_KEY")],
             workspace=Workspace(

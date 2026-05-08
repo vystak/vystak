@@ -15,6 +15,7 @@ def adapter():
 def anthropic_agent():
     return Agent(
         name="test-bot",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -28,6 +29,7 @@ def anthropic_agent():
 def openai_agent():
     return Agent(
         name="gpt-bot",
+        framework="langchain-python",
         model=Model(
             name="gpt4",
             provider=Provider(name="openai", type="openai"),
@@ -40,6 +42,7 @@ def openai_agent():
 def invalid_provider_agent():
     return Agent(
         name="bad-bot",
+        framework="langchain-python",
         model=Model(
             name="model",
             provider=Provider(name="unknown", type="cohere"),
@@ -116,6 +119,7 @@ def test_workspace_declared_generates_builtin_tools_and_bootstrap():
     anthropic = Provider(name="anthropic", type="anthropic")
     agent = Agent(
         name="coder",
+        framework="langchain-python",
         model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-20250514"),
         platform=platform,
         skills=[Skill(name="edit", tools=["fs.readFile", "fs.writeFile", "exec.run"])],
@@ -159,6 +163,7 @@ def test_no_workspace_no_builtin_tools():
     anthropic = Provider(name="anthropic", type="anthropic")
     agent = Agent(
         name="coder",
+        framework="langchain-python",
         model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-20250514"),
         skills=[Skill(name="edit", tools=["say_hello"])],
     )
@@ -177,6 +182,7 @@ def _minimal_agent_for_turn_core_test():
     p = Provider(name="anthropic", type="anthropic")
     return Agent(
         name="probe",
+        framework="langchain-python",
         model=Model(name="m", model_name="claude-sonnet-4-20250514", provider=p),
     )
 
@@ -247,6 +253,7 @@ class TestServerPyEmitsTurnCoreHelpers:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],

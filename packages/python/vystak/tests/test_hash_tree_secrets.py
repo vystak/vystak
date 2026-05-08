@@ -11,6 +11,7 @@ def _agent_with_workspace_secret(secret_name: str = "STRIPE_API_KEY") -> Agent:
     anthropic = Provider(name="anthropic", type="anthropic")
     return Agent(
         name="a",
+        framework="langchain-python",
         model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
         secrets=[Secret(name="ANTHROPIC_API_KEY")],
         workspace=Workspace(

@@ -34,6 +34,7 @@ def not_found_error(mock_docker_client):
 def sample_agent():
     return Agent(
         name="test-bot",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -207,6 +208,7 @@ class TestApply:
         )
         agent = Agent(
             name="nats-bot",
+            framework="langchain-python",
             model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
@@ -538,6 +540,7 @@ def test_agent_node_default_path_env_and_ssh_mount(tmp_path, monkeypatch):
     anthropic = Provider(name="anthropic", type="anthropic")
     agent = Agent(
         name="assistant",
+        framework="langchain-python",
         model=Model(
             name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
         ),
@@ -613,6 +616,7 @@ def test_apply_graph_default_path_no_vault_nodes(tmp_path, monkeypatch):
     anthropic = Provider(name="anthropic", type="anthropic")
     agent = Agent(
         name="assistant",
+        framework="langchain-python",
         model=Model(
             name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
         ),

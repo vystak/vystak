@@ -14,6 +14,7 @@ def _agent_persistent_compaction():
     from vystak.schema.service import Postgres  # adjust if class name differs
     return Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -27,6 +28,7 @@ def _agent_persistent_compaction():
 def _agent_memory_compaction():
     return Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),

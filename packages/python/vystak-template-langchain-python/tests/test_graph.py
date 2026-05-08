@@ -9,6 +9,7 @@ def _agent(model_provider="anthropic"):
     from vystak.schema.provider import Provider
     return Agent(
         name="test",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name=model_provider, type=model_provider, api_key="test-key"),

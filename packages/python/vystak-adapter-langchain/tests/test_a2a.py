@@ -16,6 +16,7 @@ from vystak_adapter_langchain.a2a import (
 def sample_agent():
     return Agent(
         name="test-bot",
+        framework="langchain-python",
         instructions="You are a helpful test agent.",
         model=Model(
             name="claude",
@@ -63,6 +64,7 @@ class TestAgentCardCode:
     def test_no_instructions_uses_name(self):
         agent = Agent(
             name="minimal-bot",
+            framework="langchain-python",
             model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
@@ -151,6 +153,7 @@ class TestA2AOneShotUsesProcessTurn:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -193,6 +196,7 @@ class TestA2AStreamingUsesProcessTurnStreaming:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -236,6 +240,7 @@ class TestA2AStreamingToolCallWireMapping:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],

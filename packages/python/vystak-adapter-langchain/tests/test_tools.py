@@ -17,6 +17,7 @@ from vystak_adapter_langchain.tools import (
 def agent_with_tools():
     return Agent(
         name="test-bot",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -66,6 +67,7 @@ class TestDiscoverTools:
     def test_no_tools_in_agent(self, tmp_path):
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),

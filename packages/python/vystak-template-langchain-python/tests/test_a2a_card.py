@@ -10,6 +10,7 @@ from vystak.schema.skill import Skill
 def _agent(skills: list[Skill] | None = None) -> Agent:
     return Agent(
         name="weather",
+        framework="langchain-python",
         instructions="A helpful weather agent.",
         model=Model(
             name="claude",

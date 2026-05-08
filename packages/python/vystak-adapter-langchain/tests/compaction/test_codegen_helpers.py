@@ -8,6 +8,7 @@ from vystak_adapter_langchain.templates import _compaction_enabled
 def _agent(comp=None):
     return Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -48,6 +49,7 @@ def test_context_window_unknown_model_defaults_to_200k():
     from vystak_adapter_langchain.templates import _context_window_for
     a = Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),

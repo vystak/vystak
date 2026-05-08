@@ -14,6 +14,7 @@ vault: {name: v, provider: docker, type: vault, mode: deploy, config: {}}
 models: {sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: local
     workspace: {name: dev, image: python:3.12-slim}

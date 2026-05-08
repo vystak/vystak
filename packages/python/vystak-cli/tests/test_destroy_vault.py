@@ -24,6 +24,7 @@ models:
   sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}
 agents:
   - name: assistant
+    framework: langchain-python
     model: sonnet
     platform: local
     secrets:

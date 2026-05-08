@@ -30,6 +30,7 @@ def openai_provider():
 def anthropic_agent(anthropic_provider):
     return Agent(
         name="test-bot",
+        framework="langchain-python",
         model=Model(
             name="claude",
             provider=anthropic_provider,
@@ -55,6 +56,7 @@ def anthropic_agent(anthropic_provider):
 def openai_agent(openai_provider):
     return Agent(
         name="gpt-bot",
+        framework="langchain-python",
         model=Model(
             name="gpt4",
             provider=openai_provider,
@@ -260,6 +262,7 @@ def postgres_agent(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="pg-bot",
+        framework="langchain-python",
         model=Model(
             name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
         ),
@@ -272,6 +275,7 @@ def sqlite_agent(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="sqlite-bot",
+        framework="langchain-python",
         model=Model(
             name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
         ),
@@ -434,6 +438,7 @@ class TestA2AInServer:
 def mcp_agent(anthropic_provider):
     return Agent(
         name="mcp-bot",
+        framework="langchain-python",
         model=Model(
             name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
         ),
@@ -459,6 +464,7 @@ def mcp_agent_with_resources(anthropic_provider):
     docker_provider = Provider(name="docker", type="docker")
     return Agent(
         name="mcp-pg-bot",
+        framework="langchain-python",
         model=Model(
             name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
         ),
@@ -481,6 +487,7 @@ class TestSessionsField:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=Model(
                 name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
             ),
@@ -493,6 +500,7 @@ class TestSessionsField:
         docker = Provider(name="docker", type="docker")
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=Model(
                 name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
             ),
@@ -504,6 +512,7 @@ class TestSessionsField:
     def test_bring_your_own_sessions(self, anthropic_provider):
         agent = Agent(
             name="bot",
+            framework="langchain-python",
             model=Model(
                 name="claude", provider=anthropic_provider, model_name="claude-sonnet-4-20250514"
             ),
@@ -570,6 +579,7 @@ class TestMCPIntegration:
 def _basic_agent():
     return Agent(
         name="basic",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -638,12 +648,19 @@ def test_subagents_generates_ask_tool_per_peer():
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
     weather = Agent(
         name="weather-agent",
+        framework="langchain-python",
         instructions="Weather specialist. Use get_weather for real data.",
         model=m,
     )
-    time = Agent(name="time-agent", instructions="Time specialist.", model=m)
+    time = Agent(
+        name="time-agent",
+        framework="langchain-python",
+        instructions="Time specialist.",
+        model=m,
+    )
     assistant = Agent(
         name="assistant-agent",
+        framework="langchain-python",
         model=m,
         subagents=[weather, time],
     )
@@ -674,10 +691,16 @@ def test_subagents_docstring_pulled_from_instructions():
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
     weather = Agent(
         name="weather-agent",
+        framework="langchain-python",
         instructions="Weather specialist. Use get_weather for real data.",
         model=m,
     )
-    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    assistant = Agent(
+        name="assistant",
+        framework="langchain-python",
+        model=m,
+        subagents=[weather],
+    )
     code = generate_agent_py(assistant)
     assert "Weather specialist." in code
 
@@ -692,10 +715,16 @@ def test_subagents_docstring_first_paragraph_only():
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
     weather = Agent(
         name="weather-agent",
+        framework="langchain-python",
         instructions="First paragraph here.\n\nSecond paragraph not in docstring.",
         model=m,
     )
-    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    assistant = Agent(
+        name="assistant",
+        framework="langchain-python",
+        model=m,
+        subagents=[weather],
+    )
     code = generate_agent_py(assistant)
     assert "First paragraph here." in code
     assert "Second paragraph" not in code
@@ -709,8 +738,15 @@ def test_subagents_docstring_fallback_when_instructions_empty():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", model=m)  # no instructions
-    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    weather = Agent(
+        name="weather-agent", framework="langchain-python", model=m
+    )  # no instructions
+    assistant = Agent(
+        name="assistant",
+        framework="langchain-python",
+        model=m,
+        subagents=[weather],
+    )
     code = generate_agent_py(assistant)
     assert "Delegate to the weather-agent agent." in code
 
@@ -724,7 +760,7 @@ def test_no_subagents_no_codegen_change():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    bare = Agent(name="solo", model=m)
+    bare = Agent(name="solo", framework="langchain-python", model=m)
     code = generate_agent_py(bare)
     assert "ask_agent" not in code
     assert "from vystak.transport" not in code
@@ -738,8 +774,13 @@ def test_subagent_tool_name_collision_with_user_tool_raises():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", model=m)
-    assistant = Agent(name="assistant", model=m, subagents=[weather])
+    weather = Agent(name="weather-agent", framework="langchain-python", model=m)
+    assistant = Agent(
+        name="assistant",
+        framework="langchain-python",
+        model=m,
+        subagents=[weather],
+    )
 
     # User has a real tool that shadows the auto-generated subagent tool name.
     with pytest.raises(ValueError, match="ask_weather_agent"):
@@ -765,6 +806,7 @@ class TestChatCompletionsUsesProcessTurn:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -815,6 +857,7 @@ class TestCreateResponseSyncUsesProcessTurn:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -866,6 +909,7 @@ class TestRunBackgroundSyncUsesProcessTurn:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -917,6 +961,7 @@ class TestStreamChatCompletionsUsesProcessTurnStreaming:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],
@@ -961,6 +1006,7 @@ class TestCreateStreamUsesProcessTurnStreaming:
         d = Provider(name="docker", type="docker")
         agent = Agent(
             name="probe",
+            framework="langchain-python",
             model=Model(name="m", model_name="claude", provider=p),
             platform=Platform(name="local", type="docker", provider=d),
             secrets=[Secret(name="K")],

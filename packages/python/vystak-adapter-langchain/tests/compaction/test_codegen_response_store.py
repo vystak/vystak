@@ -8,6 +8,7 @@ from vystak_adapter_langchain.responses import generate_responses_handler_code
 def _agent_compaction():
     return Agent(
         name="x",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),

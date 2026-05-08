@@ -18,6 +18,7 @@ _VYSTAK_PY = """\
     from vystak.schema import Agent, Model, Platform, Provider
     agent = Agent(
         name="a",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="p", type="anthropic", api_key_env="K"),

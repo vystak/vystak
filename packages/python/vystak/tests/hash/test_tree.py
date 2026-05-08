@@ -23,6 +23,7 @@ def _agent(transport: Transport | None = None) -> Agent:
     )
     return Agent(
         name="a",
+        framework="langchain-python",
         model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
@@ -96,6 +97,7 @@ class TestTransportHashing:
         # Edge case: agent without a platform. Hash must be stable, not error.
         agent = Agent(
             name="a",
+            framework="langchain-python",
             model=Model(
                 name="m",
                 provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),

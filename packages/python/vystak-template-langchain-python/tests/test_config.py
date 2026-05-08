@@ -25,7 +25,8 @@ def test_load_py_module(tmp_path):
         "from vystak.schema.agent import Agent\n"
         "from vystak.schema.model import Model\n"
         "from vystak.schema.provider import Provider\n"
-        "agent = Agent(name='test', model=Model(name='m', "
+        "agent = Agent(name='test', framework='langchain-python', "
+        "model=Model(name='m', "
         "provider=Provider(name='anthropic', type='anthropic'), "
         "model_name='claude-sonnet-4-6'))\n"
     )
