@@ -16,12 +16,16 @@ from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
-def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
+def _bundle_project_dir(project_dir: Path, agent=None) -> GeneratedCode:
     """Bundle the user's project tree into a GeneratedCode for the provider.
 
     Skips dot-dirs (.git, .venv, .vystak), __pycache__, and *.pyc. The user's
     Dockerfile, server.py, _vystak/ runtime, requirements.txt, vystak.yaml,
     and tools/ all flow through verbatim.
+
+    When `agent` is provided, also drops a per-agent `agent.json` (Pydantic
+    dump) into the bundle. The runtime loader prefers it over `vystak.yaml`,
+    sidestepping multi-doc YAML loading inside the container.
     """
     files: dict[str, str] = {}
     for path in project_dir.rglob("*"):
@@ -37,6 +41,8 @@ def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
         # through this path.
         with contextlib.suppress(UnicodeDecodeError):
             files[rel] = path.read_text()
+    if agent is not None:
+        files["agent.json"] = agent.model_dump_json(indent=2)
     return GeneratedCode(files=files, entrypoint="server.py")
 
 
@@ -185,7 +191,7 @@ def _run_provider_apply(
 
         click.echo("  Bundling project... ", nl=False)
         agent_base = _find_agent_base_dir(agent.name, paths)
-        code = _bundle_project_dir(agent_base)
+        code = _bundle_project_dir(agent_base, agent=agent)
         click.echo("OK")
 
         provider = get_provider(agent)

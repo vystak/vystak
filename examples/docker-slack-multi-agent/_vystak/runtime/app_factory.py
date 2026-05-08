@@ -1,6 +1,6 @@
 """FastAPI app composition. Single entry point: build_agent_app(agent)."""
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -58,21 +58,22 @@ def build_agent_app(agent: Any) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
-        if is_lazy:
-            resolved = await checkpointer.aresolve()
-            new_graph = build_graph(
-                agent,
-                prompt=prompt,
-                tools=user_tools + workspace_tools,
-                checkpointer=resolved,
-            )
-            a2a_handler.graph = new_graph
-            responses_handler.graph = new_graph
-            chat_handler.graph = new_graph
-            app_.state.graph = new_graph
-        else:
-            app_.state.graph = graph
-        yield
+        async with AsyncExitStack() as stack:
+            if is_lazy:
+                resolved = await stack.enter_async_context(checkpointer.context_manager())
+                new_graph = build_graph(
+                    agent,
+                    prompt=prompt,
+                    tools=user_tools + workspace_tools,
+                    checkpointer=resolved,
+                )
+                a2a_handler.graph = new_graph
+                responses_handler.graph = new_graph
+                chat_handler.graph = new_graph
+                app_.state.graph = new_graph
+            else:
+                app_.state.graph = graph
+            yield
 
     app = FastAPI(lifespan=lifespan)
 

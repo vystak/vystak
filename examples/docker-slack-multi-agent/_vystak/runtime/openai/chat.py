@@ -14,7 +14,11 @@ class ChatCompletionsHandler:
 
     async def create(self, body: dict) -> dict:
         messages = body.get("messages", [])
-        result = await self.graph.ainvoke({"messages": messages}, config={})
+        # LangGraph requires a thread_id when the graph has a checkpointer.
+        # For stateless chat, use a fresh per-call thread_id so no state survives.
+        ephemeral_thread = f"chat-{uuid.uuid4().hex[:16]}"
+        config = {"configurable": {"thread_id": ephemeral_thread}}
+        result = await self.graph.ainvoke({"messages": messages}, config=config)
 
         last = result["messages"][-1]
         content = last["content"] if isinstance(last, dict) else getattr(last, "content", "")

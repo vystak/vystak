@@ -79,6 +79,9 @@ agents:
     memory:
       type: postgres
       provider: {name: docker, type: docker}
+    compaction:
+      name: assistant-compaction
+      mode: conservative
     secrets:
       - {name: ANTHROPIC_API_KEY}
       - {name: ANTHROPIC_API_URL}
