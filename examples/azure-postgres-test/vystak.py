@@ -21,6 +21,5 @@ agent = ast.Agent(
     model=model,
     platform=platform,
     sessions=db,
-    channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
