@@ -31,6 +31,7 @@ from _vystak.runtime.store import (
     build_memory_store,
 )
 from _vystak.runtime.subagents import build_subagent_tools
+from _vystak.runtime.telemetry import instrument_app
 from _vystak.runtime.tools import load_user_tools
 
 
@@ -144,6 +145,11 @@ def build_agent_app(agent: Any) -> FastAPI:
             yield
 
     app = FastAPI(lifespan=lifespan)
+
+    # OTel auto-instrumentation. Reads OTEL_* env vars set by the
+    # Docker provider when Platform.telemetry is enabled. No-op when
+    # unset, so HTTP-only deployments without a collector pay nothing.
+    instrument_app(app, service_name=f"vystak-{agent.name}")
 
     # Mount SDK-supplied A2A routes. The JSON-RPC dispatcher accepts both
     # the modern proto-mapped methods (`SendMessage`, `GetTask`, ...) and,

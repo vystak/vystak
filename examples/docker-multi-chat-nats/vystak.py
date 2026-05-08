@@ -42,6 +42,11 @@ platform = ast.Platform(
         type="nats",
         config=ast.NatsConfig(jetstream=True, subject_prefix="vystak-nats"),
     ),
+    # Auto-provisions a Jaeger all-in-one container (UI on
+    # http://localhost:16686). Agents + channels emit OTLP traces with
+    # W3C traceparent propagation, so a chat → coordinator → subagent
+    # call shows up as one connected trace.
+    telemetry=ast.Telemetry(),
 )
 
 sonnet = ast.Model(
@@ -110,4 +115,19 @@ chat = ast.Channel(
     platform=platform,
     config={"port": 18080},
     agents=[weather_agent, time_agent, assistant_agent],
+)
+
+# Slack channel — same NATS-routed agents, second user-facing entry point.
+# Socket Mode = no inbound port, so co-exists with the chat HTTP channel.
+slack = ast.Channel(
+    name="slack",
+    type=ast.ChannelType.SLACK,
+    platform=platform,
+    config={"port": 18081},  # avoid clash with chat (18080)
+    secrets=[
+        ast.Secret(name="SLACK_BOT_TOKEN"),
+        ast.Secret(name="SLACK_APP_TOKEN"),
+    ],
+    agents=[weather_agent, time_agent, assistant_agent],
+    default_agent=assistant_agent,
 )

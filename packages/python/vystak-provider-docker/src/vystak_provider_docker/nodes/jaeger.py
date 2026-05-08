@@ -24,7 +24,7 @@ class JaegerNode(Provisionable):
     ``http://localhost:16686`` for trace inspection.
     """
 
-    IMAGE = "jaegertracing/all-in-one:1.64"
+    IMAGE = "jaegertracing/all-in-one:1.64.0"
     CONTAINER_NAME = "vystak-jaeger"
 
     def __init__(self, client):

@@ -72,12 +72,20 @@ def init_telemetry(service_name: str | None = None) -> Any:
 
 
 def instrument_app(app: Any, service_name: str | None = None) -> None:
-    """Initialize OTel + wire FastAPI server-span generation.
+    """Initialize OTel (if not already) + wire FastAPI server-span generation.
 
-    No-op when telemetry isn't configured.
+    Safe to call after ``init_telemetry`` has already run elsewhere
+    (e.g. the launcher) — re-imports the FastAPIInstrumentor and applies
+    it. No-op when telemetry isn't configured.
     """
-    result = init_telemetry(service_name)
-    if result is None:
+    # Run init in case it hasn't been initialized yet. If it was, the
+    # global flag short-circuits and we still need to apply
+    # FastAPIInstrumentor here, so we import it explicitly below.
+    init_telemetry(service_name)
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return
-    _, FastAPIInstrumentor = result
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    except ImportError:
+        return
     FastAPIInstrumentor.instrument_app(app)

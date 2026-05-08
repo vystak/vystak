@@ -118,40 +118,127 @@ class NatsHttpBridge:
                 method, request_id, len(body),
             )
 
-            assert self._http is not None  # set by start()
-            try:
-                resp = await self._http.post(
-                    self._local_url,
-                    content=body,
-                    headers={"Content-Type": "application/json"},
-                )
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.HTTPError) as e:
-                logger.exception("nats_bridge.local_http_error")
-                await self._publish_error_async(
-                    reply_subject,
-                    code=-32603,
-                    message=f"local /a2a request failed: {e}",
-                    request_id=request_id,
-                )
-                return
-
-            # The SDK responds with a JSON-RPC body for /a2a — we just
-            # forward whatever bytes came back. If the local endpoint
-            # returned a non-JSON error, downstream will surface that
-            # as a JSON-decode error on the client side, which is fine.
-            payload = resp.content if resp.status_code == 200 else self._error_envelope_bytes(
+            # Extract the upstream W3C traceparent (if any) so the local
+            # /a2a call continues the same trace. The publisher
+            # (subagents._make_nats_tool / NatsAgentClient.send_turn)
+            # writes traceparent into params.message.metadata; we
+            # re-attach it as an HTTP Authorization-equivalent header so
+            # the FastAPIInstrumentor on the receiving end picks it up.
+            metadata = (envelope.get("params") or {}).get("message", {}).get("metadata") or {}
+            await self._forward_with_trace_context(
+                envelope=envelope,
+                body=body,
+                metadata=metadata,
+                reply_subject=reply_subject,
                 request_id=request_id,
-                code=-32603,
-                message=f"local /a2a returned {resp.status_code}",
+                msg_subject=getattr(msg, "subject", "") or "",
             )
-            if reply_subject:
-                await self._nc.publish(reply_subject, payload)
         except Exception:
             logger.exception("nats_bridge.unhandled")
             # Last-ditch: best-effort error publish without re-raising.
             await self._publish_error_async(
                 reply_subject, code=-32603, message="bridge internal error",
             )
+
+    async def _forward_with_trace_context(
+        self,
+        *,
+        envelope: dict[str, Any],
+        body: bytes,
+        metadata: dict[str, Any],
+        reply_subject: str,
+        request_id: Any,
+        msg_subject: str,
+    ) -> None:
+        """Forward to local /a2a inside the (optional) extracted span context.
+
+        Two OTel touchpoints:
+
+        1. ``otel_context.attach(extract(metadata))`` — restores the
+           upstream trace context so the local httpx + FastAPI
+           auto-instrumentation creates spans under the same root.
+        2. A ``nats.receive`` span around the forward so the broker
+           hop is visible in the trace.
+
+        When OTel isn't initialized, both are no-ops.
+        """
+        try:
+            from opentelemetry import context as otel_context
+            from opentelemetry import trace as otel_trace
+            from opentelemetry.propagate import extract
+
+            ctx = extract(metadata)
+            token = otel_context.attach(ctx)
+            tracer = otel_trace.get_tracer("vystak.runtime.nats_bridge")
+        except Exception:  # noqa: BLE001
+            ctx = None
+            token = None
+            tracer = None  # type: ignore[assignment]
+
+        try:
+            if tracer is not None:
+                span_cm = tracer.start_as_current_span(
+                    f"nats.receive {msg_subject or '?'}",
+                    attributes={
+                        "messaging.system": "nats",
+                        "messaging.destination": msg_subject,
+                        "messaging.operation": "receive",
+                    },
+                )
+            else:
+                from contextlib import nullcontext
+
+                span_cm = nullcontext()
+            with span_cm:
+                # Pass traceparent to the local httpx call as a header so
+                # FastAPIInstrumentor on the receiving FastAPI app picks
+                # it up. HTTPXClientInstrumentor will also inject from
+                # the active context, but explicit header passing is a
+                # belt-and-braces guarantee.
+                trace_headers: dict[str, str] = {}
+                try:
+                    from opentelemetry.propagate import inject
+
+                    inject(trace_headers)
+                except Exception:  # noqa: BLE001
+                    pass
+                headers = {"Content-Type": "application/json", **trace_headers}
+                assert self._http is not None  # set by start()
+                try:
+                    resp = await self._http.post(
+                        self._local_url, content=body, headers=headers,
+                    )
+                except (
+                    httpx.ConnectError, httpx.ReadTimeout, httpx.HTTPError,
+                ) as e:
+                    logger.exception("nats_bridge.local_http_error")
+                    await self._publish_error_async(
+                        reply_subject,
+                        code=-32603,
+                        message=f"local /a2a request failed: {e}",
+                        request_id=request_id,
+                    )
+                    return
+
+                payload = (
+                    resp.content
+                    if resp.status_code == 200
+                    else self._error_envelope_bytes(
+                        request_id=request_id,
+                        code=-32603,
+                        message=f"local /a2a returned {resp.status_code}",
+                    )
+                )
+                if reply_subject:
+                    await self._nc.publish(reply_subject, payload)
+        finally:
+            if token is not None:
+                try:
+                    from opentelemetry import context as otel_context
+
+                    otel_context.detach(token)
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def _publish_error_async(
         self,

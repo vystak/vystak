@@ -21,6 +21,11 @@ aiosqlite>=0.20
 asyncpg>=0.29
 nats-py>=2.6
 psycopg[binary]>=3.0
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27
+opentelemetry-exporter-otlp-proto-grpc>=1.27
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-httpx>=0.48b0
 """
 
 DOCKERFILE = """\

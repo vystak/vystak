@@ -40,7 +40,7 @@ class TestJaegerNode:
         assert result.info["otlp_grpc"] == "http://vystak-jaeger:4317"
         assert result.info["otlp_http"] == "http://vystak-jaeger:4318"
         assert result.info["ui"] == "http://localhost:16686"
-        client.images.pull.assert_called_once_with("jaegertracing/all-in-one:1.64")
+        client.images.pull.assert_called_once_with("jaegertracing/all-in-one:1.64.0")
         client.containers.run.assert_called_once()
         _, kwargs = client.containers.run.call_args
         assert kwargs["name"] == "vystak-jaeger"
