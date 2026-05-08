@@ -7,7 +7,7 @@ sidebar_label: Transport
 
 A **transport** is the east-west messaging layer for an agent system — it carries traffic from channels to agents and between agents calling each other (A2A). It is independent of how users reach an agent (that's the [channel](/docs/concepts/channels)) and independent of where the agent runs (that's the [platform](/docs/concepts/providers-and-platforms)).
 
-Today the only shipping transport is **HTTP**. NATS and Azure Service Bus are on the roadmap and will follow the same schema once they land.
+Two transports ship today: **HTTP** (default) and **NATS** (JetStream-backed). Both speak the same A2A JSON-RPC contract on the wire, so switching is a one-line change on `Platform`. Azure Service Bus is on the roadmap.
 
 ## Where it lives
 
@@ -106,8 +106,45 @@ The transport handles load balancing and per-call reply routing transparently.
 
 For **HTTP**, the platform's load balancer distributes inbound `/a2a` requests across agent replicas and the TCP connection carries the reply back.
 
-For **NATS** (planned), agents join a queue group on their canonical subject; NATS delivers each message to exactly one member. Replies go to a per-call inbox (`_INBOX.{random}`).
+For **NATS**, agents join a queue group on their canonical subject; NATS delivers each message to exactly one member. Replies go to a per-call inbox (`_INBOX.{random}`). Inside the agent container, a small NATS↔HTTP bridge subscribes to the agent's subject and proxies each request to its local `/a2a` endpoint, so the same a2a-sdk server-side plumbing handles both transports — only the inbound delivery differs.
 
 For **Azure Service Bus** (planned), agents compete on a shared queue; reply correlation uses a Service Bus session ID attached to the original message.
 
 In all cases the A2A envelope carries a `correlation_id` field that ties a reply to its request, so callers can multiplex many in-flight calls over a single transport connection.
+
+## Selecting a transport
+
+The transport is set on `Platform`. Switching is a one-line change — agent code, channel config, and tool implementations are all unchanged.
+
+### HTTP (default)
+
+```python
+import vystak as ast
+
+docker = ast.Provider(name="docker", type="docker")
+platform = ast.Platform(name="local", type="docker", provider=docker)
+```
+
+No `transport=...` argument needed. Each agent runs a FastAPI server, channels and peers POST JSON-RPC `message/send` (or `message/stream` for SSE) at `/a2a`. The Docker provider gives every agent its own DNS name on the shared `vystak-net` network, so peers reach each other by canonical name.
+
+### NATS (JetStream)
+
+```python
+import vystak as ast
+
+docker = ast.Provider(name="docker", type="docker")
+platform = ast.Platform(
+    name="local",
+    type="docker",
+    provider=docker,
+    transport=ast.Transport(
+        name="bus",
+        type="nats",
+        config=ast.NatsConfig(jetstream=True, subject_prefix="vystak"),
+    ),
+)
+```
+
+The Docker provider auto-provisions a `nats:2-alpine` container with JetStream enabled, wires every agent and channel container with `VYSTAK_TRANSPORT_TYPE=nats` and `VYSTAK_NATS_URL`, and computes the per-agent subject from the canonical name. Peer calls are queue-grouped publishes — replication and load-balancing happen at the NATS layer, not at an HTTP load balancer.
+
+The wire envelope is identical (A2A JSON-RPC); the only behavioural change is how messages are delivered. See [`examples/docker-multi-chat-nats/`](https://github.com/vystak/vystak/tree/main/examples/docker-multi-chat-nats) for a full multi-agent + Slack + chat-channel deployment.

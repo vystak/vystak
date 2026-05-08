@@ -105,6 +105,19 @@ The Postgres container is named `vystak-resource-<service-name>` and lives on `v
 
 Run `docker ps` after `vystak apply` and you'll see both containers.
 
+## Telemetry
+
+Set `telemetry=Telemetry()` on the platform and the Docker provider auto-provisions a Jaeger all-in-one container. Every agent and channel emits OTLP traces with W3C `traceparent` propagation, so one user message produces one connected trace across every service it touches. Open `http://localhost:16686` to inspect.
+
+```python
+platform = vystak.Platform(
+    name="local", type="docker", provider=docker,
+    telemetry=vystak.Telemetry(),
+)
+```
+
+See [Telemetry](/docs/concepts/telemetry) for the full behaviour and how to point traces at your own collector instead.
+
 ## Updating an agent
 
 Vystak content-hashes your agent definition. Re-running `vystak apply` after a change does the smallest possible update:

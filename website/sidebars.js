@@ -21,6 +21,7 @@ const sidebars = {
         'concepts/models',
         'concepts/providers-and-platforms',
         'concepts/transport',
+        'concepts/telemetry',
         'concepts/services',
         'concepts/compaction',
         'concepts/channels',
@@ -31,8 +32,9 @@ const sidebars = {
       label: 'Channels',
       items: [
         'channels/overview',
-        'channels/slack',
         'channels/chat',
+        'channels/slack',
+        'channels/discord',
       ],
     },
     {
