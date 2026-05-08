@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from typing import Any
@@ -12,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from vystak.schema.common import ChannelType
 from vystak_channel_runtime.runtime import ChannelRuntime
+from vystak_channel_runtime.telemetry import instrument_app
 from vystak_channel_runtime.types import (
     AgentReply,
     InboundEvent,
@@ -87,6 +89,15 @@ class ChatChannelRuntime(ChannelRuntime):
 
 def build_app(rt: ChatChannelRuntime) -> FastAPI:
     app = FastAPI(title="vystak-channel-chat")
+
+    # OTel auto-instrumentation. No-op when OTEL_EXPORTER_OTLP_ENDPOINT
+    # is unset (containers without telemetry stay uninstrumented).
+    instrument_app(
+        app,
+        service_name=os.environ.get(
+            "OTEL_SERVICE_NAME", "vystak-channel-chat",
+        ),
+    )
 
     @app.post("/v1/chat/completions")
     async def completions(req: _ChatRequest) -> dict:

@@ -10,6 +10,7 @@ import signal
 
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.store import make_channel_store
+from vystak_channel_runtime.telemetry import init_telemetry
 from vystak_channel_runtime.test_endpoint import is_test_endpoint_enabled
 
 logger = logging.getLogger("vystak.channel.runtime.launcher")
@@ -36,10 +37,24 @@ def launch(
     sidecar uvicorn that exposes /test/event for synthetic dispatch (port
     from `VYSTAK_TEST_EVENTS_PORT`, default 8765). Requires the
     `test-endpoint` extra.
+
+    Also bootstraps OTel telemetry early so httpx auto-instrumentation
+    catches outbound A2A calls; the chat channel's FastAPI build also
+    wires server-span generation. No-op when OTEL_EXPORTER_OTLP_ENDPOINT
+    is unset.
     """
     logging.basicConfig(
         level=os.environ.get("VYSTAK_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    # Init telemetry once at process start. Channels without a FastAPI
+    # app (Slack, Discord) still benefit from HTTPX instrumentation +
+    # NATS-side traceparent injection in NatsAgentClient.
+    init_telemetry(
+        service_name=os.environ.get(
+            "OTEL_SERVICE_NAME",
+            f"vystak-channel-{config.get('channel_type', 'unknown')}",
+        ),
     )
     rt = build_runtime(runtime_cls, config=config, routes=routes)
     asyncio.run(_run(rt))
