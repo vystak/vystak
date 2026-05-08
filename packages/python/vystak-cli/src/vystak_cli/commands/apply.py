@@ -149,7 +149,13 @@ def apply(files, file_path, force, env, env_file, allow_missing):
     # used during apply to push missing secrets into the vault; they are never
     # persisted by vystak. When the file is absent we silently continue — the
     # user may have pre-populated the vault by other means.
+    # Resolve relative .env against the project's base_dir so `vystak apply
+    # examples/foo` finds examples/foo/.env, not cwd/.env.
     env_path = Path(env_file)
+    if not env_path.is_absolute() and not env_path.exists() and base_dir is not None:
+        candidate = base_dir / env_file
+        if candidate.exists():
+            env_path = candidate
     env_values = load_env_file(env_path, optional=True)
     if env_values:
         click.echo(f"Env file: {env_path}  ({len(env_values)} value(s))")
