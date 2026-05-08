@@ -47,3 +47,33 @@ def test_update_force_re_stamps_manifest(tmp_path):
     update_command(target=str(target), force=True)
     after = json.loads(manifest_path.read_text())["scaffolded_at"]
     assert before != after
+
+
+def test_update_warns_on_minor_version_drift(tmp_path, capsys, monkeypatch):
+    target = _scaffold(tmp_path)
+    # Pretend installed core is 0.5.5 but bundled template caps at 0.5.0.
+    monkeypatch.setattr(
+        "vystak_cli.commands.update._installed_vystak_version", lambda: "0.5.5"
+    )
+    monkeypatch.setattr(
+        "vystak_cli.commands.update._max_compat_for", lambda info: "0.5.0"
+    )
+    update_command(target=str(target), force=True)
+    captured = capsys.readouterr()
+    assert (
+        "compat" in captured.out.lower()
+        or "warn" in captured.out.lower()
+        or "note" in captured.out.lower()
+    )
+
+
+def test_update_strict_refuses_on_major_drift(tmp_path, monkeypatch):
+    target = _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "vystak_cli.commands.update._installed_vystak_version", lambda: "1.0.0"
+    )
+    monkeypatch.setattr(
+        "vystak_cli.commands.update._max_compat_for", lambda info: "0.5.0"
+    )
+    with pytest.raises(RuntimeError, match="incompatible"):
+        update_command(target=str(target), strict=True)

@@ -47,6 +47,7 @@ def update_command(
             )
 
     info = resolve_template(current_template_name)
+    _check_compat(info, strict=strict)
     bundled_version = info.version
 
     current_hashes = current.get("files", {})
@@ -95,6 +96,50 @@ def _cli_version() -> str:
         return version("vystak-cli")
     except Exception:  # noqa: BLE001
         return "dev"
+
+
+def _installed_vystak_version() -> str:
+    from importlib.metadata import version
+
+    return version("vystak")
+
+
+def _max_compat_for(info) -> str:  # noqa: ANN001
+    seed = json.loads((info.path / "_vystak" / "manifest.template.json").read_text())
+    return seed["vystak"]["max_compat"]
+
+
+def _min_compat_for(info) -> str:  # noqa: ANN001
+    seed = json.loads((info.path / "_vystak" / "manifest.template.json").read_text())
+    return seed["vystak"]["min_compat"]
+
+
+def _semver_major(v: str) -> int:
+    return int(v.split(".")[0])
+
+
+def _check_compat(info, *, strict: bool) -> None:  # noqa: ANN001
+    installed = _installed_vystak_version()
+    max_v = _max_compat_for(info)
+    min_v = _min_compat_for(info)
+
+    major_drift = _semver_major(installed) > _semver_major(max_v) or _semver_major(
+        installed
+    ) < _semver_major(min_v)
+    if major_drift:
+        if strict:
+            raise RuntimeError(
+                f"incompatible: installed vystak={installed} outside template's "
+                f"compat range [{min_v}, {max_v}]. See _vystak/CHANGELOG.md."
+            )
+        print(
+            f"WARNING: installed vystak={installed} outside template's compat "
+            f"range [{min_v}, {max_v}]. Proceeding anyway."
+        )
+        return
+
+    if installed != max_v:
+        print(f"Note: installed vystak={installed}; template's max_compat={max_v}.")
 
 
 @click.command()
