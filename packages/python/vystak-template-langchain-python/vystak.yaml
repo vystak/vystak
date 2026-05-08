@@ -2,6 +2,8 @@ name: example-agent
 framework: langchain-python
 instructions: An example agent.
 model:
+  name: default
   provider:
+    name: anthropic
     type: anthropic
   model_name: claude-sonnet-4-6
