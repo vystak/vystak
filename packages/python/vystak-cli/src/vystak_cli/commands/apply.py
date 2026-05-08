@@ -296,9 +296,11 @@ def _run_provider_apply(
                     for sub in agent.subagents:
                         url = peer_urls.get(sub.name)
                         if url and url != "(unchanged)":
+                            base = url.rstrip("/")
                             routes[sub.name] = {
                                 "canonical": sub.canonical_name,
-                                "address": url.rstrip("/") + "/a2a",
+                                "address": base + "/a2a",
+                                "card_url": base + "/.well-known/agent.json",
                             }
                     if routes:
                         peer_routes = json.dumps(routes)
