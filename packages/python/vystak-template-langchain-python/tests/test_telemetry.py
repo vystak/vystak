@@ -86,3 +86,107 @@ def test_init_uses_explicit_service_name(monkeypatch):
     assert result is not None
     provider, _ = result
     assert provider.resource.attributes["service.name"] == "explicit-arg"
+
+
+class _FakeEvent:
+    def __init__(self, name: str, attributes: dict) -> None:
+        self.name = name
+        self.attributes = attributes
+
+
+class _FakeSpan:
+    """Stand-in for ``_Span`` exposing the surface our processor uses.
+
+    Mirrors the SDK's invariant: by the time ``_on_ending`` fires, the
+    span's ``_end_time`` is already set, so ``set_status`` would warn and
+    no-op. The processor mutates ``_status`` directly; we test that
+    directly.
+    """
+
+    def __init__(self, name: str, events: list, status_code: str = "ERROR") -> None:
+        from opentelemetry.trace import Status, StatusCode
+
+        self.name = name
+        self.events = events
+        self._status = Status(getattr(StatusCode, status_code))
+
+
+def _make_proc():
+    pytest.importorskip("opentelemetry.sdk.trace")
+    telemetry = _reload_module()
+    return telemetry._make_suppressor_class()()
+
+
+def test_suppressor_downgrades_a2a_queueshutdown_spans():
+    """QueueShutDown on a2a event_queue paths → status reset to UNSET."""
+    from opentelemetry.trace import StatusCode
+
+    proc = _make_proc()
+    span = _FakeSpan(
+        name="a2a.server.events.event_queue_v2.EventQueueSource.dequeue_event",
+        events=[
+            _FakeEvent("exception", {"exception.type": "culsans.QueueShutDown"}),
+        ],
+    )
+    proc._on_ending(span)
+    assert span._status.status_code == StatusCode.UNSET
+
+
+def test_suppressor_keeps_unrelated_errors():
+    """A real error on the same a2a path stays ERROR."""
+    from opentelemetry.trace import StatusCode
+
+    proc = _make_proc()
+    span = _FakeSpan(
+        name="a2a.server.events.event_queue_v2.EventQueueSource.dequeue_event",
+        events=[
+            _FakeEvent("exception", {"exception.type": "ValueError"}),
+        ],
+    )
+    proc._on_ending(span)
+    assert span._status.status_code == StatusCode.ERROR
+
+
+def test_suppressor_keeps_mixed_errors():
+    """Benign + real exception in same span → still ERROR."""
+    from opentelemetry.trace import StatusCode
+
+    proc = _make_proc()
+    span = _FakeSpan(
+        name="a2a.server.events.event_queue_v2.EventQueueSource.dequeue_event",
+        events=[
+            _FakeEvent("exception", {"exception.type": "culsans.QueueShutDown"}),
+            _FakeEvent("exception", {"exception.type": "RuntimeError"}),
+        ],
+    )
+    proc._on_ending(span)
+    assert span._status.status_code == StatusCode.ERROR
+
+
+def test_suppressor_ignores_non_a2a_spans():
+    """QueueShutDown on a non-a2a span path is left alone."""
+    from opentelemetry.trace import StatusCode
+
+    proc = _make_proc()
+    span = _FakeSpan(
+        name="some.other.module.method",
+        events=[
+            _FakeEvent("exception", {"exception.type": "culsans.QueueShutDown"}),
+        ],
+    )
+    proc._on_ending(span)
+    assert span._status.status_code == StatusCode.ERROR
+
+
+def test_suppressor_no_op_on_clean_spans():
+    """Span with no exception events is left alone."""
+    from opentelemetry.trace import StatusCode
+
+    proc = _make_proc()
+    span = _FakeSpan(
+        name="a2a.server.events.event_queue_v2.EventQueueSource.dequeue_event",
+        events=[],
+        status_code="OK",
+    )
+    proc._on_ending(span)
+    assert span._status.status_code == StatusCode.OK
