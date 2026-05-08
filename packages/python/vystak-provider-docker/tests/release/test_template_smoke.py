@@ -102,3 +102,45 @@ def test_template_scaffold_and_load(tmp_path):
 
     route_count = int(smoke.stdout.strip().splitlines()[-1])
     assert route_count >= 7, f"Expected >=7 routes, got {route_count}"
+
+
+def test_migrated_hello_agent_loads():
+    """The migrated hello-agent in examples/ must load with its real YAML.
+
+    The synthetic-YAML smoke above doesn't exercise sessions, skills, or
+    tool wiring. This loads the actual migrated example end-to-end so any
+    bug in build_agent_app's handling of real-world fields (sessions,
+    secrets, parameters) trips here, not when the user runs vystak apply.
+    """
+    repo_root = _repo_root()
+    hello = repo_root / "examples" / "hello-agent"
+    if not (hello / "_vystak" / "manifest.json").exists():
+        pytest.skip("hello-agent not yet migrated")
+
+    smoke = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "sys.path.insert(0, '.')\n"
+                "from _vystak.runtime.config import load_agent\n"
+                "from _vystak.runtime.app_factory import build_agent_app\n"
+                "agent = load_agent('vystak.yaml')\n"
+                "app = build_agent_app(agent)\n"
+                "print(len(app.routes))\n"
+            ),
+        ],
+        cwd=hello,
+        capture_output=True,
+        text=True,
+    )
+
+    if smoke.returncode != 0:
+        pytest.fail(
+            f"Migrated hello-agent failed to load:\n"
+            f"STDOUT={smoke.stdout!r}\nSTDERR={smoke.stderr!r}"
+        )
+
+    route_count = int(smoke.stdout.strip().splitlines()[-1])
+    assert route_count >= 7
