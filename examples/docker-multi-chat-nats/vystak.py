@@ -55,7 +55,7 @@ sonnet = ast.Model(
     },
 )
 
-weather_agent = ast.Agent(
+weather_agent = ast.Agent(framework="langchain-python", 
     name="weather-agent",
     instructions=(
         "You are a weather specialist. Use get_weather for real data. "
@@ -67,7 +67,7 @@ weather_agent = ast.Agent(
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 
-time_agent = ast.Agent(
+time_agent = ast.Agent(framework="langchain-python", 
     name="time-agent",
     instructions=(
         "You are a time specialist. Use get_time to report the current "
@@ -81,7 +81,7 @@ time_agent = ast.Agent(
 
 # Coordinator declares its peers via subagents — the langchain adapter
 # auto-generates ask_weather_agent and ask_time_agent tools.
-assistant_agent = ast.Agent(
+assistant_agent = ast.Agent(framework="langchain-python", 
     name="assistant-agent",
     instructions=(
         "You are a coordinator. For weather questions call ask_weather_agent; "
