@@ -3,7 +3,7 @@
 import pytest
 from _vystak.runtime.a2a_native.executor import LangGraphExecutor
 from a2a.server.events import EventQueue
-from a2a.types import Message, Part, Role, TaskState
+from a2a.types import Message, Part, Role, Task, TaskState, TaskStatusUpdateEvent
 
 
 class FakeGraph:
@@ -55,6 +55,7 @@ class RecordingQueue(EventQueue):
 class FakeContext:
     task_id = "t-1"
     context_id = "ctx-1"
+    current_task = None  # SDK uses this to detect a fresh request.
     message = Message(
         role=Role.ROLE_USER,
         message_id="m-1",
@@ -64,21 +65,25 @@ class FakeContext:
 
 @pytest.mark.asyncio
 async def test_executor_completes_with_final_text():
-    """Successful run -> two events: WORKING (start) + COMPLETED (final)."""
+    """Successful run -> Task (initial) + WORKING (start) + COMPLETED (final)."""
     graph = FakeGraph("the answer is 42")
     executor = LangGraphExecutor(graph=graph)
     queue = RecordingQueue()
 
     await executor.execute(FakeContext(), queue)
 
-    # Two TaskStatusUpdateEvent enqueued: start_work + complete.
-    assert len(queue.events) == 2
-    states = [ev.status.state for ev in queue.events]
-    assert states[0] == TaskState.TASK_STATE_WORKING
-    assert states[-1] == TaskState.TASK_STATE_COMPLETED
+    # Three events: initial Task (state=SUBMITTED), then start_work + complete
+    # status updates. Initial Task is required by the SDK's ActiveTask consumer.
+    assert len(queue.events) == 3
+    assert isinstance(queue.events[0], Task)
+    assert queue.events[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+    status_events = [ev for ev in queue.events if isinstance(ev, TaskStatusUpdateEvent)]
+    states = [ev.status.state for ev in status_events]
+    assert states == [TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_COMPLETED]
 
     # The completion event carries the final text in status.message.parts[0].text.
-    completion = queue.events[-1]
+    completion = status_events[-1]
     assert completion.status.message.parts[0].text == "the answer is 42"
 
 
@@ -89,9 +94,11 @@ async def test_executor_marks_failed_when_graph_raises():
 
     await executor.execute(FakeContext(), queue)
 
-    states = [ev.status.state for ev in queue.events]
+    # Status events only — drop the initial Task event.
+    status_events = [ev for ev in queue.events if isinstance(ev, TaskStatusUpdateEvent)]
+    states = [ev.status.state for ev in status_events]
     assert TaskState.TASK_STATE_FAILED in states
-    failure = queue.events[-1]
+    failure = status_events[-1]
     assert "graph blew up" in failure.status.message.parts[0].text
 
 
@@ -104,3 +111,21 @@ async def test_executor_cancel_emits_canceled_state():
 
     states = [ev.status.state for ev in queue.events]
     assert states == [TaskState.TASK_STATE_CANCELED]
+
+
+@pytest.mark.asyncio
+async def test_executor_skips_initial_task_when_already_present():
+    """If RequestContext already has a current_task (e.g. follow-up call),
+    the executor must not enqueue a new Task event — that would be a no-op
+    in the SDK but pollutes the event stream."""
+
+    class FollowUpContext(FakeContext):
+        current_task = Task(id="t-1", context_id="ctx-1")
+
+    executor = LangGraphExecutor(graph=FakeGraph("ack"))
+    queue = RecordingQueue()
+
+    await executor.execute(FollowUpContext(), queue)
+
+    tasks = [ev for ev in queue.events if isinstance(ev, Task)]
+    assert tasks == []  # no Task event emitted on follow-up

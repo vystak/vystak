@@ -37,7 +37,16 @@ async def test_send_turn_returns_text(monkeypatch):
     )
     assert reply.text == "pong"
     assert captured["url"] == "http://hero:8000/a2a"
-    assert captured["json"]["method"] == "tasks/send"
+    # A2A v0.3 spec method (post-Phase-10 SDK migration). The legacy
+    # `tasks/send` is no longer supported by a2a-sdk's JSON-RPC dispatcher.
+    assert captured["json"]["method"] == "message/send"
+    # Message body must include kind="message" + messageId — required by
+    # the SDK's v0.3 compat layer for wire validation.
+    msg = captured["json"]["params"]["message"]
+    assert msg["kind"] == "message"
+    assert "messageId" in msg
+    assert msg["role"] == "user"
+    assert msg["parts"][0]["text"] == "ping"
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ SDK's `create_client(card_url)`. The card URL is read from the
 import contextlib
 import json
 import os
+import uuid
 from typing import Any
 
 from a2a.client import create_client
@@ -29,10 +30,11 @@ def build_subagent_tools(agent: Any) -> list[Any]:
         name = sub if isinstance(sub, str) else getattr(sub, "name", None)
         if not name:
             continue
-        card_url = _resolve_card_url(routes.get(name) or {})
-        if not card_url:
+        target = _resolve_target(routes.get(name) or {})
+        if target is None:
             continue
-        tools.append(_make_tool(name, card_url, _docstring_for(sub)))
+        base_url, card_path = target
+        tools.append(_make_tool(name, base_url, card_path, _docstring_for(sub)))
     return tools
 
 
@@ -44,22 +46,36 @@ def _load_routes() -> dict:
         return {}
 
 
-def _resolve_card_url(route: dict) -> str | None:
-    """Return the agent-card URL for a route entry.
+def _resolve_target(route: dict) -> tuple[str, str] | None:
+    """Return ``(base_url, relative_card_path)`` for a route entry.
 
-    Prefers the explicit `card_url` field (new shape, emitted by
-    vystak-provider-docker after Phase 10). Falls back to deriving the
-    card URL from `address` (which still points at the RPC endpoint
-    `http://host:port/a2a` in older provider versions).
+    The a2a-sdk's ``create_client(url)`` treats *url* as the agent's
+    *base URL* and appends a relative card path (default
+    ``/.well-known/agent-card.json``). We split our route entry into
+    those two halves so the SDK's resolver hits the right URL — our
+    deployed agents serve the card at ``/.well-known/agent.json`` (with
+    the dot, kept for back-compat).
+
+    Prefers the explicit ``card_url`` field; falls back to deriving from
+    ``address`` (which points at the RPC endpoint).
     """
     card_url = route.get("card_url")
-    if card_url:
-        return card_url
-    address = route.get("address")
-    if not address:
+    if not card_url:
+        address = route.get("address")
+        if not address:
+            return None
+        base = address.rstrip("/").removesuffix("/a2a")
+        card_url = f"{base}/.well-known/agent.json"
+
+    # Split full card URL into (scheme://host:port, /well-known/...).
+    from urllib.parse import urlparse
+
+    parsed = urlparse(card_url)
+    if not parsed.scheme or not parsed.netloc:
         return None
-    base = address.rstrip("/").removesuffix("/a2a")
-    return f"{base}/.well-known/agent.json"
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    relative_path = parsed.path or "/.well-known/agent.json"
+    return base_url, relative_path
 
 
 def _docstring_for(sub: Any) -> str:
@@ -73,7 +89,7 @@ def _docstring_for(sub: Any) -> str:
     return f"Ask the {name} subagent. Pass the user's full question verbatim."
 
 
-def _make_tool(subagent_name: str, card_url: str, description: str):
+def _make_tool(subagent_name: str, base_url: str, card_path: str, description: str):
     sanitized = subagent_name.replace("-", "_")
     tool_name = f"ask_{sanitized}"
 
@@ -82,29 +98,36 @@ def _make_tool(subagent_name: str, card_url: str, description: str):
         """{description}"""
         client = None
         try:
-            client = await create_client(agent=card_url)
+            client = await create_client(agent=base_url, relative_card_path=card_path)
             request = SendMessageRequest(
                 message=Message(
                     role=Role.ROLE_USER,
+                    # message_id is required by the v0.3 wire conversion;
+                    # an empty string triggers `Validation failed`.
+                    message_id=uuid.uuid4().hex,
                     parts=[Part(text=query)],
                 ),
             )
-            collected: list[str] = []
+            # Each StreamResponse is one of: task | message |
+            # status_update | artifact_update. The completion (state=COMPLETED)
+            # arrives as a status_update carrying message.parts[]. We capture
+            # only the LAST status_update message — earlier ones may be
+            # transient working-state pings without a message.
+            final_text_parts: list[str] = []
             async for event in client.send_message(request):
-                # Each StreamResponse is one of task | message | status_update |
-                # artifact_update. The completed task carries the final text
-                # in status.message.parts[0].text.
-                if event.HasField("task"):
+                kind = event.WhichOneof("payload")
+                if kind == "task":
                     msg = event.task.status.message
                     if msg and msg.parts:
-                        for p in msg.parts:
-                            if p.text:
-                                collected.append(p.text)
-                elif event.HasField("message"):
-                    for p in event.message.parts:
-                        if p.text:
-                            collected.append(p.text)
-            return "".join(collected) or "(no response)"
+                        final_text_parts = [p.text for p in msg.parts if p.text]
+                elif kind == "status_update":
+                    msg = event.status_update.status.message
+                    if msg and msg.parts:
+                        # Replace, not append — last completed status wins.
+                        final_text_parts = [p.text for p in msg.parts if p.text]
+                elif kind == "message":
+                    final_text_parts = [p.text for p in event.message.parts if p.text]
+            return "".join(final_text_parts) or "(no response)"
         except Exception as e:  # noqa: BLE001
             return f"[{subagent_name} error] {e}"
         finally:

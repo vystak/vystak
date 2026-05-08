@@ -11,6 +11,9 @@ from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+# Importing a2a_native applies a runtime monkey-patch to a2a-sdk 1.0.2's
+# proto_utils that swaps `field.label` for `field.is_repeated` — without
+# this every request crashes on validation. See a2a_native/_sdk_compat.py.
 from _vystak.runtime.a2a_native.card import build_agent_card
 from _vystak.runtime.a2a_native.executor import LangGraphExecutor
 from _vystak.runtime.compaction.compactor import ThresholdCompactor
@@ -72,11 +75,16 @@ def build_agent_app(agent: Any) -> FastAPI:
     # a graph reference that is swapped out during lifespan startup if the
     # checkpointer is lazy.
     a2a_executor = LangGraphExecutor(graph=graph, memory_mgr=memory_mgr)
-    # Port the card advertises is informational — the JSON-RPC dispatcher
-    # accepts requests on whatever port FastAPI binds. Falls back to 8000.
-    port_env = os.environ.get("PORT")
-    port = int(port_env) if port_env else (getattr(agent, "port", None) or 8000)
-    a2a_card = build_agent_card(agent, base_url=f"http://localhost:{port}")
+    # Public URL the agent card advertises. Other agents reach this URL via
+    # the SDK client, so it MUST be the externally-resolvable hostname (Docker
+    # DNS / Azure FQDN / etc.) — NOT localhost. Provider sets it via env. We
+    # fall back to localhost only when running locally (tests, dev).
+    public_url = os.environ.get("VYSTAK_AGENT_PUBLIC_URL")
+    if not public_url:
+        port_env = os.environ.get("PORT")
+        port = int(port_env) if port_env else (getattr(agent, "port", None) or 8000)
+        public_url = f"http://localhost:{port}"
+    a2a_card = build_agent_card(agent, base_url=public_url)
     a2a_handler = DefaultRequestHandlerV2(
         agent_executor=a2a_executor,
         task_store=InMemoryTaskStore(),

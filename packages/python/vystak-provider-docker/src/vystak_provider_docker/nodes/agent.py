@@ -197,9 +197,15 @@ class DockerAgentNode(Provisionable):
             self._client.images.build(path=str(build_dir), tag=image_tag)
 
             # Build env vars
+            agent_port = self._agent.port or 8000
             env: dict[str, str] = {
                 "VYSTAK_TRANSPORT_TYPE": "http",
                 "VYSTAK_ROUTES_JSON": self._peer_routes_json,
+                # Public URL the agent advertises in its AgentCard. Peers
+                # use this URL to call back via the SDK client; it MUST be
+                # the Docker DNS hostname, not localhost (which is the
+                # listener-side default in app_factory).
+                "VYSTAK_AGENT_PUBLIC_URL": f"http://{container_name}:{agent_port}",
             }
             for secret in self._agent.secrets:
                 value = os.environ.get(secret.name)
