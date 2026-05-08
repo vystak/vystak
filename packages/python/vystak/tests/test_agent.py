@@ -279,3 +279,54 @@ def test_compaction_reexported_from_schema():
     from vystak.schema.compaction import Compaction as C2
 
     assert C1 is C2
+
+
+def test_agent_framework_defaults_to_langchain_python():
+    """Agent.framework defaults to langchain-python for back-compat."""
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="t",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    assert agent.framework == "langchain-python"
+
+
+def test_agent_framework_is_serialized_in_dump():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="t",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    data = agent.model_dump()
+    assert data["framework"] == "langchain-python"
+
+
+def test_agent_framework_can_be_overridden():
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.provider import Provider
+
+    agent = Agent(
+        name="t",
+        framework="mastra-typescript",
+        model=Model(
+            name="m",
+            provider=Provider(name="anthropic", type="anthropic"),
+            model_name="claude-sonnet-4-6",
+        ),
+    )
+    assert agent.framework == "mastra-typescript"

@@ -23,6 +23,7 @@ class Agent(NamedModel):
     do not own channels; channels declare routes to agents (see schema.channel).
     """
 
+    framework: str = "langchain-python"
     instructions: str | None = None
     model: Model
     skills: list[Skill] = []
