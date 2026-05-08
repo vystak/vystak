@@ -3,8 +3,6 @@
 
 from vystak.schema import (
     Agent,
-    Channel,
-    ChannelType,
     Model,
     Platform,
     Postgres,
@@ -38,7 +36,6 @@ agent = Agent(
     sessions=Postgres(provider=docker),
     memory=Postgres(provider=docker),
     skills=[Skill(name="assistant", tools=[])],
-    channels=[Channel(name="api", type=ChannelType.API)],
     secrets=[Secret(name="ANTHROPIC_API_KEY")],
     port=8094,
 )
