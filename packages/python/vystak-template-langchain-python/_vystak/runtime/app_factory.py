@@ -1,15 +1,18 @@
 """FastAPI app composition. Single entry point: build_agent_app(agent)."""
 
+import os
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from a2a.server.request_handlers import DefaultRequestHandlerV2
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
-from _vystak.runtime.a2a.card import AgentCard
-from _vystak.runtime.a2a.handler import A2AHandler
-from _vystak.runtime.a2a.tasks import TaskManager
+from _vystak.runtime.a2a_native.card import build_agent_card
+from _vystak.runtime.a2a_native.executor import LangGraphExecutor
 from _vystak.runtime.compaction.compactor import ThresholdCompactor
 from _vystak.runtime.compaction.pruner import PreCallPruner
 from _vystak.runtime.graph import build_graph
@@ -64,7 +67,22 @@ def build_agent_app(agent: Any) -> FastAPI:
         checkpointer=initial_checkpointer,
     )
 
-    a2a_handler = A2AHandler(agent=agent, graph=graph, task_manager=TaskManager())
+    # Build the A2A executor + DefaultRequestHandlerV2; both will be mounted
+    # by `create_jsonrpc_routes` after FastAPI is created. The executor holds
+    # a graph reference that is swapped out during lifespan startup if the
+    # checkpointer is lazy.
+    a2a_executor = LangGraphExecutor(graph=graph, memory_mgr=memory_mgr)
+    # Port the card advertises is informational — the JSON-RPC dispatcher
+    # accepts requests on whatever port FastAPI binds. Falls back to 8000.
+    port_env = os.environ.get("PORT")
+    port = int(port_env) if port_env else (getattr(agent, "port", None) or 8000)
+    a2a_card = build_agent_card(agent, base_url=f"http://localhost:{port}")
+    a2a_handler = DefaultRequestHandlerV2(
+        agent_executor=a2a_executor,
+        task_store=InMemoryTaskStore(),
+        agent_card=a2a_card,
+    )
+
     responses_handler = ResponsesHandler(agent=agent, graph=graph, store=None)
     chat_handler = ChatCompletionsHandler(agent=agent, graph=graph)
 
@@ -79,7 +97,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                     tools=user_tools + workspace_tools + subagent_tools,
                     checkpointer=resolved,
                 )
-                a2a_handler.graph = new_graph
+                a2a_executor._graph = new_graph
                 responses_handler.graph = new_graph
                 chat_handler.graph = new_graph
                 app_.state.graph = new_graph
@@ -107,13 +125,20 @@ def build_agent_app(agent: Any) -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
 
+    # Mount SDK-supplied A2A routes. The JSON-RPC dispatcher accepts both
+    # the modern proto-mapped methods (`SendMessage`, `GetTask`, ...) and,
+    # with v0.3 compat enabled, the legacy spec strings `message/send`,
+    # `message/stream`, `tasks/get`, `tasks/cancel` which are what
+    # vystak-channel-runtime + vystak-chat will speak.
+    for route in create_jsonrpc_routes(a2a_handler, rpc_url="/a2a", enable_v0_3_compat=True):
+        app.routes.append(route)
+    # Keep the dot-form path for back-compat with chat client + channel runtime.
+    for route in create_agent_card_routes(a2a_card, card_url="/.well-known/agent.json"):
+        app.routes.append(route)
+
     @app.get("/healthz")
     async def healthz():
         return {"status": "ok"}
-
-    @app.get("/.well-known/agent.json")
-    async def agent_card():
-        return AgentCard(agent).render()
 
     @app.get("/v1/models")
     async def list_models():
@@ -123,16 +148,6 @@ def build_agent_app(agent: Any) -> FastAPI:
                 {"id": f"vystak/{agent.name}", "object": "model", "owned_by": "vystak"}
             ],
         }
-
-    @app.post("/a2a")
-    async def a2a(request: Request):
-        payload = await request.json()
-        if payload.get("method") == "tasks/sendSubscribe":
-            async def gen():
-                async for frame in a2a_handler.stream_dispatch(payload):
-                    yield frame
-            return StreamingResponse(gen(), media_type="text/event-stream")
-        return JSONResponse(await a2a_handler.dispatch(payload))
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
