@@ -31,6 +31,8 @@ class ChatCompletionsHandler:
                     "finish_reason": "stop",
                 }
             ],
+            # TODO(phase-5): real token counts from LLM provider's usage_metadata.
+            # Zero values are placeholders; clients should treat usage as advisory.
             "usage": {
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
