@@ -10,7 +10,7 @@ import vystak_channel_discord  # noqa: F401 — registers ChannelType.DISCORD pl
 import vystak_channel_slack  # noqa: F401 — registers ChannelType.SLACK plugin
 
 from vystak_cli import __version__
-from vystak_cli.commands import apply, destroy, init, logs, plan, secrets, status
+from vystak_cli.commands import apply, destroy, init, logs, plan, secrets, status, update
 
 
 @click.group()
@@ -26,6 +26,7 @@ cli.add_command(destroy)
 cli.add_command(status)
 cli.add_command(logs)
 cli.add_command(secrets)
+cli.add_command(update)
 
 
 if __name__ == "__main__":

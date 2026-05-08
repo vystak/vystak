@@ -7,5 +7,6 @@ from vystak_cli.commands.logs import logs
 from vystak_cli.commands.plan import plan
 from vystak_cli.commands.secrets import secrets
 from vystak_cli.commands.status import status
+from vystak_cli.commands.update import update
 
-__all__ = ["apply", "destroy", "init", "logs", "plan", "secrets", "status"]
+__all__ = ["apply", "destroy", "init", "logs", "plan", "secrets", "status", "update"]
