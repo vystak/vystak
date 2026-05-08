@@ -406,3 +406,60 @@ async def test_resolve_route_thread_binding_takes_precedence_over_channel_bindin
         metadata={"channel_id": "C1"},
     )
     assert await rt.resolve_route(ev) == "thread-pinned"
+
+
+# ---------------------------------------------------------------------------
+# _default_agent_client — transport-aware selection
+# ---------------------------------------------------------------------------
+
+
+def test_default_agent_client_http_when_transport_unset(monkeypatch):
+    """No VYSTAK_TRANSPORT_TYPE → HTTP client (back-compat default)."""
+    from vystak_channel_runtime.agent_client import A2AAgentClient
+
+    monkeypatch.delenv("VYSTAK_TRANSPORT_TYPE", raising=False)
+    monkeypatch.delenv("VYSTAK_NATS_URL", raising=False)
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    assert isinstance(rt._agent_client, A2AAgentClient)
+
+
+def test_default_agent_client_http_when_transport_http(monkeypatch):
+    from vystak_channel_runtime.agent_client import A2AAgentClient
+
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "http")
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    assert isinstance(rt._agent_client, A2AAgentClient)
+
+
+def test_default_agent_client_nats_when_transport_nats(monkeypatch):
+    """VYSTAK_TRANSPORT_TYPE=nats + VYSTAK_NATS_URL → NatsAgentClient."""
+    from vystak_channel_runtime.agent_client import NatsAgentClient
+
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://vystak-nats:4222")
+    rt = TrivialRuntime(
+        config=_config(),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+    )
+    assert isinstance(rt._agent_client, NatsAgentClient)
+
+
+def test_default_agent_client_nats_without_url_raises(monkeypatch):
+    """Misconfiguration: NATS transport declared but no broker URL provided."""
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.delenv("VYSTAK_NATS_URL", raising=False)
+    with pytest.raises(RuntimeError, match="VYSTAK_NATS_URL"):
+        TrivialRuntime(
+            config=_config(),
+            routes=_routes(),
+            store=MemoryChannelStore(),
+        )

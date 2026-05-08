@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Any
 
 from vystak_channel_runtime.agent_client import (
     A2AAgentClient,
     AgentClient,
+    NatsAgentClient,
 )
 from vystak_channel_runtime.store import ChannelStore
 from vystak_channel_runtime.types import (
@@ -65,6 +67,14 @@ class ChannelRuntime(ABC):
 
     def _default_agent_client(self) -> AgentClient:
         if self.agent_protocol in ("a2a-turn", "a2a-stream"):
+            transport_type = os.environ.get("VYSTAK_TRANSPORT_TYPE", "http")
+            if transport_type == "nats":
+                nats_url = os.environ.get("VYSTAK_NATS_URL")
+                if not nats_url:
+                    raise RuntimeError(
+                        "VYSTAK_TRANSPORT_TYPE=nats but VYSTAK_NATS_URL is unset",
+                    )
+                return NatsAgentClient(nats_url)
             return A2AAgentClient()
         if self.agent_protocol == "media-bridge":
             raise NotImplementedError("media-bridge requires a custom AgentClient")

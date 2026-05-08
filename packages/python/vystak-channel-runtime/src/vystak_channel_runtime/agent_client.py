@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -323,3 +324,137 @@ class A2AAgentClient:
             )
 
         return None
+
+
+class NatsAgentClient:
+    """A2A client that publishes JSON-RPC envelopes over NATS request/reply.
+
+    Same wire shape as A2AAgentClient (HTTP) — only the transport differs.
+    The agent_url here is the NATS subject the peer listens on (read from
+    routes[<peer>].address), not an HTTP URL.
+
+    Streaming over NATS (multi-message reply pattern) is not implemented;
+    stream_turn falls back to a single-shot send_turn that yields one
+    final chunk. Channel runtime's a2a-turn path doesn't call stream_turn
+    for non-streaming agent_protocol values.
+    """
+
+    def __init__(
+        self,
+        nats_url: str,
+        timeout_s: float = 60.0,
+    ) -> None:
+        self._nats_url = nats_url
+        self._timeout = timeout_s
+        # Lazy-initialised on first call. Re-used across requests so we
+        # don't pay reconnect cost per turn.
+        self._nc: Any = None
+        self._connect_lock: asyncio.Lock | None = None
+
+    async def _connect(self) -> Any:
+        """Return a connected NATS client, creating one on first use."""
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+        async with self._connect_lock:
+            if self._nc is None or self._nc.is_closed:
+                import nats
+                logger.info("nats.connect url=%s", self._nats_url)
+                self._nc = await nats.connect(self._nats_url)
+            return self._nc
+
+    async def close(self) -> None:
+        """Close the cached NATS connection. Safe to call multiple times."""
+        nc = self._nc
+        if nc is not None and not nc.is_closed:
+            try:
+                await nc.close()
+            except Exception:
+                logger.exception("nats.close failed")
+        self._nc = None
+
+    async def send_turn(
+        self,
+        agent_url: str,
+        text: str,
+        thread_id: str,
+        history: list[Message] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentReply:
+        """Publish a `message/send` envelope on the peer's subject and
+        await the JSON-RPC reply on the auto-generated reply inbox."""
+        subject = agent_url
+        request_id = str(uuid.uuid4())
+        params: dict[str, Any] = {
+            "message": {
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "role": "user",
+                "parts": [{"kind": "text", "text": text}],
+                "contextId": thread_id,
+            },
+        }
+        if history:
+            params["history"] = [m.model_dump() for m in history]
+        if metadata:
+            params["metadata"] = metadata
+        body = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "message/send",
+            "params": params,
+        }
+        try:
+            nc = await self._connect()
+        except Exception as exc:  # noqa: BLE001
+            raise AgentCallError(
+                f"nats connect to {self._nats_url} failed: {exc}",
+            ) from exc
+
+        payload = json.dumps(body).encode()
+        try:
+            reply = await nc.request(subject, payload, timeout=self._timeout)
+        except Exception as exc:  # noqa: BLE001
+            # Covers nats.errors.TimeoutError, NoRespondersError, and any
+            # connection-level error. All are surfaced as AgentCallError
+            # so ChannelRuntime.on_agent_error fires the same way as HTTP.
+            raise AgentCallError(
+                f"nats request to {subject} failed: {exc}",
+            ) from exc
+
+        try:
+            data = json.loads(reply.data)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise AgentCallError(
+                f"nats reply from {subject} not valid JSON: {exc}",
+            ) from exc
+        return A2AAgentClient._reply_from_jsonrpc(data)
+
+    async def stream_turn(
+        self,
+        agent_url: str,
+        text: str,
+        thread_id: str,
+        history: list[Message] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AsyncIterator[AgentChunk]:
+        """No streaming support over NATS in v1 — fall back to single-shot.
+
+        message/stream over NATS would need a multi-message reply pattern
+        (subscribe to inbox, publish, drain until terminal chunk). Defer
+        until a real streaming use-case lands. For now we yield one
+        synthetic final chunk derived from send_turn.
+        """
+        reply = await self.send_turn(
+            agent_url,
+            text=text,
+            thread_id=thread_id,
+            history=history,
+            metadata=metadata,
+        )
+        yield AgentChunk(
+            type="final",
+            delta=reply.text,
+            finish_reason=reply.finish_reason or "completed",
+            final=True,
+            raw=reply.raw,
+        )

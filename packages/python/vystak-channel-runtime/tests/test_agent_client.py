@@ -1,8 +1,14 @@
 """Tests for vystak_channel_runtime.agent_client."""
 
+import json
+
 import httpx
 import pytest
-from vystak_channel_runtime.agent_client import A2AAgentClient, AgentClient
+from vystak_channel_runtime.agent_client import (
+    A2AAgentClient,
+    AgentClient,
+    NatsAgentClient,
+)
 from vystak_channel_runtime.types import AgentCallError
 
 
@@ -174,3 +180,192 @@ async def test_chunk_from_sse_parses_status_final():
     assert chunk is not None
     assert chunk.type == "final"
     assert chunk.final is True
+
+
+# ---------------------------------------------------------------------------
+# NatsAgentClient
+# ---------------------------------------------------------------------------
+
+
+class _FakeNatsReply:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+
+class _FakeNatsClient:
+    """Minimal stand-in for a connected nats client used by NatsAgentClient."""
+
+    def __init__(self) -> None:
+        self.is_closed = False
+        self.requests: list[tuple[str, bytes, float]] = []
+        # Set by tests to control the reply payload (bytes).
+        self.reply_bytes: bytes | None = None
+        # Optionally raise from request() to simulate timeouts / errors.
+        self.raise_on_request: Exception | None = None
+
+    async def request(self, subject: str, payload: bytes, timeout: float):
+        self.requests.append((subject, payload, timeout))
+        if self.raise_on_request is not None:
+            raise self.raise_on_request
+        return _FakeNatsReply(self.reply_bytes or b"{}")
+
+    async def close(self) -> None:
+        self.is_closed = True
+
+
+def _patch_nats_connect(monkeypatch, fake_client: _FakeNatsClient) -> None:
+    """Replace `nats.connect` with a coroutine returning *fake_client*."""
+    import nats
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return fake_client
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+
+@pytest.mark.asyncio
+async def test_nats_agent_client_implements_protocol():
+    client = NatsAgentClient("nats://localhost:4222")
+    assert isinstance(client, AgentClient)
+
+
+@pytest.mark.asyncio
+async def test_nats_send_turn_publishes_message_send_envelope(monkeypatch):
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "completed",
+                "message": {"parts": [{"text": "pong"}]},
+            },
+        },
+    }).encode()
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    reply = await client.send_turn(
+        "vystak.default.agents.hero.tasks",
+        text="ping",
+        thread_id="t1",
+    )
+    assert reply.text == "pong"
+    assert len(fake.requests) == 1
+    subject, payload, _timeout = fake.requests[0]
+    assert subject == "vystak.default.agents.hero.tasks"
+    body = json.loads(payload)
+    assert body["jsonrpc"] == "2.0"
+    assert body["method"] == "message/send"
+    msg = body["params"]["message"]
+    assert msg["role"] == "user"
+    assert msg["parts"][0]["text"] == "ping"
+    assert msg["contextId"] == "t1"
+    assert "messageId" in msg
+
+
+@pytest.mark.asyncio
+async def test_nats_send_turn_raises_on_request_error(monkeypatch):
+    fake = _FakeNatsClient()
+    fake.raise_on_request = TimeoutError("no responders")
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    with pytest.raises(AgentCallError, match="nats request"):
+        await client.send_turn(
+            "vystak.default.agents.missing.tasks",
+            text="ping",
+            thread_id="t1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_send_turn_raises_on_invalid_json_reply(monkeypatch):
+    fake = _FakeNatsClient()
+    fake.reply_bytes = b"not-json"
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    with pytest.raises(AgentCallError, match="not valid JSON"):
+        await client.send_turn(
+            "vystak.default.agents.hero.tasks",
+            text="ping",
+            thread_id="t1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_send_turn_propagates_jsonrpc_error(monkeypatch):
+    """A JSON-RPC error reply surfaces as AgentCallError (matching HTTP path)."""
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "error": {"code": -32603, "message": "boom"},
+    }).encode()
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    with pytest.raises(AgentCallError, match="agent error"):
+        await client.send_turn(
+            "vystak.default.agents.hero.tasks",
+            text="ping",
+            thread_id="t1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_stream_turn_yields_single_final_chunk(monkeypatch):
+    """Streaming over NATS is not implemented — falls back to single-shot
+    send_turn that yields one final chunk so the channel runtime's
+    a2a-stream path doesn't deadlock."""
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "completed",
+                "message": {"parts": [{"text": "done"}]},
+            },
+        },
+    }).encode()
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    chunks = []
+    async for chunk in client.stream_turn(
+        "vystak.default.agents.hero.tasks",
+        text="ping",
+        thread_id="t1",
+    ):
+        chunks.append(chunk)
+    assert len(chunks) == 1
+    assert chunks[0].type == "final"
+    assert chunks[0].delta == "done"
+    assert chunks[0].final is True
+
+
+@pytest.mark.asyncio
+async def test_nats_send_turn_reuses_connection(monkeypatch):
+    """Subsequent calls should reuse the cached NATS client (no reconnect)."""
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0", "id": "x",
+        "result": {"status": {"state": "completed",
+                              "message": {"parts": [{"text": "ok"}]}}},
+    }).encode()
+    connect_count = {"n": 0}
+    import nats
+
+    async def _counting_connect(url, *args, **kwargs):  # noqa: ANN001
+        connect_count["n"] += 1
+        return fake
+
+    monkeypatch.setattr(nats, "connect", _counting_connect)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    await client.send_turn("vystak.default.agents.hero.tasks", text="a", thread_id="t")
+    await client.send_turn("vystak.default.agents.hero.tasks", text="b", thread_id="t")
+    assert connect_count["n"] == 1
+    assert len(fake.requests) == 2
