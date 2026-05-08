@@ -1,5 +1,6 @@
 """FastAPI app composition. Single entry point: build_agent_app(agent)."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +17,11 @@ from _vystak.runtime.memory import MemoryManager
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
 from _vystak.runtime.openai.responses import ResponsesHandler
 from _vystak.runtime.prompt_callable import build_prompt
-from _vystak.runtime.store import build_checkpointer
+from _vystak.runtime.store import _LazyCheckpointer, build_checkpointer
 from _vystak.runtime.tools import load_user_tools
 
 
 def build_agent_app(agent: Any) -> FastAPI:
-    app = FastAPI()
-
     checkpointer = build_checkpointer(agent)
     user_tools = load_user_tools(agent, Path("tools"))
     # TODO(later-phase): wire build_workspace_tools(agent) once builtin
@@ -38,16 +37,44 @@ def build_agent_app(agent: Any) -> FastAPI:
     )
 
     prompt = build_prompt(agent, memory_mgr=memory_mgr, compactor=compactor, pruner=pruner)
+
+    # Lazy savers (sqlite/postgres) need an async resolution step. LangGraph's
+    # compile() rejects them as `BaseCheckpointSaver`, so we build the graph
+    # with checkpointer=None initially and swap in the resolved saver during
+    # lifespan startup.
+    is_lazy = isinstance(checkpointer, _LazyCheckpointer)
+    initial_checkpointer = None if is_lazy else checkpointer
+
     graph = build_graph(
         agent,
         prompt=prompt,
         tools=user_tools + workspace_tools,
-        checkpointer=checkpointer,
+        checkpointer=initial_checkpointer,
     )
 
     a2a_handler = A2AHandler(agent=agent, graph=graph, task_manager=TaskManager())
     responses_handler = ResponsesHandler(agent=agent, graph=graph, store=None)
     chat_handler = ChatCompletionsHandler(agent=agent, graph=graph)
+
+    @asynccontextmanager
+    async def lifespan(app_: FastAPI):
+        if is_lazy:
+            resolved = await checkpointer.aresolve()
+            new_graph = build_graph(
+                agent,
+                prompt=prompt,
+                tools=user_tools + workspace_tools,
+                checkpointer=resolved,
+            )
+            a2a_handler.graph = new_graph
+            responses_handler.graph = new_graph
+            chat_handler.graph = new_graph
+            app_.state.graph = new_graph
+        else:
+            app_.state.graph = graph
+        yield
+
+    app = FastAPI(lifespan=lifespan)
 
     @app.get("/healthz")
     async def healthz():
