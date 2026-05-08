@@ -8,7 +8,9 @@ import TabItem from '@theme/TabItem';
 
 # Multi-agent
 
-A multi-agent system is two or more agents that talk to each other. In Vystak, every agent automatically exposes an A2A (agent-to-agent) JSON-RPC endpoint, and the [transport](/docs/concepts/transport) layer hands every container a route table — so an agent calls a peer by *name*, not by URL.
+A multi-agent system is two or more agents that talk to each other. In Vystak, every agent automatically exposes an A2A (agent-to-agent) JSON-RPC endpoint backed by Google's [`a2a-sdk`](https://pypi.org/project/a2a-sdk/), and the [transport](/docs/concepts/transport) layer hands every container a route table — so an agent calls a peer by *name*, not by URL.
+
+The peer's interface is described by an [Agent Card](https://google-a2a.github.io/A2A/specification/#agent-card) served at `/.well-known/agent.json`. The card carries the peer's `name`, `description`, and declared `skills`. Vystak fetches the card at parent-agent startup and folds those fields directly into each subagent tool's description — so the LLM picks routes based on agent-authored guidance, not vystak boilerplate.
 
 This page covers three common shapes:
 
@@ -129,16 +131,18 @@ assistant = vystak.Agent(
 `vystak apply` builds three containers, computes a per-caller route table (only the assistant can reach `weather-agent` and `time-agent` — the specialists can't reach each other unless they declare `subagents:` of their own), and the LangChain adapter generates two `@tool` functions on the coordinator:
 
 ```python
-# generated — do not edit
-@tool
-async def ask_weather_agent(question: str, config: RunnableConfig) -> str:
-    """You are a weather specialist. Use get_weather for real data."""
-    session_id = (config.get('configurable') or {}).get('thread_id')
-    metadata = {'sessionId': session_id} if session_id else {}
-    return await ask_agent('weather-agent', question, metadata=metadata)
+# Synthesized at app startup by _vystak/runtime/subagents.py
+# Description is fetched from the peer's /.well-known/agent.json card.
+@tool("ask_weather_agent", description="weather-agent — A weather specialist. Skills: forecast: Get weather for a city; alerts: Get severe weather alerts")
+async def ask_weather_agent(query: str) -> str:
+    client = await create_client(agent=base_url, relative_card_path="/.well-known/agent.json")
+    request = SendMessageRequest(message=Message(role=Role.ROLE_USER, ...))
+    async for event in client.send_message(request):
+        ...  # accumulate response from message/status_update events
+    return final_text
 ```
 
-The tool's docstring is taken from the peer's `instructions` (first paragraph, 200-char cap), so the LLM sees what each peer does when picking which to call.
+The tool's description is **card-driven**: at parent-agent boot, vystak GETs each peer's `/.well-known/agent.json` and folds its `name` + `description` (first line) + `skills` (each `name: description`) into the @tool docstring. The LLM picks routes based on what each peer says it does, not vystak boilerplate. If a card fetch fails (peer slow to start, DNS race), vystak falls back to a generic "Ask the X subagent" string with bounded retry (~0.5s, 1s, 2s).
 
 ### Session continuity across hops
 
