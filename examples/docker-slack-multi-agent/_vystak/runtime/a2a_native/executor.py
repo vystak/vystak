@@ -62,7 +62,8 @@ class LangGraphExecutor(AgentExecutor):
                 config,
                 version="v2",
             ):
-                if ev.get("event") == "on_chat_model_stream":
+                ev_type = ev.get("event")
+                if ev_type == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
                     delta = _flatten_content(
                         getattr(chunk, "content", "") if chunk is not None else ""
@@ -75,6 +76,21 @@ class LangGraphExecutor(AgentExecutor):
                         await updater.update_status(
                             TaskState.TASK_STATE_WORKING,
                             message=chunk_msg,
+                        )
+                elif ev_type in ("on_tool_start", "on_tool_end"):
+                    # Surface tool activity so subscribers (vystak-channel-slack)
+                    # can render "is calling <tool>…" status hints. The wire
+                    # carries the event under message.metadata["vystak_event"].
+                    tool_name = ev.get("name") or ""
+                    if tool_name:
+                        kind = "tool_call" if ev_type == "on_tool_start" else "tool_result"
+                        tool_msg = updater.new_agent_message(
+                            [Part(text="")],
+                            metadata={"vystak_event": kind, "tool_name": tool_name},
+                        )
+                        await updater.update_status(
+                            TaskState.TASK_STATE_WORKING,
+                            message=tool_msg,
                         )
 
             snapshot = await self._graph.aget_state(config)

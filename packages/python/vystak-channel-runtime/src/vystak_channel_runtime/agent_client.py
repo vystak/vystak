@@ -291,6 +291,22 @@ class A2AAgentClient:
             msg = status.get("message") or {}
             parts = msg.get("parts") or []
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+
+            # Tool-call surfacing — executor tags message.metadata with
+            # {vystak_event: tool_call|tool_result, tool_name: ...} so the
+            # slack runtime can render typing-status hints. Map to a typed
+            # AgentChunk and short-circuit before the regular status path.
+            metadata = msg.get("metadata") or {}
+            ev_type = metadata.get("vystak_event")
+            if ev_type in ("tool_call", "tool_result"):
+                return AgentChunk(
+                    type=ev_type,
+                    delta=text,
+                    tool_name=metadata.get("tool_name"),
+                    data=metadata,
+                    raw=payload,
+                )
+
             is_final = bool(result.get("final")) or state == "completed"
             return AgentChunk(
                 type="final" if is_final else "status",
