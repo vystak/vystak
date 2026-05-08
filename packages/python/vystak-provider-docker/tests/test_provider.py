@@ -261,6 +261,188 @@ class TestApply:
         assert env["VYSTAK_NATS_SUBJECT_PREFIX"] == "vystak-nats"
 
 
+    def test_telemetry_enabled_adds_jaeger_node(
+        self, provider, mock_docker_client, sample_code,
+    ):
+        """When platform.telemetry.enabled is True (default), apply()
+        adds a JaegerNode to the graph and injects OTEL_* env onto the
+        DockerAgentNode."""
+        from vystak.schema.platform import Platform
+        from vystak.schema.telemetry import Telemetry
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
+        from vystak_provider_docker.nodes.jaeger import JaegerNode
+
+        platform = Platform(
+            name="local",
+            type="docker",
+            provider=Provider(name="docker", type="docker"),
+            telemetry=Telemetry(),
+        )
+        agent = Agent(
+            name="otel-bot",
+            framework="langchain-python",
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
+            platform=platform,
+        )
+        provider.set_generated_code(sample_code)
+        provider.set_agent(agent)
+        plan = DeployPlan(
+            agent_name="otel-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "jaeger": ProvisionResult(
+                name="jaeger",
+                success=True,
+                info={"otlp_grpc": "http://vystak-jaeger:4317"},
+            ),
+            "agent:otel-bot": ProvisionResult(
+                name="agent:otel-bot",
+                success=True,
+                info={"url": "http://localhost:8000"},
+            ),
+        }
+
+        added_nodes: list = []
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            mock_graph.add.side_effect = lambda node: added_nodes.append(node)
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
+        assert result.success is True
+        assert any(isinstance(n, JaegerNode) for n in added_nodes)
+        agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
+        assert len(agent_nodes) == 1
+        env = agent_nodes[0]._extra_env
+        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://vystak-jaeger:4317"
+        assert env["OTEL_TRACES_EXPORTER"] == "otlp"
+        assert env["OTEL_SERVICE_NAME"] == "vystak-otel-bot"
+
+    def test_telemetry_external_endpoint_skips_jaeger_node(
+        self, provider, mock_docker_client, sample_code,
+    ):
+        """Endpoint set → no JaegerNode provisioning, but env injected."""
+        from vystak.schema.platform import Platform
+        from vystak.schema.telemetry import Telemetry
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
+        from vystak_provider_docker.nodes.jaeger import JaegerNode
+
+        platform = Platform(
+            name="local",
+            type="docker",
+            provider=Provider(name="docker", type="docker"),
+            telemetry=Telemetry(endpoint="http://otel.example.com:4317"),
+        )
+        agent = Agent(
+            name="otel-bot",
+            framework="langchain-python",
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
+            platform=platform,
+        )
+        provider.set_generated_code(sample_code)
+        provider.set_agent(agent)
+        plan = DeployPlan(
+            agent_name="otel-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "agent:otel-bot": ProvisionResult(
+                name="agent:otel-bot",
+                success=True,
+                info={"url": "http://localhost:8000"},
+            ),
+        }
+
+        added_nodes: list = []
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            mock_graph.add.side_effect = lambda node: added_nodes.append(node)
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
+        assert result.success is True
+        assert not any(isinstance(n, JaegerNode) for n in added_nodes)
+        agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
+        assert agent_nodes[0]._extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
+            "http://otel.example.com:4317"
+        )
+
+    def test_telemetry_disabled_skips_everything(
+        self, provider, mock_docker_client, sample_code,
+    ):
+        """Telemetry(enabled=False) → no JaegerNode, no OTEL_* env."""
+        from vystak.schema.platform import Platform
+        from vystak.schema.telemetry import Telemetry
+        from vystak_provider_docker.nodes.agent import DockerAgentNode
+        from vystak_provider_docker.nodes.jaeger import JaegerNode
+
+        platform = Platform(
+            name="local",
+            type="docker",
+            provider=Provider(name="docker", type="docker"),
+            telemetry=Telemetry(enabled=False),
+        )
+        agent = Agent(
+            name="otel-bot",
+            framework="langchain-python",
+            model=Model(
+                name="claude",
+                provider=Provider(name="anthropic", type="anthropic"),
+                model_name="claude-sonnet-4-20250514",
+            ),
+            platform=platform,
+        )
+        provider.set_generated_code(sample_code)
+        provider.set_agent(agent)
+        plan = DeployPlan(
+            agent_name="otel-bot",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="abc123",
+            changes={},
+        )
+        mock_results = {
+            "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
+            "agent:otel-bot": ProvisionResult(
+                name="agent:otel-bot",
+                success=True,
+                info={"url": "http://localhost:8000"},
+            ),
+        }
+
+        added_nodes: list = []
+        with patch("vystak.provisioning.ProvisionGraph") as MockGraph:
+            mock_graph = MagicMock()
+            mock_graph.execute.return_value = mock_results
+            mock_graph.add.side_effect = lambda node: added_nodes.append(node)
+            MockGraph.return_value = mock_graph
+            result = provider.apply(plan)
+
+        assert result.success is True
+        assert not any(isinstance(n, JaegerNode) for n in added_nodes)
+        agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
+        assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in agent_nodes[0]._extra_env
+
+
 class TestDestroy:
     def test_removes_container(self, provider, mock_docker_client, not_found_error):
         client, _ = mock_docker_client

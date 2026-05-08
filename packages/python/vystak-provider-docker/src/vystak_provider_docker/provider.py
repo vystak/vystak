@@ -196,6 +196,45 @@ class DockerProvider(PlatformProvider):
     def _container_name(self, agent_name: str) -> str:
         return f"vystak-{agent_name}"
 
+    def _platform_telemetry(self):
+        """Read Telemetry config off the agent's platform, falling back to
+        the first channel's platform when no agent is set (channel-only
+        applies). Returns ``None`` when telemetry is not configured."""
+        if self._agent and self._agent.platform:
+            tel = getattr(self._agent.platform, "telemetry", None)
+            if tel is not None:
+                return tel
+        for channel in self._channels:
+            platform = getattr(channel, "platform", None)
+            if platform is not None:
+                tel = getattr(platform, "telemetry", None)
+                if tel is not None:
+                    return tel
+        return None
+
+    def _resolve_telemetry_endpoint(self, graph, jaeger_node_cls) -> str | None:
+        """Provision the shared Jaeger node (when needed) and return the
+        OTLP gRPC endpoint to wire into containers, or None when telemetry
+        is disabled.
+
+        - ``Telemetry(enabled=False)`` → returns None (no instrumentation).
+        - ``Telemetry(endpoint=...)``  → returns the user's URL, no node
+          provisioning (assume external collector).
+        - ``Telemetry(enabled=True, endpoint=None)`` → adds JaegerNode to
+          the graph (idempotent — ProvisionGraph dedupes by name) and
+          returns the in-network DNS endpoint.
+        """
+        tel = self._platform_telemetry()
+        if tel is None or not tel.enabled:
+            return None
+        if tel.endpoint:
+            return tel.endpoint
+        # Auto-provision the shared collector container. graph.add is
+        # idempotent on node name (overwrites silently), so calling this
+        # from both apply() and apply_channel() is safe.
+        graph.add(jaeger_node_cls(self._client))
+        return f"http://{jaeger_node_cls.CONTAINER_NAME}:4317"
+
     def _get_container(self, agent_name: str):
         try:
             return self._client.containers.get(self._container_name(agent_name))
@@ -684,6 +723,7 @@ class DockerProvider(PlatformProvider):
                 DockerAgentNode,
                 DockerNetworkNode,
                 DockerServiceNode,
+                JaegerNode,
                 NatsServerNode,
             )
 
@@ -713,6 +753,18 @@ class DockerProvider(PlatformProvider):
                 _nats_plugin = get_transport_plugin("nats")
                 extra_env["VYSTAK_NATS_SUBJECT"] = _nats_plugin.resolve_address_for(
                     self._agent, self._agent.platform,
+                )
+
+            # Telemetry — single shared OTLP collector (Jaeger) when the
+            # platform declares Telemetry. With no endpoint set, we
+            # auto-provision the all-in-one container; with endpoint set
+            # we skip provisioning and just thread the env vars through.
+            telemetry_endpoint = self._resolve_telemetry_endpoint(graph, JaegerNode)
+            if telemetry_endpoint:
+                extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] = telemetry_endpoint
+                extra_env["OTEL_TRACES_EXPORTER"] = "otlp"
+                extra_env["OTEL_SERVICE_NAME"] = (
+                    f"vystak-{self._agent.name}" if self._agent else "vystak-agent"
                 )
 
             # Services (sessions, memory, services list)
@@ -1025,6 +1077,7 @@ class DockerProvider(PlatformProvider):
             from vystak_provider_docker.nodes import (
                 DockerChannelNode,
                 DockerNetworkNode,
+                JaegerNode,
                 NatsServerNode,
             )
 
@@ -1057,6 +1110,27 @@ class DockerProvider(PlatformProvider):
                     channel_extra_env["VYSTAK_NATS_SUBJECT_PREFIX"] = (
                         transport.config.subject_prefix
                     )
+
+            # Telemetry — same shared Jaeger collector as agent path. The
+            # channel platform carries its own Telemetry config (the
+            # example wires the same Platform object to channels and
+            # agents, so they see the same setting). When the agent run
+            # already provisioned vystak-jaeger, JaegerNode.provision()
+            # short-circuits via the "container exists" branch.
+            channel_telemetry = (
+                getattr(channel.platform, "telemetry", None) if channel.platform else None
+            )
+            if channel_telemetry is not None and channel_telemetry.enabled:
+                if channel_telemetry.endpoint:
+                    endpoint = channel_telemetry.endpoint
+                else:
+                    graph.add(JaegerNode(self._client))
+                    endpoint = f"http://{JaegerNode.CONTAINER_NAME}:4317"
+                channel_extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
+                channel_extra_env["OTEL_TRACES_EXPORTER"] = "otlp"
+                channel_extra_env["OTEL_SERVICE_NAME"] = (
+                    f"vystak-channel-{channel.name}"
+                )
 
             channel_node = DockerChannelNode(
                 self._client,

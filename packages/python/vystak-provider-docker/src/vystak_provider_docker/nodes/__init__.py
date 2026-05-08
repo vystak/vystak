@@ -10,6 +10,7 @@ from vystak_provider_docker.nodes.hashi_vault import (
     HashiVaultServerNode,
     HashiVaultUnsealNode,
 )
+from vystak_provider_docker.nodes.jaeger import JaegerNode
 from vystak_provider_docker.nodes.nats_server import NatsServerNode
 from vystak_provider_docker.nodes.network import DockerNetworkNode
 from vystak_provider_docker.nodes.service import DockerServiceNode
@@ -31,6 +32,7 @@ __all__ = [
     "HashiVaultInitNode",
     "HashiVaultServerNode",
     "HashiVaultUnsealNode",
+    "JaegerNode",
     "NatsServerNode",
     "VaultAgentSidecarNode",
     "VaultKvSetupNode",
