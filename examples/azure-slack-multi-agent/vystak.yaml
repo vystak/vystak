@@ -32,6 +32,7 @@ models:
 
 agents:
   - name: weather-agent
+    framework: langchain-python
     instructions: |
       You are a weather specialist. When asked about weather, use the
       get_weather tool to fetch real data and answer concisely.
@@ -44,6 +45,7 @@ agents:
       - {name: ANTHROPIC_API_URL}
 
   - name: time-agent
+    framework: langchain-python
     instructions: |
       You are a time specialist. Use the get_time tool to fetch the
       current time. The tool accepts a timezone_name argument (IANA
@@ -66,6 +68,7 @@ agents:
       - {name: ANTHROPIC_API_URL}
 
   - name: assistant-agent
+    framework: langchain-python
     instructions: |
       You are a friendly general-purpose assistant.
       When the user asks about weather, use ask_weather_agent.
