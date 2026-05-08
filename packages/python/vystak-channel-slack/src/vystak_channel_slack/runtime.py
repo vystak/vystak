@@ -47,13 +47,50 @@ class SlackChannelRuntime(ChannelRuntime):
         # Thread routing is handled by ChannelRuntime.resolve_route + authorize;
         # the deleted threads.route_thread_message helper is now redundant.
 
+        # Wrap each Slack event in a manual OTel span. Slack uses Socket Mode
+        # (WebSocket via slack_bolt), not FastAPI HTTP, so FastAPIInstrumentor
+        # never creates a root span for incoming events. Without a parent span,
+        # `inject()` in NatsAgentClient writes an empty traceparent and
+        # downstream agent traces become disconnected. Manual wrap fixes that —
+        # the slack.* span is the trace root, traceparent propagates from there.
+        try:
+            from opentelemetry import trace as _otel_trace
+
+            _tracer = _otel_trace.get_tracer("vystak.channel.slack")
+            _OTEL_AVAILABLE = True
+        except ImportError:  # pragma: no cover
+            _tracer = None
+            _OTEL_AVAILABLE = False
+
         @self._app.event("message")
         async def _on_message(event, say):  # noqa: ARG001
-            await self.handle_event({"type": "message", "event": event, "say": say})
+            if _OTEL_AVAILABLE:
+                with _tracer.start_as_current_span(
+                    "slack.message", kind=_otel_trace.SpanKind.SERVER
+                ) as span:
+                    span.set_attribute("messaging.system", "slack")
+                    span.set_attribute("messaging.operation", "receive")
+                    span.set_attribute("slack.event_type", "message")
+                    await self.handle_event({"type": "message", "event": event, "say": say})
+            else:
+                await self.handle_event({"type": "message", "event": event, "say": say})
 
         @self._app.event("app_mention")
         async def _on_mention(event, say):  # noqa: ARG001
-            await self.handle_event({"type": "app_mention", "event": event, "say": say})
+            if _OTEL_AVAILABLE:
+                with _tracer.start_as_current_span(
+                    "slack.app_mention", kind=_otel_trace.SpanKind.SERVER
+                ) as span:
+                    span.set_attribute("messaging.system", "slack")
+                    span.set_attribute("messaging.operation", "receive")
+                    span.set_attribute("slack.event_type", "app_mention")
+                    await self.handle_event(
+                        {"type": "app_mention", "event": event, "say": say}
+                    )
+            else:
+                await self.handle_event(
+                    {"type": "app_mention", "event": event, "say": say}
+                )
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
         await self._handler.start_async()
