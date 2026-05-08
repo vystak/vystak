@@ -13,6 +13,7 @@ models:
 
 agents:
   - name: weather-agent
+    framework: langchain-python
     instructions: You are a weather specialist. Answer concisely.
     model: sonnet
     platform: local
