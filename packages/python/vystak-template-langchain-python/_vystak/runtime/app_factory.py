@@ -23,6 +23,7 @@ from _vystak.runtime.store import (
     build_checkpointer,
     build_memory_store,
 )
+from _vystak.runtime.subagents import build_subagent_tools
 from _vystak.runtime.tools import load_user_tools
 
 
@@ -30,6 +31,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     checkpointer = build_checkpointer(agent)
     memory_store = build_memory_store(agent)
     user_tools = load_user_tools(agent, Path("tools"))
+    subagent_tools = build_subagent_tools(agent)
     # TODO(later-phase): wire build_workspace_tools(agent) once builtin
     # workspace tools land. For now agents only see user-defined tools.
     workspace_tools: list[Any] = []
@@ -58,7 +60,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     graph = build_graph(
         agent,
         prompt=prompt,
-        tools=user_tools + workspace_tools,
+        tools=user_tools + workspace_tools + subagent_tools,
         checkpointer=initial_checkpointer,
     )
 
@@ -74,7 +76,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
-                    tools=user_tools + workspace_tools,
+                    tools=user_tools + workspace_tools + subagent_tools,
                     checkpointer=resolved,
                 )
                 a2a_handler.graph = new_graph
