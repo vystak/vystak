@@ -133,3 +133,54 @@ def test_build_routes_json_empty_agents():
     plugin = HttpTransportPlugin()
     pl = _platform()
     assert build_routes_json([], plugin, pl) == "{}"
+
+
+# ---------------------------------------------------------------------------
+# NATS transport: card_url is omitted (not discoverable over NATS)
+# ---------------------------------------------------------------------------
+
+
+def _nats_platform(namespace: str = "default", prefix: str = "vystak") -> Platform:
+    from vystak.schema.transport import NatsConfig
+
+    return Platform(
+        name="main",
+        type="docker",
+        provider=_DOCKER_PROVIDER,
+        namespace=namespace,
+        transport=Transport(
+            name="bus",
+            type="nats",
+            config=NatsConfig(jetstream=True, subject_prefix=prefix),
+        ),
+    )
+
+
+def test_build_peer_routes_nats_omits_card_url():
+    """NATS routes carry the listener subject; cards are not discoverable
+    over NATS so card_url is omitted entirely."""
+    plugin = NatsTransportPlugin()
+    pl = _nats_platform("multi-nats", prefix="vystak-nats")
+    agents = [_agent("weather"), _agent("time")]
+
+    routes = build_peer_routes(agents, plugin, pl)
+
+    assert set(routes.keys()) == {"weather", "time"}
+    assert routes["weather"]["address"] == "vystak-nats.multi-nats.agents.weather.tasks"
+    assert routes["time"]["address"] == "vystak-nats.multi-nats.agents.time.tasks"
+    # Critical: NATS routes must NOT carry a bogus card_url like
+    # "<subject>/.well-known/agent.json" that fails URL parsing.
+    assert "card_url" not in routes["weather"]
+    assert "card_url" not in routes["time"]
+
+
+def test_build_routes_json_nats_serialised_omits_card_url():
+    """End-to-end JSON shape: subagent runtime sees no card_url for NATS."""
+    plugin = NatsTransportPlugin()
+    pl = _nats_platform("multi-nats", prefix="vystak-nats")
+    agents = [_agent("weather")]
+
+    raw = build_routes_json(agents, plugin, pl)
+    parsed = json.loads(raw)
+    assert "card_url" not in parsed["weather"]
+    assert parsed["weather"]["address"] == "vystak-nats.multi-nats.agents.weather.tasks"

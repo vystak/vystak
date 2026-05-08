@@ -699,11 +699,21 @@ class DockerProvider(PlatformProvider):
                 self._agent.platform.transport if self._agent and self._agent.platform else None
             )
             if transport and transport.type == "nats":
+                from vystak_provider_docker.transport_wiring import get_transport_plugin
+
                 graph.add(NatsServerNode(self._client))
                 extra_env["VYSTAK_TRANSPORT_TYPE"] = "nats"
                 extra_env["VYSTAK_NATS_URL"] = "nats://vystak-nats:4222"
                 if transport.config and getattr(transport.config, "subject_prefix", None):
                     extra_env["VYSTAK_NATS_SUBJECT_PREFIX"] = transport.config.subject_prefix
+                # Tell the agent its own listener subject so the in-container
+                # NATS↔HTTP bridge knows what to subscribe to. Computed via
+                # the transport plugin so the wire format stays in sync with
+                # NatsTransport.resolve_address (the client side).
+                _nats_plugin = get_transport_plugin("nats")
+                extra_env["VYSTAK_NATS_SUBJECT"] = _nats_plugin.resolve_address_for(
+                    self._agent, self._agent.platform,
+                )
 
             # Services (sessions, memory, services list)
             for svc in self._all_services():

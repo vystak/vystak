@@ -74,31 +74,32 @@ def build_peer_routes(
             ...
         }
 
-    ``address`` is the JSON-RPC endpoint (kept for back-compat with the
-    legacy hand-rolled httpx subagent client). ``card_url`` is the agent
-    card URL the new a2a-sdk client resolves before calling
-    ``send_message``. The card URL is derived from ``address`` by replacing
-    the trailing ``/a2a`` with ``/.well-known/agent.json``.
+    ``address`` is the JSON-RPC endpoint (HTTP) or the NATS subject
+    (NATS) the peer listens on. ``card_url`` is the agent card URL the
+    SDK client resolves before calling ``send_message`` — only emitted
+    for HTTP transports. NATS routes omit ``card_url`` entirely because
+    cards aren't discoverable over NATS in v1; subagents fall back to
+    local boilerplate descriptions when no card is available.
     """
     routes: dict[str, dict[str, str]] = {}
+    is_nats = getattr(plugin, "type", None) == "nats"
     for agent in agents:
         address = plugin.resolve_address_for(agent, platform)
-        card_url = _derive_card_url(address)
-        routes[agent.name] = {
+        entry: dict[str, str] = {
             "canonical": agent.canonical_name,
             "address": address,
-            "card_url": card_url,
         }
+        if not is_nats:
+            entry["card_url"] = _derive_card_url(address)
+        routes[agent.name] = entry
     return routes
 
 
 def _derive_card_url(address: str) -> str:
-    """Convert a transport address to the agent-card URL.
+    """Convert an HTTP transport address to its agent-card URL.
 
-    For HTTP this is `http://host:port/a2a` -> `http://host:port/.well-known/agent.json`.
-    NAT-backed addresses (`nats://...`) don't have a card URL; we still emit
-    the suffix-stripped form so the field is always present, but a NATS
-    consumer is expected to resolve cards out-of-band.
+    Maps `http://host:port/a2a` -> `http://host:port/.well-known/agent.json`.
+    Only used for HTTP transports; NATS routes do not receive a card URL.
     """
     return address.rstrip("/").removesuffix("/a2a") + "/.well-known/agent.json"
 
