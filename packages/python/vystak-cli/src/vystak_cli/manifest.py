@@ -8,6 +8,10 @@ from pathlib import Path
 
 EXCLUDED = {"tests", "_test_assets", "__pycache__"}
 
+# Deep-filter pattern applied recursively during copytree.
+# Catches nested __pycache__/*.pyc populated by dev pytest runs in the template tree.
+_IGNORE_DEEP = shutil.ignore_patterns("__pycache__", "*.pyc")
+
 
 def scaffold_template(
     source: Path,
@@ -28,7 +32,7 @@ def scaffold_template(
             continue
         dest = target / entry.name
         if entry.is_dir():
-            shutil.copytree(entry, dest, dirs_exist_ok=force)
+            shutil.copytree(entry, dest, dirs_exist_ok=force, ignore=_IGNORE_DEEP)
         else:
             shutil.copy2(entry, dest)
 
@@ -54,6 +58,9 @@ def _hash_tree(root: Path) -> dict[str, str]:
         if not path.is_file():
             continue
         if path.name == "manifest.json":
+            continue
+        # Skip artifacts the scaffold copy filters out; keeps source/scaffold hashes aligned.
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue
         rel = path.relative_to(root.parent).as_posix()
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
