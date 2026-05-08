@@ -13,8 +13,11 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 def build_prompt(agent: Any, *, memory_mgr: Any, compactor: Any, pruner: Any):
     instructions = (agent.instructions or "").strip()
 
-    async def _prompt(state: dict, config: dict) -> list[BaseMessage]:
+    async def _prompt(
+        state: dict, config: dict | None = None
+    ) -> list[BaseMessage]:
         messages: list[BaseMessage] = list(state.get("messages", []))
+        configurable = (config or {}).get("configurable") or {}
 
         if pruner is not None:
             messages = pruner.prune(messages)
@@ -22,14 +25,14 @@ def build_prompt(agent: Any, *, memory_mgr: Any, compactor: Any, pruner: Any):
         sys_parts = [instructions] if instructions else []
 
         if memory_mgr is not None:
-            user_id = (config.get("configurable") or {}).get("user_id", "default")
+            user_id = configurable.get("user_id", "default")
             query = _last_human_text(messages)
             recalled = await memory_mgr.recall(user_id=user_id, query=query)
             if recalled:
                 sys_parts.append("## Memory\n" + "\n".join(recalled))
 
         if compactor is not None:
-            thread_id = (config.get("configurable") or {}).get("thread_id")
+            thread_id = configurable.get("thread_id")
             if thread_id:
                 latest = await compactor.store.latest(thread_id)
                 if latest:

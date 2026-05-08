@@ -64,7 +64,10 @@ weather_agent = ast.Agent(framework="langchain-python",
     model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=["get_weather"])],
-    secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="ANTHROPIC_API_URL"),
+    ],
 )
 
 time_agent = ast.Agent(framework="langchain-python", 
@@ -76,7 +79,10 @@ time_agent = ast.Agent(framework="langchain-python",
     model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="time", tools=["get_time"])],
-    secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="ANTHROPIC_API_URL"),
+    ],
 )
 
 # Coordinator declares its peers via subagents — the langchain adapter
@@ -92,7 +98,10 @@ assistant_agent = ast.Agent(framework="langchain-python",
     model=sonnet,
     platform=platform,
     subagents=[weather_agent, time_agent],
-    secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="ANTHROPIC_API_URL"),
+    ],
 )
 
 chat = ast.Channel(
