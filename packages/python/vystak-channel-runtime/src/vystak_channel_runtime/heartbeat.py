@@ -22,7 +22,7 @@ def is_heartbeat_ok(text: str, max_chars: int) -> bool:
     Rules (matches OpenClaw's behaviour):
 
     * Whitespace-only / empty text → False (do not silently swallow real bugs).
-    * Text longer than `max_chars` → False (always deliver long replies).
+    * Stripped text longer than `max_chars` → False (always deliver long replies).
     * Otherwise → True iff `HEARTBEAT_OK` appears anywhere in the text.
     """
     stripped = text.strip()
