@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from croniter import croniter
 from vystak.schema.heartbeat import Heartbeat
+
+from vystak_channel_runtime.types import InboundEvent
 
 logger = logging.getLogger("vystak.channel.runtime.heartbeat")
 
@@ -66,19 +73,98 @@ class HeartbeatScheduler:
         except asyncio.CancelledError:
             pass
         except Exception:
-            # Task may have exited with an error (e.g. NotImplementedError from
-            # the _run stub in Task 6). Log and absorb — stop()'s contract is
-            # "task is no longer running", not "propagate task exit reason".
+            # Defensive — stop()'s contract is "task is no longer running",
+            # not "propagate task exit reason". Real loop errors are caught
+            # and logged inside _run; this is a last-resort safety net.
             logger.exception("heartbeat scheduler task exited with error on stop")
 
     async def _resolve_thread(self) -> str | None:
-        if self.config.target_thread:
+        if self.config.target_thread is not None:
             return self.config.target_thread
         binding = await self.runtime.store.last_binding_for_agent(
             self.runtime.channel_type, self.agent_name,
         )
         return binding.thread_id if binding else None
 
+    async def _fire(self) -> None:
+        if self.config.skip_when_busy and self._busy:
+            logger.info(
+                "heartbeat.skipped agent=%s reason=busy", self.agent_name,
+            )
+            return
+        thread_id = await self._resolve_thread()
+        if thread_id is None:
+            logger.debug(
+                "heartbeat.skipped agent=%s reason=no-thread", self.agent_name,
+            )
+            return
+
+        if self.config.isolated_session:
+            synthetic = (
+                f"__heartbeat__{int(time.time())}_{secrets.token_hex(4)}"
+            )
+            session_scope = synthetic
+            session_thread = synthetic
+        else:
+            session_scope = thread_id
+            session_thread = thread_id
+
+        event = InboundEvent(
+            channel_type=self.runtime.channel_type,
+            scope_id=session_scope,
+            thread_id=session_thread,
+            user_id="__heartbeat__",
+            text=self.config.prompt or DEFAULT_PROMPT,
+            is_dm=False,
+            mentions_bot=True,
+            metadata={
+                "heartbeat": True,
+                "ack_max_chars": self.config.ack_max_chars,
+                "deliver_scope": thread_id,
+                "deliver_thread": thread_id,
+            },
+        )
+
+        self._busy = True
+        try:
+            logger.info(
+                "heartbeat.fired agent=%s thread=%s",
+                self.agent_name, thread_id,
+            )
+            await self.runtime._handle_synthetic_event(event)
+        finally:
+            self._busy = False
+
     async def _run(self) -> None:
-        # Implemented in Task 7.
-        raise NotImplementedError
+        try:
+            tz = ZoneInfo(self.config.timezone)
+        except Exception:
+            logger.exception(
+                "heartbeat invalid timezone=%s — disabling scheduler %s",
+                self.config.timezone, self.agent_name,
+            )
+            return
+        cron = croniter(self.config.schedule, datetime.now(tz))
+        while True:
+            try:
+                next_at = cron.get_next(datetime)
+            except Exception:
+                logger.exception(
+                    "heartbeat cron error agent=%s — sleeping 60s",
+                    self.agent_name,
+                )
+                await asyncio.sleep(60)
+                continue
+            delay = max(0.0, (next_at - datetime.now(tz)).total_seconds())
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                raise
+            try:
+                await self._fire()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "heartbeat.fired_failed agent=%s", self.agent_name,
+                )

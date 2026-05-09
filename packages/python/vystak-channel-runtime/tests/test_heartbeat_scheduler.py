@@ -5,6 +5,7 @@ Cron-loop tests live in this file too, gated on freezegun availability.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,7 +26,7 @@ def _hb(**overrides) -> Heartbeat:
 def _runtime() -> MagicMock:
     rt = MagicMock()
     rt.channel_type = "slack"
-    rt.handle_event = AsyncMock()
+    rt._handle_synthetic_event = AsyncMock()
     rt.store = MagicMock()
     rt.store.last_binding_for_agent = AsyncMock(return_value=None)
     return rt
@@ -75,8 +76,6 @@ async def test_disabled_scheduler_does_not_start_task():
 
 @pytest.mark.asyncio
 async def test_stop_cancels_running_task():
-    import asyncio
-
     rt = _runtime()
     sch = HeartbeatScheduler(rt, "ops-bot", _hb(schedule="* * * * *"))
     await sch.start()
@@ -85,3 +84,92 @@ async def test_stop_cancels_running_task():
     await asyncio.sleep(0)
     await sch.stop()
     assert sch._task.done()
+
+
+@pytest.mark.asyncio
+async def test_fire_with_no_thread_skips_silently():
+    rt = _runtime()
+    sch = HeartbeatScheduler(rt, "ops-bot", _hb())
+    await sch._fire()
+    rt._handle_synthetic_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fire_with_pinned_thread_dispatches_event():
+    rt = _runtime()
+    sch = HeartbeatScheduler(rt, "ops-bot", _hb(target_thread="C123"))
+    await sch._fire()
+    rt._handle_synthetic_event.assert_awaited_once()
+    raw = rt._handle_synthetic_event.await_args.args[0]
+    assert raw.user_id == "__heartbeat__"
+    assert raw.metadata["heartbeat"] is True
+    assert raw.metadata["deliver_thread"] == "C123"
+    assert raw.metadata["ack_max_chars"] == 300
+
+
+@pytest.mark.asyncio
+async def test_fire_isolated_session_uses_synthetic_thread():
+    rt = _runtime()
+    sch = HeartbeatScheduler(
+        rt, "ops-bot", _hb(target_thread="C123", isolated_session=True),
+    )
+    await sch._fire()
+    raw = rt._handle_synthetic_event.await_args.args[0]
+    assert raw.thread_id is not None
+    assert raw.thread_id.startswith("__heartbeat__")
+    assert raw.scope_id.startswith("__heartbeat__")
+
+
+@pytest.mark.asyncio
+async def test_fire_non_isolated_uses_real_thread():
+    rt = _runtime()
+    sch = HeartbeatScheduler(
+        rt, "ops-bot", _hb(target_thread="C123", isolated_session=False),
+    )
+    await sch._fire()
+    raw = rt._handle_synthetic_event.await_args.args[0]
+    assert raw.thread_id == "C123"
+    assert raw.scope_id == "C123"
+
+
+@pytest.mark.asyncio
+async def test_fire_uses_default_prompt_when_unset():
+    from vystak_channel_runtime.heartbeat import DEFAULT_PROMPT
+
+    rt = _runtime()
+    sch = HeartbeatScheduler(rt, "ops-bot", _hb(target_thread="C123"))
+    await sch._fire()
+    raw = rt._handle_synthetic_event.await_args.args[0]
+    assert raw.text == DEFAULT_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_fire_uses_custom_prompt_when_set():
+    rt = _runtime()
+    sch = HeartbeatScheduler(
+        rt, "ops-bot", _hb(target_thread="C123", prompt="Custom prompt"),
+    )
+    await sch._fire()
+    raw = rt._handle_synthetic_event.await_args.args[0]
+    assert raw.text == "Custom prompt"
+
+
+@pytest.mark.asyncio
+async def test_skip_when_busy_drops_overlapping_fire():
+    """If a previous fire is still running, skip the next one."""
+    rt = _runtime()
+    sch = HeartbeatScheduler(rt, "ops-bot", _hb(target_thread="C123"))
+    sch._busy = True  # simulate in-flight previous fire
+    await sch._fire()
+    rt._handle_synthetic_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_busy_flag_resets_after_handle_event_raises():
+    """Exception in _handle_synthetic_event must not leave _busy stuck."""
+    rt = _runtime()
+    rt._handle_synthetic_event = AsyncMock(side_effect=RuntimeError("boom"))
+    sch = HeartbeatScheduler(rt, "ops-bot", _hb(target_thread="C123"))
+    with pytest.raises(RuntimeError):
+        await sch._fire()
+    assert sch._busy is False
