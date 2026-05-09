@@ -261,16 +261,16 @@ class TestApply:
         assert env["VYSTAK_NATS_SUBJECT_PREFIX"] == "vystak-nats"
 
 
-    def test_telemetry_enabled_adds_jaeger_node(
+    def test_telemetry_enabled_adds_otel_lgtm_node(
         self, provider, mock_docker_client, sample_code,
     ):
         """When platform.telemetry.enabled is True (default), apply()
-        adds a JaegerNode to the graph and injects OTEL_* env onto the
-        DockerAgentNode."""
+        adds an OtelLgtmNode to the graph and injects OTEL_* env onto the
+        DockerAgentNode (traces + metrics)."""
         from vystak.schema.platform import Platform
         from vystak.schema.telemetry import Telemetry
         from vystak_provider_docker.nodes.agent import DockerAgentNode
-        from vystak_provider_docker.nodes.jaeger import JaegerNode
+        from vystak_provider_docker.nodes.otel_lgtm import OtelLgtmNode
 
         platform = Platform(
             name="local",
@@ -299,10 +299,10 @@ class TestApply:
         )
         mock_results = {
             "network": ProvisionResult(name="network", success=True, info={"network": MagicMock()}),
-            "jaeger": ProvisionResult(
-                name="jaeger",
+            "otel-lgtm": ProvisionResult(
+                name="otel-lgtm",
                 success=True,
-                info={"otlp_grpc": "http://vystak-jaeger:4317"},
+                info={"otlp_grpc": "http://vystak-otel:4317"},
             ),
             "agent:otel-bot": ProvisionResult(
                 name="agent:otel-bot",
@@ -320,22 +320,23 @@ class TestApply:
             result = provider.apply(plan)
 
         assert result.success is True
-        assert any(isinstance(n, JaegerNode) for n in added_nodes)
+        assert any(isinstance(n, OtelLgtmNode) for n in added_nodes)
         agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
         assert len(agent_nodes) == 1
         env = agent_nodes[0]._extra_env
-        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://vystak-jaeger:4317"
+        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://vystak-otel:4317"
         assert env["OTEL_TRACES_EXPORTER"] == "otlp"
+        assert env["OTEL_METRICS_EXPORTER"] == "otlp"
         assert env["OTEL_SERVICE_NAME"] == "vystak-otel-bot"
 
-    def test_telemetry_external_endpoint_skips_jaeger_node(
+    def test_telemetry_external_endpoint_skips_lgtm_node(
         self, provider, mock_docker_client, sample_code,
     ):
-        """Endpoint set → no JaegerNode provisioning, but env injected."""
+        """Endpoint set → no OtelLgtmNode provisioning, but env injected."""
         from vystak.schema.platform import Platform
         from vystak.schema.telemetry import Telemetry
         from vystak_provider_docker.nodes.agent import DockerAgentNode
-        from vystak_provider_docker.nodes.jaeger import JaegerNode
+        from vystak_provider_docker.nodes.otel_lgtm import OtelLgtmNode
 
         platform = Platform(
             name="local",
@@ -380,7 +381,7 @@ class TestApply:
             result = provider.apply(plan)
 
         assert result.success is True
-        assert not any(isinstance(n, JaegerNode) for n in added_nodes)
+        assert not any(isinstance(n, OtelLgtmNode) for n in added_nodes)
         agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
         assert agent_nodes[0]._extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
             "http://otel.example.com:4317"
@@ -389,11 +390,11 @@ class TestApply:
     def test_telemetry_disabled_skips_everything(
         self, provider, mock_docker_client, sample_code,
     ):
-        """Telemetry(enabled=False) → no JaegerNode, no OTEL_* env."""
+        """Telemetry(enabled=False) → no OtelLgtmNode, no OTEL_* env."""
         from vystak.schema.platform import Platform
         from vystak.schema.telemetry import Telemetry
         from vystak_provider_docker.nodes.agent import DockerAgentNode
-        from vystak_provider_docker.nodes.jaeger import JaegerNode
+        from vystak_provider_docker.nodes.otel_lgtm import OtelLgtmNode
 
         platform = Platform(
             name="local",
@@ -438,7 +439,7 @@ class TestApply:
             result = provider.apply(plan)
 
         assert result.success is True
-        assert not any(isinstance(n, JaegerNode) for n in added_nodes)
+        assert not any(isinstance(n, OtelLgtmNode) for n in added_nodes)
         agent_nodes = [n for n in added_nodes if isinstance(n, DockerAgentNode)]
         assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in agent_nodes[0]._extra_env
 

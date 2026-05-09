@@ -94,12 +94,17 @@ def init_telemetry(service_name: str | None = None) -> Any:
         return None
 
     try:
-        from opentelemetry import trace
+        from opentelemetry import metrics, trace
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter,
+        )
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,
         )
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -127,13 +132,25 @@ def init_telemetry(service_name: str | None = None) -> Any:
     )
     trace.set_tracer_provider(provider)
 
+    # MeterProvider for the GenAI token-usage histograms emitted by the
+    # LangChain callback (see token_usage.py). 30s export interval — fast
+    # enough for live dashboards in dev, light on collector traffic.
+    metric_reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(endpoint=endpoint, insecure=True),
+        export_interval_millis=30_000,
+    )
+    meter_provider = MeterProvider(
+        resource=resource, metric_readers=[metric_reader],
+    )
+    metrics.set_meter_provider(meter_provider)
+
     # Auto-instrument outbound httpx — server-span instrumentation is
     # caller-driven (instrument_app() below).
     HTTPXClientInstrumentor().instrument()
 
     _initialized = True
     logger.info(
-        "OTel telemetry initialized: service=%s endpoint=%s",
+        "OTel telemetry initialized: service=%s endpoint=%s (traces+metrics)",
         resource.attributes.get("service.name"),
         endpoint,
     )

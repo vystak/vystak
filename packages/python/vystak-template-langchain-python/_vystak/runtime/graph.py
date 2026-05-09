@@ -8,13 +8,17 @@ PROVIDER_FACTORIES = {
 }
 
 
-def build_model(agent: Any):
+def build_model(agent: Any, *, callbacks: list[Any] | None = None):
     """Construct a LangChain chat model from the agent's Model schema.
 
     Credentials are read from environment variables (ANTHROPIC_API_KEY,
     OPENAI_API_KEY, etc.) by the LangChain provider classes. Provider config
     overrides (base_url, api_key) will land via agent.model.parameters in a
     future phase; the schema doesn't carry them today.
+
+    ``callbacks`` are attached to the constructor so every model
+    invocation triggers them — used to wire the GenAI token-usage
+    callback when telemetry is enabled.
     """
     import importlib
 
@@ -24,13 +28,21 @@ def build_model(agent: Any):
     module_name, cls_name = PROVIDER_FACTORIES[provider_type]
     module = importlib.import_module(module_name)
     cls = getattr(module, cls_name)
-    return cls(model=agent.model.model_name)
+    kwargs: dict[str, Any] = {"model": agent.model.model_name}
+    if callbacks:
+        kwargs["callbacks"] = callbacks
+    return cls(**kwargs)
 
 
 def build_graph(agent: Any, *, prompt, tools: list[Any], checkpointer: Any | None):
     from langgraph.prebuilt import create_react_agent
 
-    model = build_model(agent)
+    from _vystak.runtime.token_usage import build_token_usage_callback
+
+    # The callback is a no-op when telemetry isn't initialized, so it's
+    # always safe to attach.
+    callbacks = [build_token_usage_callback()]
+    model = build_model(agent, callbacks=callbacks)
     return create_react_agent(
         model=model,
         tools=tools,

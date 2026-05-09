@@ -107,7 +107,7 @@ Run `docker ps` after `vystak apply` and you'll see both containers.
 
 ## Telemetry
 
-Set `telemetry=Telemetry()` on the platform and the Docker provider auto-provisions a Jaeger all-in-one container. Every agent and channel emits OTLP traces with W3C `traceparent` propagation, so one user message produces one connected trace across every service it touches. Open `http://localhost:16686` to inspect.
+Set `telemetry=Telemetry()` on the platform and the Docker provider auto-provisions a `grafana/otel-lgtm` container — Tempo (traces) + Mimir (metrics) + Grafana (UI) behind one OTLP gRPC endpoint. Every agent and channel emits traces with W3C `traceparent` propagation plus GenAI token-usage metrics from each model call. Open `http://localhost:13000` to inspect both in Grafana.
 
 ```python
 platform = vystak.Platform(
@@ -116,7 +116,7 @@ platform = vystak.Platform(
 )
 ```
 
-See [Telemetry](/docs/concepts/telemetry) for the full behaviour and how to point traces at your own collector instead.
+See [Telemetry](/docs/concepts/telemetry) for the full behaviour, the token-usage metric/attribute reference, and how to point at your own collector instead.
 
 ## Updating an agent
 

@@ -212,17 +212,18 @@ class DockerProvider(PlatformProvider):
                     return tel
         return None
 
-    def _resolve_telemetry_endpoint(self, graph, jaeger_node_cls) -> str | None:
-        """Provision the shared Jaeger node (when needed) and return the
-        OTLP gRPC endpoint to wire into containers, or None when telemetry
-        is disabled.
+    def _resolve_telemetry_endpoint(self, graph, telemetry_node_cls) -> str | None:
+        """Provision the shared OTLP collector container (when needed) and
+        return the OTLP gRPC endpoint to wire into containers, or None when
+        telemetry is disabled.
 
         - ``Telemetry(enabled=False)`` → returns None (no instrumentation).
         - ``Telemetry(endpoint=...)``  → returns the user's URL, no node
           provisioning (assume external collector).
-        - ``Telemetry(enabled=True, endpoint=None)`` → adds JaegerNode to
-          the graph (idempotent — ProvisionGraph dedupes by name) and
-          returns the in-network DNS endpoint.
+        - ``Telemetry(enabled=True, endpoint=None)`` → adds the bundled
+          telemetry sink (`grafana/otel-lgtm`) to the graph (idempotent —
+          ProvisionGraph dedupes by name) and returns the in-network DNS
+          endpoint.
         """
         tel = self._platform_telemetry()
         if tel is None or not tel.enabled:
@@ -232,8 +233,8 @@ class DockerProvider(PlatformProvider):
         # Auto-provision the shared collector container. graph.add is
         # idempotent on node name (overwrites silently), so calling this
         # from both apply() and apply_channel() is safe.
-        graph.add(jaeger_node_cls(self._client))
-        return f"http://{jaeger_node_cls.CONTAINER_NAME}:4317"
+        graph.add(telemetry_node_cls(self._client))
+        return f"http://{telemetry_node_cls.CONTAINER_NAME}:4317"
 
     def _get_container(self, agent_name: str):
         try:
@@ -723,8 +724,8 @@ class DockerProvider(PlatformProvider):
                 DockerAgentNode,
                 DockerNetworkNode,
                 DockerServiceNode,
-                JaegerNode,
                 NatsServerNode,
+                OtelLgtmNode,
             )
 
             graph = ProvisionGraph()
@@ -755,14 +756,16 @@ class DockerProvider(PlatformProvider):
                     self._agent, self._agent.platform,
                 )
 
-            # Telemetry — single shared OTLP collector (Jaeger) when the
-            # platform declares Telemetry. With no endpoint set, we
-            # auto-provision the all-in-one container; with endpoint set
-            # we skip provisioning and just thread the env vars through.
-            telemetry_endpoint = self._resolve_telemetry_endpoint(graph, JaegerNode)
+            # Telemetry — single shared OTLP sink (grafana/otel-lgtm: Tempo
+            # for traces + Mimir for metrics + Grafana UI in one container)
+            # when the platform declares Telemetry. With no endpoint set,
+            # we auto-provision; with endpoint set we skip provisioning and
+            # just thread the env vars through.
+            telemetry_endpoint = self._resolve_telemetry_endpoint(graph, OtelLgtmNode)
             if telemetry_endpoint:
                 extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] = telemetry_endpoint
                 extra_env["OTEL_TRACES_EXPORTER"] = "otlp"
+                extra_env["OTEL_METRICS_EXPORTER"] = "otlp"
                 extra_env["OTEL_SERVICE_NAME"] = (
                     f"vystak-{self._agent.name}" if self._agent else "vystak-agent"
                 )
@@ -1077,8 +1080,8 @@ class DockerProvider(PlatformProvider):
             from vystak_provider_docker.nodes import (
                 DockerChannelNode,
                 DockerNetworkNode,
-                JaegerNode,
                 NatsServerNode,
+                OtelLgtmNode,
             )
 
             host_port = channel.config.get("port", 8080)
@@ -1111,12 +1114,13 @@ class DockerProvider(PlatformProvider):
                         transport.config.subject_prefix
                     )
 
-            # Telemetry — same shared Jaeger collector as agent path. The
-            # channel platform carries its own Telemetry config (the
-            # example wires the same Platform object to channels and
-            # agents, so they see the same setting). When the agent run
-            # already provisioned vystak-jaeger, JaegerNode.provision()
-            # short-circuits via the "container exists" branch.
+            # Telemetry — same shared OTLP sink (grafana/otel-lgtm) as the
+            # agent path. The channel platform carries its own Telemetry
+            # config (the example wires the same Platform object to
+            # channels and agents, so they see the same setting). When
+            # the agent run already provisioned the sink container,
+            # OtelLgtmNode.provision() short-circuits via the "container
+            # exists" branch.
             channel_telemetry = (
                 getattr(channel.platform, "telemetry", None) if channel.platform else None
             )
@@ -1124,10 +1128,11 @@ class DockerProvider(PlatformProvider):
                 if channel_telemetry.endpoint:
                     endpoint = channel_telemetry.endpoint
                 else:
-                    graph.add(JaegerNode(self._client))
-                    endpoint = f"http://{JaegerNode.CONTAINER_NAME}:4317"
+                    graph.add(OtelLgtmNode(self._client))
+                    endpoint = f"http://{OtelLgtmNode.CONTAINER_NAME}:4317"
                 channel_extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
                 channel_extra_env["OTEL_TRACES_EXPORTER"] = "otlp"
+                channel_extra_env["OTEL_METRICS_EXPORTER"] = "otlp"
                 channel_extra_env["OTEL_SERVICE_NAME"] = (
                     f"vystak-channel-{channel.name}"
                 )

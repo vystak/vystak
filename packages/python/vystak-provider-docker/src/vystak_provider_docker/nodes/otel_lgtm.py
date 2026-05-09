@@ -1,38 +1,44 @@
-"""JaegerNode — runs jaegertracing/all-in-one as a shared collector container.
+"""OtelLgtmNode — runs grafana/otel-lgtm as the shared telemetry sink.
 
-Single shared container provisioned per-platform when any agent or
-channel has telemetry enabled. Listens on:
+Single container provisioned per-platform when any agent or channel
+has telemetry enabled. The image bundles Grafana + Tempo (traces) +
+Mimir (metrics) + a pre-wired OTLP receiver, so it accepts both
+traces and metrics on the same endpoint and renders them in one UI.
+
+Listens on:
 
 * 4317 (OTLP gRPC) — what agents + channels export to
 * 4318 (OTLP HTTP) — alternative export path (not used by default)
-* 16686 (UI) — exposed to the host so users can browse traces
+* 3000 (Grafana UI) — exposed on the host as 13000 (3000 collides
+  with common dev servers like Next.js / Docusaurus)
 
 Containers reach the collector via the internal Docker DNS name
-``vystak-jaeger:4317``. The host can browse the UI at
-``http://localhost:16686``.
+``vystak-otel:4317``. The host can browse the Grafana UI at
+``http://localhost:13000`` (anonymous viewer access is enabled by
+default in the upstream image).
 """
 
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 
 
-class JaegerNode(Provisionable):
-    """Provisions a Jaeger all-in-one container on the shared vystak-net.
+class OtelLgtmNode(Provisionable):
+    """Provisions a grafana/otel-lgtm container on the shared vystak-net.
 
-    Other containers reach the collector via ``vystak-jaeger:4317``
-    (OTLP gRPC). The Jaeger UI is exposed on the host at
-    ``http://localhost:16686`` for trace inspection.
+    Other containers reach the OTLP gRPC receiver at
+    ``vystak-otel:4317``. Grafana UI is on the host at
+    ``http://localhost:3000``.
     """
 
-    IMAGE = "jaegertracing/all-in-one:1.64.0"
-    CONTAINER_NAME = "vystak-jaeger"
+    IMAGE = "grafana/otel-lgtm:0.11.10"
+    CONTAINER_NAME = "vystak-otel"
 
     def __init__(self, client):
         self._client = client
 
     @property
     def name(self) -> str:
-        return "jaeger"
+        return "otel-lgtm"
 
     @property
     def depends_on(self) -> list[str]:
@@ -53,14 +59,15 @@ class JaegerNode(Provisionable):
                 name=self.CONTAINER_NAME,
                 detach=True,
                 network=network.name,
-                # 16686 to host for UI access; 4317/4318 internal only.
+                # Container's 3000 → host 13000 (avoids clash with
+                # Next.js / Docusaurus dev servers also defaulting to
+                # 3000). 4317/4318 internal only.
                 ports={
-                    "16686/tcp": 16686,
+                    "3000/tcp": 13000,
                     "4317/tcp": 4317,
                     "4318/tcp": 4318,
                 },
-                environment={"COLLECTOR_OTLP_ENABLED": "true"},
-                labels={"vystak.service": "jaeger"},
+                labels={"vystak.service": "otel-lgtm"},
             )
         return ProvisionResult(
             name=self.name,
@@ -68,7 +75,7 @@ class JaegerNode(Provisionable):
             info={
                 "otlp_grpc": f"http://{self.CONTAINER_NAME}:4317",
                 "otlp_http": f"http://{self.CONTAINER_NAME}:4318",
-                "ui": "http://localhost:16686",
+                "ui": "http://localhost:13000",
             },
         )
 

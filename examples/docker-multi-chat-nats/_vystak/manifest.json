@@ -9,7 +9,7 @@
     "min_compat": "0.4",
     "max_compat": "0.5"
   },
-  "scaffolded_at": "2026-05-08T22:20:10.091151+00:00",
+  "scaffolded_at": "2026-05-09T01:47:01.350440+00:00",
   "scaffolded_by_cli": "0.1.1.dev521+gb251a324b",
   "files": {
     "_vystak/manifest.template.json": "sha256:0c6118737bd55bde115f2acc646937b978512aa0f0ef12db6e026f0b63f5e5b4",
@@ -22,11 +22,12 @@
     "_vystak/runtime/memory.py": "sha256:9b9d1b6ebbc46d574b2a6cbb06b14b6c43198bf5a83f72ea333bf9fc20fd08e4",
     "_vystak/runtime/prompt_callable.py": "sha256:8628888efb390ecc29c28b84145bd603e958aafea4a5552d4066a06985909a6a",
     "_vystak/runtime/tools.py": "sha256:20a393b33a3a70f111668e34c5b46bc2b1ce7032f8513d2372be78a2990fb7eb",
-    "_vystak/runtime/graph.py": "sha256:d1dd52bec6ba401cf74df24a5f60d0ab75b8b887a280a31f35e254daecb8c0c7",
+    "_vystak/runtime/graph.py": "sha256:f5dc3f01e64e55abc36739e43f55e60ddf96211fa1255c70a52060b1f2e5964a",
     "_vystak/runtime/__init__.py": "sha256:394a59398b6ecf962eb3155310091e42cbe13362d390e3a275624ebdf3a3a354",
-    "_vystak/runtime/telemetry.py": "sha256:527c6ed69f693d59b8241181d37e589bd9b9ecc97f3b5be0e2c5105613366149",
+    "_vystak/runtime/telemetry.py": "sha256:3d40fb17e6d1794607465985e0019541bf1de434b76fd0164e55b2f02f8b509f",
     "_vystak/runtime/nats_bridge.py": "sha256:f031c2572c90e3d9e2feff7f37c79115690bbe0dc13fcca14a4e6904210280f5",
     "_vystak/runtime/mcp.py": "sha256:7d85a6518b3284667160654d76e3bf179edbbe5dcde6a903cf2bbbdaeb9c75e9",
+    "_vystak/runtime/token_usage.py": "sha256:d7b8ff87a4f684b3a558973d916dbd83dba2016c0ec971b98213d838c1fcfa2e",
     "_vystak/runtime/a2a_native/__init__.py": "sha256:69ab0abe00b6ed515a0a7b6b90c8320113714e6e6bad5e4876265d34125ad736",
     "_vystak/runtime/a2a_native/card.py": "sha256:f7585c210f98e5a18c5252d5cdd8be269d39e35e2da8811452b6542734ac12b8",
     "_vystak/runtime/a2a_native/_sdk_compat.py": "sha256:4a85271ecab1f869cd4d35944d4e507761309d75ce6039364c3e6c3e4eb02b99",
