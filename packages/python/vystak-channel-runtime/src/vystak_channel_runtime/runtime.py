@@ -15,7 +15,7 @@ from vystak_channel_runtime.agent_client import (
     AgentClient,
     NatsAgentClient,
 )
-from vystak_channel_runtime.heartbeat import HeartbeatScheduler
+from vystak_channel_runtime.heartbeat import HeartbeatScheduler, is_heartbeat_ok
 from vystak_channel_runtime.store import ChannelStore
 from vystak_channel_runtime.types import (
     AgentCallError,
@@ -371,8 +371,6 @@ class ChannelRuntime(ABC):
         and passes it to subclass `post_reply`. Always skips `after_reply`
         (synthetic scopes shouldn't pollute the binding store).
         """
-        from vystak_channel_runtime.heartbeat import is_heartbeat_ok
-
         route, reply = await self._call_route_for_event(event)
         if route is None or reply is None:
             return
@@ -389,7 +387,9 @@ class ChannelRuntime(ABC):
         deliver_thread = event.metadata.get("deliver_thread")
         if not deliver_scope or not deliver_thread:
             logger.warning(
-                "heartbeat reply has alert content but no delivery target; dropping",
+                "heartbeat reply has alert content but no delivery target — "
+                "dropping. agent=%s scope=%s",
+                route, event.scope_id,
             )
             return
 
