@@ -82,6 +82,7 @@ def build_token_usage_callback() -> Any:
         return _NoOpCallback()
 
     meter = metrics.get_meter("vystak.runtime.token_usage")
+    tracer = trace.get_tracer("vystak.runtime.token_usage")
 
     token_histogram = meter.create_histogram(
         name="gen_ai.client.token.usage",
@@ -95,8 +96,21 @@ def build_token_usage_callback() -> Any:
     )
 
     class TokenUsageCallback(BaseCallbackHandler):
+        # Run on the caller's task instead of the executor's thread pool.
+        # Without this, on_chat_model_start / on_llm_end fire on a worker
+        # thread where the OTel current-span contextvar isn't propagated.
+        run_inline = True
+
         def __init__(self) -> None:
             self._starts: dict[UUID, float] = {}
+            # Open a span at on_chat_model_start, close at on_llm_end. We
+            # can't attach gen_ai attrs to whatever span happens to be
+            # current — a2a-sdk dispatches the executor as a background
+            # task that outlives the FastAPI request, so by the time the
+            # LLM call returns the FastAPI server span has already ended
+            # (`is_recording=False`) and `set_attribute` would no-op.
+            # Owning the span end-to-end keeps it open for the full call.
+            self._spans: dict[UUID, Any] = {}
 
         def on_chat_model_start(
             self,
@@ -110,6 +124,15 @@ def build_token_usage_callback() -> Any:
             **kwargs: Any,
         ) -> None:
             self._starts[run_id] = time.monotonic()
+            # Parent to whatever's in context (will be the FastAPI server
+            # span at this point — it's still open here, only the
+            # `on_llm_end` callback fires after it closes). If the parent
+            # is invalid, OTel makes our span a root.
+            self._spans[run_id] = tracer.start_span(
+                "gen_ai.chat",
+                kind=trace.SpanKind.CLIENT,
+                attributes={"gen_ai.system": _GEN_AI_SYSTEM},
+            )
 
         def on_llm_end(
             self,
@@ -121,14 +144,13 @@ def build_token_usage_callback() -> Any:
         ) -> None:
             start = self._starts.pop(run_id, None)
             duration = time.monotonic() - start if start is not None else None
+            span = self._spans.pop(run_id, None)
 
             usage, model_name = _extract_usage(response)
-            if not usage:
-                return
 
-            input_tokens = int(usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("output_tokens") or 0)
-            details = usage.get("input_token_details") or {}
+            input_tokens = int(usage.get("input_tokens") or 0) if usage else 0
+            output_tokens = int(usage.get("output_tokens") or 0) if usage else 0
+            details = (usage.get("input_token_details") or {}) if usage else {}
             cache_read = int(details.get("cache_read") or 0)
             cache_creation = int(details.get("cache_creation") or 0)
 
@@ -153,12 +175,8 @@ def build_token_usage_callback() -> Any:
             if duration is not None:
                 duration_histogram.record(duration, attributes=attrs)
 
-            # Span attributes — visible on whichever span is active when
-            # the model returns (typically a `/a2a` server span on the
-            # agent side).
-            span = trace.get_current_span()
-            if span is not None and span.is_recording():
-                span.set_attribute("gen_ai.system", _GEN_AI_SYSTEM)
+            # Stamp gen_ai attributes on our owned span and close it.
+            if span is not None:
                 if model_name:
                     span.set_attribute("gen_ai.request.model", model_name)
                 if input_tokens:
@@ -173,6 +191,23 @@ def build_token_usage_callback() -> Any:
                     span.set_attribute(
                         "gen_ai.usage.cache_creation_input_tokens", cache_creation,
                     )
+                span.end()
+
+        def on_llm_error(
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
+        ) -> None:
+            # Close the span on error so we don't leak it.
+            self._starts.pop(run_id, None)
+            span = self._spans.pop(run_id, None)
+            if span is not None:
+                span.record_exception(error)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(error)))
+                span.end()
 
     return TokenUsageCallback()
 

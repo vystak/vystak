@@ -9,7 +9,7 @@
     "min_compat": "0.4",
     "max_compat": "0.5"
   },
-  "scaffolded_at": "2026-05-09T01:47:01.350440+00:00",
+  "scaffolded_at": "2026-05-09T11:24:43.814760+00:00",
   "scaffolded_by_cli": "0.1.1.dev521+gb251a324b",
   "files": {
     "_vystak/manifest.template.json": "sha256:0c6118737bd55bde115f2acc646937b978512aa0f0ef12db6e026f0b63f5e5b4",
@@ -27,7 +27,7 @@
     "_vystak/runtime/telemetry.py": "sha256:3d40fb17e6d1794607465985e0019541bf1de434b76fd0164e55b2f02f8b509f",
     "_vystak/runtime/nats_bridge.py": "sha256:f031c2572c90e3d9e2feff7f37c79115690bbe0dc13fcca14a4e6904210280f5",
     "_vystak/runtime/mcp.py": "sha256:7d85a6518b3284667160654d76e3bf179edbbe5dcde6a903cf2bbbdaeb9c75e9",
-    "_vystak/runtime/token_usage.py": "sha256:d7b8ff87a4f684b3a558973d916dbd83dba2016c0ec971b98213d838c1fcfa2e",
+    "_vystak/runtime/token_usage.py": "sha256:41366ba8d1b9412a332cdb5229a1c3fcd46b168403166cf5f7391260822fe353",
     "_vystak/runtime/a2a_native/__init__.py": "sha256:69ab0abe00b6ed515a0a7b6b90c8320113714e6e6bad5e4876265d34125ad736",
     "_vystak/runtime/a2a_native/card.py": "sha256:f7585c210f98e5a18c5252d5cdd8be269d39e35e2da8811452b6542734ac12b8",
     "_vystak/runtime/a2a_native/_sdk_compat.py": "sha256:4a85271ecab1f869cd4d35944d4e507761309d75ce6039364c3e6c3e4eb02b99",
