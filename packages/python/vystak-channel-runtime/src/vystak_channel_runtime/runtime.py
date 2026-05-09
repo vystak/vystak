@@ -8,11 +8,14 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any
 
+from vystak.schema.heartbeat import Heartbeat
+
 from vystak_channel_runtime.agent_client import (
     A2AAgentClient,
     AgentClient,
     NatsAgentClient,
 )
+from vystak_channel_runtime.heartbeat import HeartbeatScheduler
 from vystak_channel_runtime.store import ChannelStore
 from vystak_channel_runtime.types import (
     AgentCallError,
@@ -64,6 +67,7 @@ class ChannelRuntime(ABC):
         self.channel_type: str = config.get("channel_type", "")
         self.agent_protocol: str = config.get("agent_protocol", "a2a-turn")
         self._agent_client = agent_client or self._default_agent_client()
+        self._heartbeats: list[HeartbeatScheduler] = []
 
     def _default_agent_client(self) -> AgentClient:
         if self.agent_protocol in ("a2a-turn", "a2a-stream"):
@@ -306,3 +310,42 @@ class ChannelRuntime(ABC):
             return
         await self.post_reply(event, route, reply)
         await self.after_reply(event, route, reply)
+
+    # --- Heartbeat lifecycle ----------------------------------------------
+
+    @property
+    def canonical_name(self) -> str:
+        return self.config.get("canonical_name", "")
+
+    def _heartbeat_for_route(self, route_entry: Any) -> Heartbeat | None:
+        if not isinstance(route_entry, dict):
+            return None
+        raw = route_entry.get("heartbeat")
+        if raw is None:
+            return None
+        if isinstance(raw, Heartbeat):
+            return raw
+        return Heartbeat.model_validate(raw)
+
+    async def _start_heartbeats(self) -> None:
+        for agent_name, route_entry in self.routes.items():
+            hb = self._heartbeat_for_route(route_entry)
+            if hb is None or not hb.enabled:
+                continue
+            if hb.target_channel != self.canonical_name:
+                continue
+            scheduler = HeartbeatScheduler(self, agent_name, hb)
+            self._heartbeats.append(scheduler)
+            await scheduler.start()
+
+    async def _stop_heartbeats(self) -> None:
+        for hb in self._heartbeats:
+            await hb.stop()
+        self._heartbeats.clear()
+
+    async def _handle_synthetic_event(self, event: InboundEvent) -> None:
+        """Entry point for heartbeat-synthesized events. Bypasses
+        parse_event/authorize. Implemented in Task 9 to thread heartbeat-
+        aware ack stripping + delivery event synthesis into the pipeline.
+        """
+        raise NotImplementedError

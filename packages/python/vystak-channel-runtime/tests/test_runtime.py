@@ -2,6 +2,8 @@
 
 import pytest
 from vystak.schema.common import ChannelType
+from vystak.schema.heartbeat import Heartbeat
+from vystak_channel_runtime.heartbeat import HeartbeatScheduler
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.store import MemoryChannelStore
 from vystak_channel_runtime.types import (
@@ -463,3 +465,81 @@ def test_default_agent_client_nats_without_url_raises(monkeypatch):
             routes=_routes(),
             store=MemoryChannelStore(),
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 8 — HeartbeatScheduler lifecycle wiring
+# ---------------------------------------------------------------------------
+
+
+class HeartbeatRuntime(TrivialRuntime):
+    """TrivialRuntime variant that calls heartbeat lifecycle hooks."""
+
+    async def start(self) -> None:
+        await self._start_heartbeats()
+
+    async def stop(self) -> None:
+        await self._stop_heartbeats()
+
+
+def _hb_route(target_channel: str, **overrides) -> dict:
+    """Routes-dict entry that includes a heartbeat config."""
+    return {
+        "address": "http://agent:8000/a2a",
+        "heartbeat": Heartbeat(
+            schedule="*/30 * * * *",
+            target_channel=target_channel,
+            **overrides,
+        ).model_dump(mode="python"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_starts_scheduler_for_matching_target():
+    """Runtime spins up one scheduler per agent whose heartbeat targets it."""
+    config = _config(canonical_name="slack-main.channels.dev")
+    routes = {"ops-bot": _hb_route("slack-main.channels.dev")}
+    rt = HeartbeatRuntime(
+        config=config, routes=routes, store=MemoryChannelStore(),
+    )
+    await rt.start()
+    assert len(rt._heartbeats) == 1
+    assert isinstance(rt._heartbeats[0], HeartbeatScheduler)
+    assert rt._heartbeats[0].agent_name == "ops-bot"
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_skips_scheduler_for_other_target():
+    config = _config(canonical_name="slack-main.channels.dev")
+    routes = {"ops-bot": _hb_route("discord-main.channels.dev")}  # not us
+    rt = HeartbeatRuntime(
+        config=config, routes=routes, store=MemoryChannelStore(),
+    )
+    await rt.start()
+    assert rt._heartbeats == []
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_skips_scheduler_when_disabled():
+    config = _config(canonical_name="slack-main.channels.dev")
+    routes = {"ops-bot": _hb_route("slack-main.channels.dev", enabled=False)}
+    rt = HeartbeatRuntime(
+        config=config, routes=routes, store=MemoryChannelStore(),
+    )
+    await rt.start()
+    assert rt._heartbeats == []
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_with_no_heartbeats_still_starts():
+    config = _config(canonical_name="x.channels.dev")
+    routes = {"ops-bot": {"address": "http://agent:8000/a2a"}}
+    rt = HeartbeatRuntime(
+        config=config, routes=routes, store=MemoryChannelStore(),
+    )
+    await rt.start()
+    assert rt._heartbeats == []
+    await rt.stop()
