@@ -39,7 +39,7 @@ To turn it off entirely, omit the field — agents and channels skip OTel init a
 - **httpx** — outbound HTTP from agents and channels (subagent calls, model calls) becomes a client span automatically and injects `traceparent`.
 - **NATS path** — `traceparent` is injected into the JSON-RPC envelope's `params._meta.headers` on publish, and the NATS↔HTTP bridge inside the receiving agent extracts it and starts the agent-side span as a child of the caller's.
 - **Slack channel** — the Socket Mode handler doesn't go through FastAPI, so the channel manually wraps each `message` and `app_mention` event in a root span (`slack.message` / `slack.app_mention`). Without this, traces from Slack would be disconnected.
-- **GenAI calls** — a LangChain callback handler reads `usage_metadata` off each model response and emits OTel histogram metrics (see below) plus span attributes per the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+- **GenAI calls** — a LangChain callback handler opens a `gen_ai.chat` span around every model call, attaches token-usage attributes when the LLM responds, and emits OTel histogram metrics (see below). Both follow the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
 
 The result: a single Slack `@bot` mention that the coordinator agent forwards to two specialist agents shows up as one trace with ~150–200 spans across four services, plus one or more histogram data points per model call on the metrics side.
 
@@ -60,13 +60,15 @@ The token histogram is broken down by `gen_ai.token.type` ∈ `{input, output, c
 | `gen_ai.request.model` | `claude-haiku-4-5-20251001` | LangChain `response_metadata.model` |
 | `service.name` | `vystak-assistant-agent` | Resource attribute set on the MeterProvider |
 
-The same numbers are also stamped as span attributes on whichever span is active when the model returns (typically the agent's `/a2a` server span):
+The same numbers are also stamped on a dedicated `gen_ai.chat` span (`SpanKind.CLIENT`) that the runtime opens around every model call and closes when the LLM responds. So in Tempo (or any tracing UI) each model call shows up as one span carrying:
 
 - `gen_ai.usage.input_tokens`
 - `gen_ai.usage.output_tokens`
 - `gen_ai.usage.cache_read_input_tokens`
 - `gen_ai.usage.cache_creation_input_tokens`
 - `gen_ai.request.model`, `gen_ai.system`
+
+The span is owned end-to-end on purpose: a2a-sdk dispatches LangGraph in a background task that outlives the FastAPI request, so the agent's server span often closes before the model call finishes. Stamping attributes on a span the runtime owns guarantees they're always visible per call.
 
 In Grafana, query the metrics with PromQL:
 
@@ -79,6 +81,8 @@ sum by (service_name) (rate(gen_ai_client_token_usage_sum{gen_ai_token_type="cac
   /
 sum by (service_name) (rate(gen_ai_client_token_usage_sum{gen_ai_token_type="input"}[5m]))
 ```
+
+For per-call drill-in, query Tempo by span name `gen_ai.chat` — that's one row per LLM call, with the input/output/cache_read counts in the span attributes panel.
 
 ## Service naming
 
