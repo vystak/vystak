@@ -2,8 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
-
-from vystak.schema.heartbeat import Heartbeat
+from vystak.schema import Agent, Heartbeat, Model, Provider
 
 
 def test_minimal_heartbeat_round_trips():
@@ -91,9 +90,6 @@ def test_invalid_timezone_rejected():
             timezone="Americka/New_York",   # typo
         )
     assert "unknown IANA timezone" in str(exc.value)
-
-
-from vystak.schema import Agent, Heartbeat, Model, Provider
 
 
 def _model() -> Model:
