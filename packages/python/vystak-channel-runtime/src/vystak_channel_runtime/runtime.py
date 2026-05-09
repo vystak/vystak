@@ -328,6 +328,10 @@ class ChannelRuntime(ABC):
         return Heartbeat.model_validate(raw)
 
     async def _start_heartbeats(self) -> None:
+        """Start a HeartbeatScheduler for each routed agent whose heartbeat
+        targets this channel. Subclasses must call this AT THE END of their
+        `start()` — the channel's I/O loop must be up first so heartbeat
+        fires can flow through `post_reply`."""
         for agent_name, route_entry in self.routes.items():
             hb = self._heartbeat_for_route(route_entry)
             if hb is None or not hb.enabled:
@@ -339,6 +343,9 @@ class ChannelRuntime(ABC):
             await scheduler.start()
 
     async def _stop_heartbeats(self) -> None:
+        """Cancel all running heartbeat schedulers. Subclasses must call this
+        AT THE START of their `stop()` so in-flight fires don't outlive the
+        I/O loop."""
         for hb in self._heartbeats:
             await hb.stop()
         self._heartbeats.clear()
