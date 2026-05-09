@@ -329,9 +329,10 @@ class ChannelRuntime(ABC):
 
     async def _start_heartbeats(self) -> None:
         """Start a HeartbeatScheduler for each routed agent whose heartbeat
-        targets this channel. Subclasses must call this AT THE END of their
-        `start()` — the channel's I/O loop must be up first so heartbeat
-        fires can flow through `post_reply`."""
+        targets this channel. Subclasses must call this after setting up
+        I/O (so `post_reply` is ready) but BEFORE entering any blocking
+        serve loop. Schedulers use `asyncio.create_task` internally, so
+        this call returns immediately."""
         for agent_name, route_entry in self.routes.items():
             hb = self._heartbeat_for_route(route_entry)
             if hb is None or not hb.enabled:
