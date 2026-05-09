@@ -56,6 +56,10 @@ class ChannelStore(Protocol):
         self, channel_type: str, scope_id: str | None = None
     ) -> list[ThreadBinding]: ...
 
+    async def last_binding_for_agent(
+        self, channel_type: str, agent_name: str
+    ) -> ThreadBinding | None: ...
+
     async def close(self) -> None: ...
 
 
@@ -131,6 +135,28 @@ class MemoryChannelStore:
                 )
             )
         return out
+
+    async def last_binding_for_agent(
+        self, channel_type: str, agent_name: str
+    ) -> ThreadBinding | None:
+        candidates = [
+            (key, row)
+            for key, row in self._threads.items()
+            if key[0] == channel_type and row["agent_name"] == agent_name
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[1]["updated_at"], reverse=True)
+        (ct, scope_id, thread_id), row = candidates[0]
+        return ThreadBinding(
+            channel_type=ct,
+            scope_id=scope_id,
+            thread_id=thread_id,
+            agent_name=row["agent_name"],
+            user_id=row.get("user_id"),
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
+        )
 
     async def close(self) -> None:
         self._threads.clear()
@@ -305,6 +331,30 @@ class SqliteChannelStore:
             for r in rows
         ]
 
+    async def last_binding_for_agent(
+        self, channel_type: str, agent_name: str
+    ) -> ThreadBinding | None:
+        conn = await self._ensure()
+        cur = await conn.execute(
+            "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+            "created_at, updated_at FROM thread_bindings "
+            "WHERE channel_type=? AND agent_name=? "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (channel_type, agent_name),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return ThreadBinding(
+            channel_type=row[0],
+            scope_id=row[1],
+            thread_id=row[2],
+            agent_name=row[3],
+            user_id=row[4],
+            created_at=row[5],
+            updated_at=row[6],
+        )
+
     async def close(self) -> None:
         if self._conn is not None:
             await self._conn.close()
@@ -471,6 +521,30 @@ class PostgresChannelStore:
                 )
                 for r in rows
             ]
+
+    async def last_binding_for_agent(
+        self, channel_type: str, agent_name: str
+    ) -> ThreadBinding | None:
+        pool = await self._ensure()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT channel_type, scope_id, thread_id, agent_name, user_id, "
+                "created_at, updated_at FROM thread_bindings "
+                "WHERE channel_type=$1 AND agent_name=$2 "
+                "ORDER BY updated_at DESC LIMIT 1",
+                channel_type, agent_name,
+            )
+            if row is None:
+                return None
+            return ThreadBinding(
+                channel_type=row["channel_type"],
+                scope_id=row["scope_id"],
+                thread_id=row["thread_id"],
+                agent_name=row["agent_name"],
+                user_id=row["user_id"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
 
     async def close(self) -> None:
         if self._pool is not None:

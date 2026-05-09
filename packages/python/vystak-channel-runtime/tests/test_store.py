@@ -1,5 +1,6 @@
 """Tests for ChannelStore impls."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -150,3 +151,86 @@ def test_make_channel_store_postgres():
 def test_make_channel_store_unknown_raises():
     with pytest.raises(ValueError):
         make_channel_store({"type": "redis"})
+
+
+# ---------------------------------------------------------------------------
+# last_binding_for_agent — Memory backend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_memory_last_binding_for_agent_empty():
+    store = MemoryChannelStore()
+    assert await store.last_binding_for_agent("slack", "ops-bot") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_last_binding_for_agent_picks_most_recent():
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "T1", "thread-old", "ops-bot", user_id="U1")
+    # tiny gap so updated_at differs
+    await asyncio.sleep(0.01)
+    await store.set_thread_binding("slack", "T1", "thread-new", "ops-bot", user_id="U2")
+    binding = await store.last_binding_for_agent("slack", "ops-bot")
+    assert binding is not None
+    assert binding.thread_id == "thread-new"
+    assert binding.user_id == "U2"
+
+
+@pytest.mark.asyncio
+async def test_memory_last_binding_for_agent_ignores_other_agents():
+    store = MemoryChannelStore()
+    await store.set_thread_binding("slack", "T1", "thread-1", "other-bot", user_id="U1")
+    assert await store.last_binding_for_agent("slack", "ops-bot") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_last_binding_for_agent_ignores_other_channel_types():
+    store = MemoryChannelStore()
+    await store.set_thread_binding("discord", "G1", "thread-1", "ops-bot", user_id="U1")
+    assert await store.last_binding_for_agent("slack", "ops-bot") is None
+
+
+# ---------------------------------------------------------------------------
+# last_binding_for_agent — SQLite backend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sqlite_last_binding_for_agent_empty(sqlite_store):
+    assert await sqlite_store.last_binding_for_agent("slack", "ops-bot") is None
+    await sqlite_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_last_binding_for_agent_picks_most_recent(sqlite_store):
+    await sqlite_store.set_thread_binding(
+        "slack", "T1", "thread-old", "ops-bot", user_id="U1"
+    )
+    await asyncio.sleep(0.01)
+    await sqlite_store.set_thread_binding(
+        "slack", "T1", "thread-new", "ops-bot", user_id="U2"
+    )
+    binding = await sqlite_store.last_binding_for_agent("slack", "ops-bot")
+    assert binding is not None
+    assert binding.thread_id == "thread-new"
+    assert binding.user_id == "U2"
+    await sqlite_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_last_binding_for_agent_ignores_other_agents(sqlite_store):
+    await sqlite_store.set_thread_binding(
+        "slack", "T1", "thread-1", "other-bot", user_id="U1"
+    )
+    assert await sqlite_store.last_binding_for_agent("slack", "ops-bot") is None
+    await sqlite_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_last_binding_for_agent_ignores_other_channel_types(sqlite_store):
+    await sqlite_store.set_thread_binding(
+        "discord", "G1", "thread-1", "ops-bot", user_id="U1"
+    )
+    assert await sqlite_store.last_binding_for_agent("slack", "ops-bot") is None
+    await sqlite_store.close()
