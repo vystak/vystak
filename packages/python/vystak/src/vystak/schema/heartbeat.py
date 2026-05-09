@@ -57,6 +57,7 @@ class Heartbeat(BaseModel):
     )
     ack_max_chars: int = Field(
         300,
+        ge=1,
         description=(
             "Maximum reply length to scan for HEARTBEAT_OK. Replies longer "
             "than this are always delivered."
@@ -70,6 +71,19 @@ class Heartbeat(BaseModel):
     @field_validator("schedule")
     @classmethod
     def _validate_cron(cls, v: str) -> str:
+        if len(v.split()) != 5:
+            raise ValueError(f"cron expression must have exactly 5 fields: {v!r}")
         if not croniter.is_valid(v):
             raise ValueError(f"invalid cron expression: {v!r}")
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except ZoneInfoNotFoundError as e:
+            raise ValueError(f"unknown IANA timezone: {v!r}") from e
         return v

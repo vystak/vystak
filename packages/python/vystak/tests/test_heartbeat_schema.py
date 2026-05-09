@@ -45,7 +45,9 @@ def test_invalid_cron_rejected():
             schedule="every 30 minutes",
             target_channel="x.channels.dev",
         )
-    assert "invalid cron expression" in str(exc.value)
+    # "every 30 minutes" has 3 words so the 5-field check fires first;
+    # either message confirms the schedule was rejected.
+    assert "cron expression" in str(exc.value)
 
 
 def test_target_channel_required():
@@ -60,3 +62,32 @@ def test_complex_cron_accepted():
         target_channel="x.channels.dev",
     )
     assert hb.schedule == "*/15 9-22 * * 1-5"
+
+
+def test_six_field_cron_rejected():
+    """6-field (second-precision) cron should be rejected — runtime is 5-field only."""
+    with pytest.raises(ValidationError) as exc:
+        Heartbeat(
+            schedule="*/10 * * * * *",
+            target_channel="x.channels.dev",
+        )
+    assert "5 fields" in str(exc.value)
+
+
+def test_ack_max_chars_must_be_positive():
+    with pytest.raises(ValidationError):
+        Heartbeat(
+            schedule="*/30 * * * *",
+            target_channel="x.channels.dev",
+            ack_max_chars=0,
+        )
+
+
+def test_invalid_timezone_rejected():
+    with pytest.raises(ValidationError) as exc:
+        Heartbeat(
+            schedule="*/30 * * * *",
+            target_channel="x.channels.dev",
+            timezone="Americka/New_York",   # typo
+        )
+    assert "unknown IANA timezone" in str(exc.value)
