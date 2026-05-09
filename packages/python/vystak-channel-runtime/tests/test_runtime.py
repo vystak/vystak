@@ -1,5 +1,7 @@
 """Tests for ChannelRuntime base class."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 from vystak.schema.common import ChannelType
 from vystak.schema.heartbeat import Heartbeat
@@ -543,3 +545,74 @@ async def test_runtime_with_no_heartbeats_still_starts():
     await rt.start()
     assert rt._heartbeats == []
     await rt.stop()
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — Heartbeat-aware pipeline (_handle_synthetic_event)
+# ---------------------------------------------------------------------------
+
+def _heartbeat_event(deliver_thread: str = "C123") -> InboundEvent:
+    return InboundEvent(
+        channel_type=ChannelType.SLACK,
+        scope_id="__heartbeat__abc",
+        thread_id="__heartbeat__abc",
+        user_id="__heartbeat__",
+        text="Heartbeat ping",
+        is_dm=False,
+        mentions_bot=True,
+        metadata={
+            "heartbeat": True,
+            "ack_max_chars": 300,
+            "deliver_scope": deliver_thread,
+            "deliver_thread": deliver_thread,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_ok_reply_drops_silently():
+    """HEARTBEAT_OK reply should be dropped — post_reply not called."""
+    config = _config(canonical_name="x.channels.dev")
+    routes = {"ops-bot": {"address": "http://agent:8000/a2a"}}
+    rt = HeartbeatRuntime(config=config, routes=routes, store=MemoryChannelStore())
+    rt._call_route_for_event = AsyncMock(
+        return_value=("ops-bot", AgentReply(text="HEARTBEAT_OK")),
+    )
+
+    await rt._handle_synthetic_event(_heartbeat_event())
+    assert rt.posted == []  # post_reply was NOT called
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_alert_reply_posts_to_real_thread():
+    """Non-OK reply should be delivered with a real-scope event."""
+    config = _config(canonical_name="x.channels.dev")
+    routes = {"ops-bot": {"address": "http://agent:8000/a2a"}}
+    rt = HeartbeatRuntime(config=config, routes=routes, store=MemoryChannelStore())
+    rt._call_route_for_event = AsyncMock(
+        return_value=("ops-bot", AgentReply(text="ALERT: disk full")),
+    )
+
+    await rt._handle_synthetic_event(_heartbeat_event(deliver_thread="C-real"))
+    assert len(rt.posted) == 1
+    delivered_event, route, reply = rt.posted[0]
+    assert delivered_event.scope_id == "C-real"
+    assert delivered_event.thread_id == "C-real"
+    assert delivered_event.metadata.get("heartbeat") is True
+    assert reply.text == "ALERT: disk full"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_skips_after_reply_binding_write():
+    """No thread binding should be written for heartbeat fires."""
+    config = _config(canonical_name="x.channels.dev")
+    store = MemoryChannelStore()
+    routes = {"ops-bot": {"address": "http://agent:8000/a2a"}}
+    rt = HeartbeatRuntime(config=config, routes=routes, store=store)
+    rt._call_route_for_event = AsyncMock(
+        return_value=("ops-bot", AgentReply(text="anything")),
+    )
+
+    await rt._handle_synthetic_event(_heartbeat_event())
+    bindings = await store.list_thread_bindings("slack")
+    assert bindings == []

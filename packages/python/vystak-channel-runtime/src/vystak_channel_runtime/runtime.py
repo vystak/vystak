@@ -287,17 +287,16 @@ class ChannelRuntime(ABC):
             finish_reason=finish_reason,
         )
 
-    async def handle_event(self, raw_event: Any) -> None:
-        try:
-            event = self.parse_event(raw_event)
-        except SkipEvent:
-            return
-        if not await self.authorize(event):
-            return
+    async def _call_route_for_event(
+        self, event: InboundEvent,
+    ) -> tuple[str | None, AgentReply | None]:
+        """Resolve route, call agent. Returns (route, reply). Either may
+        be None on no-route or agent-error. Used by both `handle_event`
+        and `_handle_synthetic_event`."""
         route = await self.resolve_route(event)
         if route is None:
             await self.on_no_route(event)
-            return
+            return None, None
         history = await self.fetch_history(event)
         await self.before_call(event, route)
         try:
@@ -307,6 +306,18 @@ class ChannelRuntime(ABC):
                 reply = await self.call_agent(event, route, history)
         except AgentCallError as exc:
             await self.on_agent_error(event, route, exc)
+            return route, None
+        return route, reply
+
+    async def handle_event(self, raw_event: Any) -> None:
+        try:
+            event = self.parse_event(raw_event)
+        except SkipEvent:
+            return
+        if not await self.authorize(event):
+            return
+        route, reply = await self._call_route_for_event(event)
+        if route is None or reply is None:
             return
         await self.post_reply(event, route, reply)
         await self.after_reply(event, route, reply)
@@ -352,8 +363,40 @@ class ChannelRuntime(ABC):
         self._heartbeats.clear()
 
     async def _handle_synthetic_event(self, event: InboundEvent) -> None:
-        """Entry point for heartbeat-synthesized events. Bypasses
-        parse_event/authorize. Implemented in Task 9 to thread heartbeat-
-        aware ack stripping + delivery event synthesis into the pipeline.
+        """Entry for heartbeat-synthesized events.
+
+        Bypasses parse_event + authorize (synthetic events are trusted).
+        After the agent call, evaluates the reply against `is_heartbeat_ok`;
+        on alerts, synthesizes a *delivery* event with the real scope/thread
+        and passes it to subclass `post_reply`. Always skips `after_reply`
+        (synthetic scopes shouldn't pollute the binding store).
         """
-        raise NotImplementedError
+        from vystak_channel_runtime.heartbeat import is_heartbeat_ok
+
+        route, reply = await self._call_route_for_event(event)
+        if route is None or reply is None:
+            return
+
+        ack_max = int(event.metadata.get("ack_max_chars", 300))
+        if is_heartbeat_ok(reply.text, ack_max):
+            logger.info(
+                "heartbeat.acked agent=%s thread=%s",
+                route, event.metadata.get("deliver_thread"),
+            )
+            return
+
+        deliver_scope = event.metadata.get("deliver_scope")
+        deliver_thread = event.metadata.get("deliver_thread")
+        if not deliver_scope or not deliver_thread:
+            logger.warning(
+                "heartbeat reply has alert content but no delivery target; dropping",
+            )
+            return
+
+        delivery_event = event.model_copy(update={
+            "scope_id": deliver_scope,
+            "thread_id": deliver_thread,
+        })
+        await self.post_reply(delivery_event, route, reply)
+        # Intentionally skip after_reply — heartbeat fires must not write
+        # ThreadBindings (synthetic scopes would pollute the store).
