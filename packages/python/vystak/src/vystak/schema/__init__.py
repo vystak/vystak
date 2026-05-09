@@ -13,6 +13,7 @@ from vystak.schema.common import (
     WorkspaceType,
 )
 from vystak.schema.compaction import Compaction
+from vystak.schema.heartbeat import Heartbeat
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Embedding, Model
 from vystak.schema.openai import (
@@ -72,6 +73,7 @@ __all__ = [
     "Database",
     "Embedding",
     "EnvironmentOverride",
+    "Heartbeat",
     "McpServer",
     "McpTransport",
     "Model",

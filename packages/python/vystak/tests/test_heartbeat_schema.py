@@ -91,3 +91,42 @@ def test_invalid_timezone_rejected():
             timezone="Americka/New_York",   # typo
         )
     assert "unknown IANA timezone" in str(exc.value)
+
+
+from vystak.schema import Agent, Heartbeat, Model, Provider
+
+
+def _model() -> Model:
+    return Model(
+        name="claude",
+        provider=Provider(name="anthropic", type="anthropic"),
+        model_name="claude-sonnet-4-6",
+    )
+
+
+def test_agent_without_heartbeat_default_none():
+    agent = Agent(name="bot", framework="langchain-python", model=_model())
+    assert agent.heartbeat is None
+
+
+def test_agent_with_heartbeat_round_trips():
+    agent = Agent(
+        name="bot",
+        framework="langchain-python",
+        model=_model(),
+        heartbeat=Heartbeat(
+            schedule="*/5 * * * *",
+            target_channel="x.channels.dev",
+        ),
+    )
+    dumped = agent.model_dump()
+    restored = Agent.model_validate(dumped)
+    assert restored.heartbeat is not None
+    assert restored.heartbeat.schedule == "*/5 * * * *"
+
+
+def test_heartbeat_exported_from_schema():
+    """Importable from the top-level schema package."""
+    from vystak.schema import Heartbeat as Exported
+
+    assert Exported is Heartbeat

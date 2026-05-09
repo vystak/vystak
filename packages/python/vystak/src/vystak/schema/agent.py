@@ -6,6 +6,7 @@ from pydantic import model_validator
 
 from vystak.schema.common import NamedModel
 from vystak.schema.compaction import Compaction
+from vystak.schema.heartbeat import Heartbeat
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
@@ -47,6 +48,7 @@ class Agent(NamedModel):
     subagents: list["Agent"] = []
 
     compaction: Compaction | None = None
+    heartbeat: Heartbeat | None = None
 
     @property
     def canonical_name(self) -> str:
