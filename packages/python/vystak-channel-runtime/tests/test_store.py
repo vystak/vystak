@@ -234,3 +234,48 @@ async def test_sqlite_last_binding_for_agent_ignores_other_channel_types(sqlite_
     )
     assert await sqlite_store.last_binding_for_agent("slack", "ops-bot") is None
     await sqlite_store.close()
+
+
+# ---------------------------------------------------------------------------
+# last_binding_for_agent — Postgres backend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_last_binding_for_agent_empty(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    assert await s.last_binding_for_agent("slack", "ops-bot") is None
+    await s.close()
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_last_binding_for_agent_picks_most_recent(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    await s.set_thread_binding("slack", "T1", "thread-old", "ops-bot", user_id="U1")
+    await asyncio.sleep(0.01)
+    await s.set_thread_binding("slack", "T1", "thread-new", "ops-bot", user_id="U2")
+    binding = await s.last_binding_for_agent("slack", "ops-bot")
+    assert binding is not None
+    assert binding.thread_id == "thread-new"
+    assert binding.user_id == "U2"
+    await s.close()
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_last_binding_for_agent_ignores_other_agents(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    await s.set_thread_binding("slack", "T1", "thread-1", "other-bot", user_id="U1")
+    assert await s.last_binding_for_agent("slack", "ops-bot") is None
+    await s.close()
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+async def test_postgres_last_binding_for_agent_ignores_other_channel_types(postgres_dsn):
+    s = PostgresChannelStore(postgres_dsn)
+    await s.set_thread_binding("discord", "G1", "thread-1", "ops-bot", user_id="U1")
+    assert await s.last_binding_for_agent("slack", "ops-bot") is None
+    await s.close()

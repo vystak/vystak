@@ -186,6 +186,9 @@ CREATE TABLE IF NOT EXISTS route_prefs (
 
 CREATE INDEX IF NOT EXISTS idx_thread_bindings_scope
     ON thread_bindings (channel_type, scope_id);
+
+CREATE INDEX IF NOT EXISTS idx_thread_bindings_agent
+    ON thread_bindings (channel_type, agent_name, updated_at DESC);
 """
 
 
@@ -387,6 +390,10 @@ _PG_SCHEMA_SQL = [
     """
     CREATE INDEX IF NOT EXISTS idx_thread_bindings_scope
         ON thread_bindings (channel_type, scope_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_thread_bindings_agent
+        ON thread_bindings (channel_type, agent_name, updated_at DESC)
     """,
 ]
 
