@@ -25,6 +25,31 @@ def _validate_vault_provider_pairing(vault: Vault) -> None:
         )
 
 
+def _validate_heartbeat_targets(
+    agents: list[Agent], channels: list[Channel],
+) -> None:
+    """Cross-deployable check: every agent.heartbeat.target_channel must
+    name a real channel that routes this agent."""
+    channels_by_canonical = {c.canonical_name: c for c in channels}
+    for agent in agents:
+        if agent.heartbeat is None:
+            continue
+        target = agent.heartbeat.target_channel
+        channel = channels_by_canonical.get(target)
+        if channel is None:
+            raise ValueError(
+                f"agent '{agent.name}' heartbeat.target_channel "
+                f"'{target}' does not match any declared channel "
+                f"(have: {sorted(channels_by_canonical)})"
+            )
+        routed = {a.name for a in channel.agents}
+        if agent.name not in routed:
+            raise ValueError(
+                f"channel '{target}' does not route agent '{agent.name}' "
+                f"named in its heartbeat.target_channel"
+            )
+
+
 def _lookup_agent(by_name: dict, name: str, field: str, ctx: str) -> object:
     if name not in by_name:
         raise KeyError(
@@ -209,5 +234,7 @@ def load_multi_yaml(
 
         channel_data = _resolve_channel_agent_refs(channel_data, agents_by_name)
         channels.append(Channel.model_validate(channel_data))
+
+    _validate_heartbeat_targets(agents, channels)
 
     return agents, channels, vault

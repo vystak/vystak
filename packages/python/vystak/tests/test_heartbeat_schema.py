@@ -126,3 +126,109 @@ def test_heartbeat_exported_from_schema():
     from vystak.schema import Heartbeat as Exported
 
     assert Exported is Heartbeat
+
+
+def _write(tmp_path, content: str):
+    """Helper: write content to tmp_path/vystak.yaml and return Path."""
+    path = tmp_path / "vystak.yaml"
+    path.write_text(content)
+    return path
+
+
+def test_target_channel_typo_rejected(tmp_path):
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    model: c
+    platform: local
+    heartbeat:
+      schedule: "*/30 * * * *"
+      target_channel: nonexistent.channels.dev
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    agents: [ops-bot]
+"""
+    data = yaml.safe_load(yaml_text)
+    with pytest.raises(ValueError, match="target_channel"):
+        load_multi_yaml(data)
+
+
+def test_target_channel_does_not_route_agent_rejected(tmp_path):
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    model: c
+    platform: local
+    heartbeat:
+      schedule: "*/30 * * * *"
+      target_channel: discord-main.channels.dev
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    agents: [ops-bot]
+  - name: discord-main
+    type: discord
+    platform: local
+    agents: []
+"""
+    data = yaml.safe_load(yaml_text)
+    with pytest.raises(ValueError, match="does not route"):
+        load_multi_yaml(data)
+
+
+def test_valid_heartbeat_target_passes(tmp_path):
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    model: c
+    platform: local
+    heartbeat:
+      schedule: "*/30 * * * *"
+      target_channel: slack-main.channels.dev
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    agents: [ops-bot]
+"""
+    data = yaml.safe_load(yaml_text)
+    agents, channels, _vault = load_multi_yaml(data)
+    agent = next(a for a in agents if a.name == "ops-bot")
+    assert agent.heartbeat is not None
+    assert agent.heartbeat.target_channel == "slack-main.channels.dev"
