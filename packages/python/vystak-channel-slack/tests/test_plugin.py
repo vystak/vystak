@@ -191,6 +191,14 @@ class TestAutoRegistration:
         assert "channel_package_version" in cfg
         assert "channel_runtime_version" in cfg
 
+    def test_plugin_injects_canonical_name(self):
+        ch = _channel()
+        out = SlackChannelPlugin().generate_code(ch, resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["canonical_name"] == ch.canonical_name
+        # canonical_name is "<channel-name>.channels.<platform-namespace>"
+        assert cfg["canonical_name"] == "slack-main.channels.default"
+
 
 class TestSlackChannelStreamToolCalls:
     """The stream_tool_calls flag round-trips from Channel.config to channel_config.json."""

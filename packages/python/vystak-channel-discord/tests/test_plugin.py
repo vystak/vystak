@@ -45,3 +45,12 @@ def test_plugin_writes_version_fields():
     cfg = json.loads(out.files["channel_config.json"])
     assert "channel_package_version" in cfg
     assert "channel_runtime_version" in cfg
+
+
+def test_plugin_injects_canonical_name():
+    ch = _channel()
+    out = DiscordChannelPlugin().generate_code(ch, resolved_routes={})
+    cfg = json.loads(out.files["channel_config.json"])
+    assert cfg["canonical_name"] == ch.canonical_name
+    # canonical_name is "<channel-name>.channels.<platform-namespace>"
+    assert cfg["canonical_name"] == "discord-prod.channels.default"

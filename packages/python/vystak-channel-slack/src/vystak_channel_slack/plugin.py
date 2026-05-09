@@ -112,6 +112,7 @@ class SlackChannelPlugin(ChannelPlugin):
             },
             "stream_tool_calls": bool(channel.config.get("stream_tool_calls", False)),
             "state": state_cfg,
+            "canonical_name": channel.canonical_name,
             "channel_package_version": channel.channel_package_version,
             "channel_runtime_version": channel.channel_runtime_version,
         }

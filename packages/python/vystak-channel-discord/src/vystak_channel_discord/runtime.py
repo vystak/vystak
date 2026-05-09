@@ -145,9 +145,11 @@ class DiscordChannelRuntime(ChannelRuntime):
                 except Exception:  # noqa: BLE001
                     logger.warning("welcome send failed", exc_info=True)
 
+        await self._start_heartbeats()
         await self._client.start(self._token)
 
     async def stop(self) -> None:
+        await self._stop_heartbeats()
         if self._client is not None:
             await self._client.close()
 

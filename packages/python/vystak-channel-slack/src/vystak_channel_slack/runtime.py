@@ -93,9 +93,11 @@ class SlackChannelRuntime(ChannelRuntime):
                 )
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
+        await self._start_heartbeats()
         await self._handler.start_async()
 
     async def stop(self) -> None:
+        await self._stop_heartbeats()
         if self._handler is not None:
             await self._handler.close_async()
 
