@@ -10,6 +10,9 @@ from vystak.providers.base import ChannelPlugin, GeneratedCode
 from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
+from vystak_channel_runtime.heartbeat import (
+    enrich_routes_with_heartbeat as _enrich_routes_with_heartbeat,
+)
 
 from vystak_channel_slack.server_template import DOCKERFILE, REQUIREMENTS
 
@@ -41,13 +44,14 @@ class SlackChannelPlugin(ChannelPlugin):
         channel.channel_runtime_version = runtime_version()
 
         channel_config = self._build_channel_config(channel)
+        enriched_routes = _enrich_routes_with_heartbeat(channel, resolved_routes)
 
         return GeneratedCode(
             files={
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,
                 "channel_config.json": json.dumps(channel_config, indent=2),
-                "routes.json": json.dumps(resolved_routes, indent=2),
+                "routes.json": json.dumps(enriched_routes, indent=2),
             },
             entrypoint="python -m vystak_channel_slack",
         )

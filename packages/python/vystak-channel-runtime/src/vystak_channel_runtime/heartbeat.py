@@ -30,6 +30,28 @@ DEFAULT_PROMPT = (
 )
 
 
+def enrich_routes_with_heartbeat(
+    channel,
+    resolved_routes: dict[str, dict],
+) -> dict[str, dict]:
+    """Add `heartbeat` blocks to route entries, copied from each agent's
+    declared `heartbeat` config.
+
+    Channel plugins call this from `generate_code` so that the channel
+    container's `routes.json` carries the per-agent heartbeat config that
+    `ChannelRuntime._heartbeat_for_route` reads at startup.
+    """
+    agent_by_name = {a.name: a for a in channel.agents}
+    enriched: dict[str, dict] = {}
+    for agent_name, route in resolved_routes.items():
+        entry = dict(route)
+        agent = agent_by_name.get(agent_name)
+        if agent is not None and agent.heartbeat is not None:
+            entry["heartbeat"] = agent.heartbeat.model_dump(mode="json")
+        enriched[agent_name] = entry
+    return enriched
+
+
 def is_heartbeat_ok(text: str, max_chars: int) -> bool:
     """Return True iff `text` should be treated as a silent heartbeat ack.
 
