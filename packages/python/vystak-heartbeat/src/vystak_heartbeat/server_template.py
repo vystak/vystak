@@ -5,9 +5,12 @@ from __future__ import annotations
 REQUIREMENTS = """\
 httpx>=0.27
 aiosqlite>=0.20
+asyncpg>=0.29
 pydantic>=2.0
+pyyaml>=6.0
 nats-py>=2.6
 croniter>=2.0
+psycopg[binary]>=3.0
 opentelemetry-api>=1.27
 opentelemetry-sdk>=1.27
 opentelemetry-exporter-otlp-proto-grpc>=1.27
