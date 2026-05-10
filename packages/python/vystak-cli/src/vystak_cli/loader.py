@@ -123,7 +123,10 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
                 defs.channels.extend(channels)
                 if vault is not None:
                     defs.vault = vault
-            elif isinstance(data.get("model"), str) or isinstance(data.get("platform"), str):
+            elif (
+                isinstance(data.get("default_model"), str)
+                or isinstance(data.get("platform"), str)
+            ):
                 merged = dict(base_config)
                 if "agents" not in merged:
                     merged["agents"] = []

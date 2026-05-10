@@ -11,7 +11,7 @@ def tmp_agent_dir(tmp_path):
     (tmp_path / "vystak.yaml").write_text(
         "name: test-agent\n"
         "framework: langchain-python\n"
-        "model:\n"
+        "default_model:\n"
         "  provider:\n"
         "    type: anthropic\n"
         "  model_name: claude-sonnet-4-6\n"
@@ -24,7 +24,7 @@ def fake_agent():
     """Lightweight stand-in for the Agent schema with only the attrs handlers read.
 
     Handlers reference `agent.name` for default model strings; future phases will
-    add `agent.model`, `agent.skills`, etc. Tests can extend by writing to the
+    add `agent.default_model`, `agent.skills`, etc. Tests can extend by writing to the
     returned namespace.
     """
     return SimpleNamespace(name="weather")

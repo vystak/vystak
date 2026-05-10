@@ -59,7 +59,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: aca
 """
@@ -73,7 +73,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
 """
 
 
@@ -225,7 +225,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: local
 """

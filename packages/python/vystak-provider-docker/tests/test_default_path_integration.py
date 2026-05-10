@@ -37,7 +37,7 @@ models:
     model_name: claude-sonnet-4-6
 agents:
   - name: isolation-test
-    model: sonnet
+    default_model: sonnet
     platform: docker
     secrets:
       - name: ANTHROPIC_API_KEY

@@ -21,19 +21,19 @@ def _build_agents():
     weather = Agent(
         name="weather-agent",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         platform=platform,
     )
     time = Agent(
         name="time-agent",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         platform=platform,
     )
     assistant = Agent(
         name="assistant-agent",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         platform=platform,
         subagents=[weather, time],
     )

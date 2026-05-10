@@ -24,7 +24,7 @@ def _agent(name: str) -> Agent:
     return Agent(
         name=name,
         framework="langchain-python",
-        model=_model(),
+        default_model=_model(),
         provider=Provider(name="docker", type="docker"),
     )
 

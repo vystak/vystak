@@ -44,7 +44,7 @@ channels:
     platform: local
 agents:
   - name: sessionsagent
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

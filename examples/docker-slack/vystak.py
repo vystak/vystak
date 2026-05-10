@@ -48,7 +48,7 @@ sonnet = ast.Model(
 weather_agent = ast.Agent(
     name="weather-agent",
     instructions="You are a weather specialist. Answer concisely.",
-    model=sonnet,
+    default_model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=[])],
     # Secrets must be declared on the agent for the Docker provider to

@@ -1,7 +1,7 @@
 name: example-agent
 framework: langchain-python
 instructions: An example agent.
-model:
+default_model:
   name: default
   provider:
     name: anthropic

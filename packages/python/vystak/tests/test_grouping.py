@@ -19,8 +19,8 @@ class TestPlatformFingerprint:
     def test_same_platform_object(self, model):
         docker = Provider(name="docker", type="docker")
         platform = Platform(name="local", type="docker", provider=docker)
-        a = Agent(name="a", framework="langchain-python", model=model, platform=platform)
-        b = Agent(name="b", framework="langchain-python", model=model, platform=platform)
+        a = Agent(name="a", framework="langchain-python", default_model=model, platform=platform)
+        b = Agent(name="b", framework="langchain-python", default_model=model, platform=platform)
         assert platform_fingerprint(a) == platform_fingerprint(b)
 
     def test_same_config_same_fingerprint(self, model):
@@ -35,9 +35,9 @@ class TestPlatformFingerprint:
             provider=Provider(name="azure", type="azure", config={"location": "eastus2"}),
         )
         assert platform_fingerprint(
-            Agent(name="a", framework="langchain-python", model=model, platform=p1)
+            Agent(name="a", framework="langchain-python", default_model=model, platform=p1)
         ) == platform_fingerprint(
-            Agent(name="b", framework="langchain-python", model=model, platform=p2)
+            Agent(name="b", framework="langchain-python", default_model=model, platform=p2)
         )
 
     def test_different_config(self, model):
@@ -52,14 +52,14 @@ class TestPlatformFingerprint:
             provider=Provider(name="azure", type="azure", config={"location": "westus2"}),
         )
         assert platform_fingerprint(
-            Agent(name="a", framework="langchain-python", model=model, platform=p1)
+            Agent(name="a", framework="langchain-python", default_model=model, platform=p1)
         ) != platform_fingerprint(
-            Agent(name="b", framework="langchain-python", model=model, platform=p2)
+            Agent(name="b", framework="langchain-python", default_model=model, platform=p2)
         )
 
     def test_no_platform_default(self, model):
         assert (
-            platform_fingerprint(Agent(name="a", framework="langchain-python", model=model))
+            platform_fingerprint(Agent(name="a", framework="langchain-python", default_model=model))
             == "docker:default"
         )
 
@@ -69,9 +69,9 @@ class TestPlatformFingerprint:
             name="b", type="container-apps", provider=Provider(name="azure", type="azure")
         )
         assert platform_fingerprint(
-            Agent(name="a", framework="langchain-python", model=model, platform=p1)
+            Agent(name="a", framework="langchain-python", default_model=model, platform=p1)
         ) != platform_fingerprint(
-            Agent(name="b", framework="langchain-python", model=model, platform=p2)
+            Agent(name="b", framework="langchain-python", default_model=model, platform=p2)
         )
 
 
@@ -81,8 +81,8 @@ class TestGroupAgentsByPlatform:
             name="local", type="docker", provider=Provider(name="docker", type="docker")
         )
         agents = [
-            Agent(name="a", framework="langchain-python", model=model, platform=platform),
-            Agent(name="b", framework="langchain-python", model=model, platform=platform),
+            Agent(name="a", framework="langchain-python", default_model=model, platform=platform),
+            Agent(name="b", framework="langchain-python", default_model=model, platform=platform),
         ]
         groups = group_agents_by_platform(agents)
         assert len(groups) == 1
@@ -96,8 +96,8 @@ class TestGroupAgentsByPlatform:
             name="aca", type="container-apps", provider=Provider(name="azure", type="azure")
         )
         agents = [
-            Agent(name="a", framework="langchain-python", model=model, platform=docker),
-            Agent(name="b", framework="langchain-python", model=model, platform=azure),
+            Agent(name="a", framework="langchain-python", default_model=model, platform=docker),
+            Agent(name="b", framework="langchain-python", default_model=model, platform=azure),
         ]
         groups = group_agents_by_platform(agents)
         assert len(groups) == 2

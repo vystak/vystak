@@ -38,7 +38,7 @@ model = ast.Model(
 agent = ast.Agent(
     name="assistant",
     instructions="You are a helpful assistant.",
-    model=model,
+    default_model=model,
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
     platform=platform,
 )

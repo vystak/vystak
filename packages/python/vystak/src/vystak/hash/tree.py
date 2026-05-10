@@ -209,7 +209,9 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
     the project's ``_vystak/manifest.json``. Defaults to the canonical
     "null" hash when no manifest is in hand.
     """
-    brain = hash_model(agent.model)
+    brain_pieces = [hash_model(agent.default_model)]
+    brain_pieces.extend(hash_model(m) for m in sorted(agent.models, key=lambda m: m.name))
+    brain = hashlib.sha256("|".join(brain_pieces).encode()).hexdigest()
     framework = _hash_str(agent.framework)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)

@@ -12,7 +12,7 @@ def _agent():
         name="weather",
         framework="langchain-python",
         instructions="A weather agent.",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
             model_name="claude-sonnet-4-6",
@@ -72,7 +72,7 @@ def test_app_builds_with_sqlite_sessions_config():
         name="test",
         framework="langchain-python",
         instructions="x",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
             model_name="claude-sonnet-4-6",

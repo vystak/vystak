@@ -7,7 +7,7 @@ instructions: |
   When starting a new conversation, recall what you know about the user.
   Use save_memory when the user shares important facts.
   Use forget_memory when asked to forget something.
-model:
+default_model:
   name: minimax
   provider:
     name: anthropic

@@ -179,14 +179,14 @@ def load_multi_yaml(
     for agent_data in data.get("agents", []):
         agent_data = dict(agent_data)
 
-        model_ref = agent_data.get("model")
+        model_ref = agent_data.get("default_model")
         if isinstance(model_ref, str):
             if model_ref not in models:
                 raise KeyError(
                     f"Unknown model '{model_ref}' in agent '{agent_data.get('name')}'. "
                     f"Defined models: {', '.join(models.keys())}"
                 )
-            agent_data["model"] = models[model_ref]
+            agent_data["default_model"] = models[model_ref]
 
         platform_ref = agent_data.get("platform")
         if isinstance(platform_ref, str):

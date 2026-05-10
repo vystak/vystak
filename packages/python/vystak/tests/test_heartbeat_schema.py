@@ -101,7 +101,7 @@ def _model() -> Model:
 
 
 def test_agent_without_heartbeat_default_none():
-    agent = Agent(name="bot", framework="langchain-python", model=_model())
+    agent = Agent(name="bot", framework="langchain-python", default_model=_model())
     assert agent.heartbeat is None
 
 
@@ -109,7 +109,7 @@ def test_agent_with_heartbeat_round_trips():
     agent = Agent(
         name="bot",
         framework="langchain-python",
-        model=_model(),
+        default_model=_model(),
         heartbeat=Heartbeat(
             schedule="*/5 * * * *",
             target_channel="x.channels.dev",
@@ -150,7 +150,7 @@ models:
 agents:
   - name: ops-bot
     framework: langchain-python
-    model: c
+    default_model: c
     platform: local
     heartbeat:
       schedule: "*/30 * * * *"
@@ -181,7 +181,7 @@ models:
 agents:
   - name: ops-bot
     framework: langchain-python
-    model: c
+    default_model: c
     platform: local
     heartbeat:
       schedule: "*/30 * * * *"
@@ -216,7 +216,7 @@ models:
 agents:
   - name: ops-bot
     framework: langchain-python
-    model: c
+    default_model: c
     platform: local
     heartbeat:
       schedule: "*/30 * * * *"

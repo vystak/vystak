@@ -4,7 +4,7 @@ instructions: |
   You are a file analysis agent. You can read files from the /docs directory
   using your MCP tools. When asked about files, use your tools to read and
   analyze them. List files before reading to know what's available.
-model:
+default_model:
   name: minimax
   provider:
     name: anthropic

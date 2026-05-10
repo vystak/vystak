@@ -22,17 +22,21 @@ def _platform() -> Platform:
 
 
 def test_no_heartbeat_field_present():
-    agent = Agent(name="bot", framework="langchain-python", model=_model(), platform=_platform())
+    agent = Agent(
+        name="bot", framework="langchain-python", default_model=_model(), platform=_platform()
+    )
     tree = hash_agent(agent)
     assert tree.heartbeat == hash_agent(agent).heartbeat  # deterministic
 
 
 def test_adding_heartbeat_changes_root():
-    agent_no = Agent(name="bot", framework="langchain-python", model=_model(), platform=_platform())
+    agent_no = Agent(
+        name="bot", framework="langchain-python", default_model=_model(), platform=_platform()
+    )
     agent_yes = Agent(
         name="bot",
         framework="langchain-python",
-        model=_model(),
+        default_model=_model(),
         platform=_platform(),
         heartbeat=Heartbeat(
             schedule="*/30 * * * *",
@@ -48,7 +52,7 @@ def test_changing_schedule_changes_root():
         return Agent(
             name="bot",
             framework="langchain-python",
-            model=_model(),
+            default_model=_model(),
             platform=_platform(),
             heartbeat=Heartbeat(schedule=s, target_channel="x.channels.dev"),
         )
@@ -64,7 +68,7 @@ def test_toggling_enabled_changes_root():
         return Agent(
             name="bot",
             framework="langchain-python",
-            model=_model(),
+            default_model=_model(),
             platform=_platform(),
             heartbeat=Heartbeat(
                 schedule="*/30 * * * *",
@@ -84,7 +88,7 @@ def test_channel_hash_picks_up_routed_agent_heartbeat_change():
         agent = Agent(
             name="bot",
             framework="langchain-python",
-            model=_model(),
+            default_model=_model(),
             platform=_platform(),
             heartbeat=Heartbeat(schedule=s, target_channel="x.channels.dev"),
         )

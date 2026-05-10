@@ -18,7 +18,7 @@ agents:
       node 20, npm, typescript, prettier, eslint, git, and ripgrep.
       Use fs.* to read/edit source, exec.run for npm/tsc/node, git.* to
       track changes.
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

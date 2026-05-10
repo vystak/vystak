@@ -24,7 +24,7 @@ AZURE_ONE_AGENT_WITH_VAULT = {
         {
             "name": "assistant",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "secrets": [{"name": "ANTHROPIC_API_KEY"}],
             "platform": "aca",
         },
@@ -117,7 +117,7 @@ def test_hashi_vault_valid_pairing_loads():
         },
         "models": {"sonnet": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}},
         "agents": [
-            {"name": "a", "framework": "langchain-python", "model": "sonnet",
+            {"name": "a", "framework": "langchain-python", "default_model": "sonnet",
              "platform": "local", "secrets": [{"name": "ANTHROPIC_API_KEY"}]},
         ],
     }

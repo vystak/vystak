@@ -10,7 +10,7 @@ def _agent(model_provider="anthropic"):
     return Agent(
         name="test",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name=model_provider, type=model_provider, api_key="test-key"),
             model_name="claude-sonnet-4-6",

@@ -37,7 +37,7 @@ agents:
   - name: hbagent
     framework: langchain-python
     instructions: "Reply only with HEARTBEAT_OK and nothing else."
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

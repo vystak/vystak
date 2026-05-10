@@ -31,7 +31,7 @@ ops_agent = Agent(
         "HEARTBEAT.md checklist and surface anything that needs attention. "
         "If nothing is wrong, reply with HEARTBEAT_OK and nothing else."
     ),
-    model=model,
+    default_model=model,
     platform=local,
     skills=[Skill(name="ops", tools=[])],
     secrets=[Secret(name="ANTHROPIC_API_KEY")],

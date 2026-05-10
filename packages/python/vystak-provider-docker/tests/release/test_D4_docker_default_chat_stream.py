@@ -52,7 +52,7 @@ channels:
     platform: local
 agents:
   - name: streamagent
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

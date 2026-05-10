@@ -18,7 +18,7 @@ agents:
       You are an ops assistant. On every heartbeat, scan the workspace's
       HEARTBEAT.md checklist and surface anything that needs attention.
       If nothing is wrong, reply with HEARTBEAT_OK and nothing else.
-    model: claude
+    default_model: claude
     platform: local
     skills:
       - {name: ops, tools: []}

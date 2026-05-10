@@ -17,7 +17,7 @@ models: {sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}}
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     platform: local
     workspace: {name: dev, image: python:3.12-slim}
 """

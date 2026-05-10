@@ -26,7 +26,8 @@ class Agent(NamedModel):
 
     framework: str
     instructions: str | None = None
-    model: Model
+    default_model: Model
+    models: list[Model] = []
     skills: list[Skill] = []
     mcp_servers: list[McpServer] = []
     workspace: Workspace | None = None

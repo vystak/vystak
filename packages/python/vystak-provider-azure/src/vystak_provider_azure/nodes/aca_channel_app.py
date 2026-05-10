@@ -194,21 +194,38 @@ class AzureChannelAppNode(Provisionable):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_path.write_text(content)
 
-            # Bundle unpublished vystak + transport + channel-package sources onto
-            # the container's PYTHONPATH (via COPY . . in the Dockerfile). Mirrors
-            # what the docker provider's channel node does — without this the
+            # Bundle unpublished vystak + transport + channel-runtime + channel-package
+            # sources onto the container's PYTHONPATH (via COPY . . in the Dockerfile).
+            # Mirrors what the docker provider's channel node does — without this the
             # channel container fails at import with "No module named 'vystak'".
             import shutil as _shutil
 
             import vystak
-            import vystak_channel_slack
+            import vystak_channel_runtime
             import vystak_transport_http
             import vystak_transport_nats
+            from vystak.schema.common import ChannelType
 
-            for _mod in (
-                vystak, vystak_transport_http, vystak_transport_nats,
-                vystak_channel_slack,
-            ):
+            _bundle_mods = [
+                vystak,
+                vystak_transport_http,
+                vystak_transport_nats,
+                vystak_channel_runtime,
+            ]
+            if self._channel.type == ChannelType.SLACK:
+                import vystak_channel_slack
+
+                _bundle_mods.append(vystak_channel_slack)
+            elif self._channel.type == ChannelType.CHAT:
+                import vystak_channel_chat
+
+                _bundle_mods.append(vystak_channel_chat)
+            elif self._channel.type == ChannelType.DISCORD:
+                import vystak_channel_discord
+
+                _bundle_mods.append(vystak_channel_discord)
+
+            for _mod in _bundle_mods:
                 _src = Path(_mod.__file__).parent
                 _dst = build_dir / _src.name
                 if _dst.exists():

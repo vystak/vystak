@@ -15,7 +15,7 @@ class Compaction(NamedModel):
 
     See `docs/superpowers/specs/2026-04-25-session-compaction-design.md`.
     `mode` is the shorthand; explicit numeric fields override the preset.
-    `summarizer=None` falls back to `agent.model` at codegen time.
+    `summarizer=None` falls back to `agent.default_model` at codegen time.
     """
 
     name: str = ""

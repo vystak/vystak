@@ -31,7 +31,7 @@ agent = Agent(
         "Remember important facts the user tells you.\n"
         "Use save_memory and forget_memory tools as needed."
     ),
-    model=model,
+    default_model=model,
     platform=Platform(name="docker", type="docker", provider=docker),
     sessions=Postgres(provider=docker),
     memory=Postgres(provider=docker),

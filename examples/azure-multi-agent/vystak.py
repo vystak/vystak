@@ -17,7 +17,7 @@ platform = ast.Platform(name="aca", type="container-apps", provider=azure)
 weather = ast.Agent(
     name="weather-agent",
     instructions="You are a weather specialist. Use get_weather for real data.",
-    model=model,
+    default_model=model,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=["get_weather"])],
     channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
@@ -27,7 +27,7 @@ weather = ast.Agent(
 time_agent = ast.Agent(
     name="time-agent",
     instructions="You are a time specialist. Use get_time for current time.",
-    model=model,
+    default_model=model,
     platform=platform,
     skills=[ast.Skill(name="time", tools=["get_time"])],
     channels=[ast.Channel(name="api", type=ast.ChannelType.API)],
@@ -37,7 +37,7 @@ time_agent = ast.Agent(
 assistant = ast.Agent(
     name="assistant-agent",
     instructions="You are a helpful assistant. Use ask_weather_agent and ask_time_agent.",
-    model=model,
+    default_model=model,
     platform=platform,
     skills=[ast.Skill(name="assistant", tools=["ask_weather_agent", "ask_time_agent"])],
     channels=[ast.Channel(name="api", type=ast.ChannelType.API)],

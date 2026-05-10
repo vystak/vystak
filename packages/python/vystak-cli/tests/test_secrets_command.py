@@ -26,7 +26,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: aca
 """
@@ -56,7 +56,7 @@ def _write_fixture_yaml_with_two(tmp_path: Path, names: list[str]) -> Path:
         "agents:\n"
         "  - name: assistant\n"
         "    framework: langchain-python\n"
-        "    model: sonnet\n"
+        "    default_model: sonnet\n"
         "    platform: aca\n"
         "    secrets:\n"
         f"{secret_block}\n"
@@ -346,7 +346,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: local
 """
@@ -450,7 +450,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     secrets: [{name: ANTHROPIC_API_KEY}]
     platform: aca
 """
@@ -482,7 +482,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     platform: docker
     secrets: [{name: ANTHROPIC_API_KEY}, {name: MISSING_KEY}]
 """
@@ -588,7 +588,7 @@ def test_secrets_rotate_ssh_default_path_regenerates_host_files(
         "agents:\n"
         "  - name: assistant\n"
         "    framework: langchain-python\n"
-        "    model: sonnet\n"
+        "    default_model: sonnet\n"
         "    platform: docker\n"
         "    workspace: {name: ws, image: 'python:3.12-slim'}\n"
     )

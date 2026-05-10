@@ -13,7 +13,7 @@ def build_model(agent: Any, *, callbacks: list[Any] | None = None):
 
     Credentials are read from environment variables (ANTHROPIC_API_KEY,
     OPENAI_API_KEY, etc.) by the LangChain provider classes. Provider config
-    overrides (base_url, api_key) will land via agent.model.parameters in a
+    overrides (base_url, api_key) will land via agent.default_model.parameters in a
     future phase; the schema doesn't carry them today.
 
     ``callbacks`` are attached to the constructor so every model
@@ -22,13 +22,13 @@ def build_model(agent: Any, *, callbacks: list[Any] | None = None):
     """
     import importlib
 
-    provider_type = agent.model.provider.type
+    provider_type = agent.default_model.provider.type
     if provider_type not in PROVIDER_FACTORIES:
         raise ValueError(f"Unsupported provider: {provider_type}")
     module_name, cls_name = PROVIDER_FACTORIES[provider_type]
     module = importlib.import_module(module_name)
     cls = getattr(module, cls_name)
-    kwargs: dict[str, Any] = {"model": agent.model.model_name}
+    kwargs: dict[str, Any] = {"model": agent.default_model.model_name}
     if callbacks:
         kwargs["callbacks"] = callbacks
     return cls(**kwargs)

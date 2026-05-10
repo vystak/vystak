@@ -10,10 +10,12 @@ platforms:
     telemetry: {enabled: true}     # auto-provisions vystak-otel (grafana/otel-lgtm) on :13000
 
 models:
-  sonnet:
+  minimax:
     provider: anthropic
-    model_name: claude-sonnet-4-6
-    parameters: {temperature: 0.3}
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
 
 agents:
   - name: weather-agent
@@ -21,24 +23,26 @@ agents:
     instructions: |
       You are a weather specialist. Use the get_weather tool to fetch real
       weather data for the city the user asks about. Answer concisely.
-    model: sonnet
+    default_model: minimax
     platform: local
     skills:
       - {name: weather, tools: [get_weather]}
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
 
   - name: time-agent
     framework: langchain-python
     instructions: |
       You are a time specialist. Use the get_time tool to fetch the current
       UTC time. Answer concisely.
-    model: sonnet
+    default_model: minimax
     platform: local
     skills:
       - {name: time, tools: [get_time]}
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
 
   - name: assistant-agent
     framework: langchain-python
@@ -48,11 +52,12 @@ agents:
       When the user asks about time, call ask_time_agent.
       When asked for a periodic check-in (heartbeat), call BOTH subagents
       in parallel and post a concise digest.
-    model: sonnet
+    default_model: minimax
     platform: local
     subagents: [weather-agent, time-agent]
     secrets:
       - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
     heartbeat:
       schedule: "*/10 * * * *"                     # every 10 minutes
       timezone: UTC

@@ -30,7 +30,7 @@ def _agent(transport: Transport | None = None) -> Agent:
     return Agent(
         name="a",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
             model_name="claude-sonnet-4-20250514",
@@ -104,7 +104,7 @@ class TestTransportHashing:
         agent = Agent(
             name="a",
             framework="langchain-python",
-            model=Model(
+            default_model=Model(
                 name="m",
                 provider=Provider(name="anthropic", type="anthropic", api_key_env="K"),
                 model_name="claude-sonnet-4-20250514",
@@ -245,7 +245,7 @@ def test_changing_framework_changes_root_hash():
     a1 = Agent(
         name="t",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
             model_name="claude-sonnet-4-6",
@@ -254,7 +254,7 @@ def test_changing_framework_changes_root_hash():
     a2 = Agent(
         name="t",
         framework="mastra-typescript",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="anthropic", type="anthropic"),
             model_name="claude-sonnet-4-6",

@@ -6,7 +6,7 @@ import vystak as ast
 def test_namespace_api():
     anthropic = ast.Provider(name="anthropic", type="anthropic")
     model = ast.Model(name="sonnet", provider=anthropic, model_name="claude-sonnet-4-20250514")
-    agent = ast.Agent(name="bot", framework="langchain-python", model=model)
+    agent = ast.Agent(name="bot", framework="langchain-python", default_model=model)
     assert agent.name == "bot"
 
 
@@ -15,7 +15,7 @@ def test_direct_import_api():
 
     anthropic = Provider(name="anthropic", type="anthropic")
     model = Model(name="sonnet", provider=anthropic, model_name="claude-sonnet-4-20250514")
-    agent = Agent(name="bot", framework="langchain-python", model=model)
+    agent = Agent(name="bot", framework="langchain-python", default_model=model)
     assert agent.name == "bot"
 
 
@@ -34,7 +34,7 @@ def test_full_agent_definition():
     agent = ast.Agent(
         name="support-bot",
         framework="langchain-python",
-        model=sonnet,
+        default_model=sonnet,
         skills=[
             ast.Skill(
                 name="refund-handling",
@@ -73,7 +73,7 @@ def test_hash_agent():
     agent = ast.Agent(
         name="bot",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         skills=[ast.Skill(name="greeting", tools=["say_hello"])],
     )
     tree = ast.hash_agent(agent)
@@ -88,7 +88,7 @@ def test_yaml_roundtrip(tmp_path):
     agent = ast.Agent(
         name="bot",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         skills=[ast.Skill(name="greeting", tools=["say_hello"])],
     )
     path = tmp_path / "agent.yaml"
@@ -103,13 +103,13 @@ def test_hash_change_detection():
     agent1 = ast.Agent(
         name="bot",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         skills=[ast.Skill(name="a")],
     )
     agent2 = ast.Agent(
         name="bot",
         framework="langchain-python",
-        model=model,
+        default_model=model,
         skills=[ast.Skill(name="b")],
     )
     tree1 = ast.hash_agent(agent1)

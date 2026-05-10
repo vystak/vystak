@@ -20,7 +20,7 @@ agents:
       You are a weather specialist agent. When asked about weather,
       use the get_weather tool to fetch real data. Return concise,
       factual weather reports. You serve other agents via A2A protocol.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: weather, tools: [get_weather]}
@@ -33,7 +33,7 @@ agents:
     instructions: |
       You are a time specialist agent. When asked about time,
       use the get_time tool. Return concise, factual responses.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: time, tools: [get_time]}
@@ -50,7 +50,7 @@ agents:
       commands like pytest, ruff, or python scripts. Use git.status / git.diff
       / git.commit to track changes. Keep replies concise and show the diff
       or command output rather than restating it.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: editing, tools: [fs.readFile, fs.writeFile, fs.listDir, fs.edit]}
@@ -75,7 +75,7 @@ agents:
       When the user asks for code edits, file reads, shell commands, or git
       operations, use ask_coder_agent and pass through the request verbatim.
       If the user asks about BOTH weather and time, call BOTH tools at the same time.
-    model: minimax
+    default_model: minimax
     platform: local
     subagents: [weather-agent, time-agent, coder-agent]
     secrets:

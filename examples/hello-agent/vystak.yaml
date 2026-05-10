@@ -3,7 +3,7 @@ framework: langchain-python
 instructions: |
   You are a helpful assistant built with Vystak.
   Be concise, friendly, and always show your reasoning.
-model:
+default_model:
   name: minimax
   provider:
     name: anthropic

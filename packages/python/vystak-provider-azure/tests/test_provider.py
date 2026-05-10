@@ -18,7 +18,7 @@ def _make_agent(name="my-agent"):
     agent = MagicMock()
     agent.name = name
     agent.framework = "langchain-python"
-    agent.model = MagicMock()
+    agent.default_model = MagicMock()
     agent.skills = []
     agent.mcp_servers = []
     agent.channels = []
@@ -441,7 +441,7 @@ class TestAzureProviderVaultGraph:
         agent = Agent(
             name="assistant",
             framework="langchain-python",
-            model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
+            default_model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
             secrets=[Secret(name="ANTHROPIC_API_KEY")],
             workspace=Workspace(
                 name="w",
