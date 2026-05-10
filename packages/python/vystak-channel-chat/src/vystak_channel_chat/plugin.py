@@ -61,17 +61,12 @@ class ChatChannelPlugin(ChannelPlugin):
                 else "http"
             ),
         }
-        from vystak_channel_runtime.heartbeat import (
-            enrich_routes_with_heartbeat,
-        )
-        enriched_routes = enrich_routes_with_heartbeat(channel, resolved_routes)
-
         return GeneratedCode(
             files={
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,
                 "channel_config.json": json.dumps(channel_config, indent=2),
-                "routes.json": json.dumps(enriched_routes, indent=2),
+                "routes.json": json.dumps(resolved_routes, indent=2),
             },
             entrypoint="python -m vystak_channel_chat",
         )

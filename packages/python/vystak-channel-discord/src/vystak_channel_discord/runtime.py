@@ -146,12 +146,10 @@ class DiscordChannelRuntime(ChannelRuntime):
                     logger.warning("welcome send failed", exc_info=True)
 
         await self._start_delivery_receiver()
-        await self._start_heartbeats()
         await self._client.start(self._token)
 
     async def stop(self) -> None:
         await self._stop_delivery_receiver()
-        await self._stop_heartbeats()
         if self._client is not None:
             await self._client.close()
 
@@ -264,26 +262,6 @@ class DiscordChannelRuntime(ChannelRuntime):
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
-        # Heartbeat-synthesized events have no raw discord.Message in
-        # metadata. Resolve the channel by id (`event.scope_id` carries
-        # the Discord channel id from the heartbeat's `target_thread`)
-        # and send via the client directly.
-        if event.metadata.get("heartbeat") and self._client is not None:
-            try:
-                channel = self._client.get_channel(int(event.scope_id))
-                if channel is None:
-                    channel = await self._client.fetch_channel(int(event.scope_id))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "heartbeat: could not resolve discord channel %s: %s",
-                    event.scope_id, exc,
-                )
-                return
-            text = reply.text or ""
-            for chunk in _chunk(text, MAX_DISCORD_MESSAGE_CHARS):
-                await channel.send(chunk)
-            return
-
         # Stop the typing indicator before posting the reply.
         typing_ctx = event.metadata.pop("_typing_ctx", None)
         if typing_ctx is not None:

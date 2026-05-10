@@ -8,14 +8,11 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any
 
-from vystak.schema.heartbeat import Heartbeat
-
 from vystak_channel_runtime.agent_client import (
     A2AAgentClient,
     AgentClient,
     NatsAgentClient,
 )
-from vystak_channel_runtime.heartbeat import HeartbeatScheduler, is_heartbeat_ok
 from vystak_channel_runtime.store import ChannelStore
 from vystak_channel_runtime.types import (
     AgentCallError,
@@ -67,7 +64,6 @@ class ChannelRuntime(ABC):
         self.channel_type: str = config.get("channel_type", "")
         self.agent_protocol: str = config.get("agent_protocol", "a2a-turn")
         self._agent_client = agent_client or self._default_agent_client()
-        self._heartbeats: list[HeartbeatScheduler] = []
 
     def _default_agent_client(self) -> AgentClient:
         if self.agent_protocol in ("a2a-turn", "a2a-stream"):
@@ -383,8 +379,7 @@ class ChannelRuntime(ABC):
         self, event: InboundEvent,
     ) -> tuple[str | None, AgentReply | None]:
         """Resolve route, call agent. Returns (route, reply). Either may
-        be None on no-route or agent-error. Used by both `handle_event`
-        and `_handle_synthetic_event`."""
+        be None on no-route or agent-error."""
         route = await self.resolve_route(event)
         if route is None:
             await self.on_no_route(event)
@@ -414,81 +409,3 @@ class ChannelRuntime(ABC):
         await self.post_reply(event, route, reply)
         await self.after_reply(event, route, reply)
 
-    # --- Heartbeat lifecycle ----------------------------------------------
-
-    @property
-    def canonical_name(self) -> str:
-        return self.config.get("canonical_name", "")
-
-    def _heartbeat_for_route(self, route_entry: Any) -> Heartbeat | None:
-        if not isinstance(route_entry, dict):
-            return None
-        raw = route_entry.get("heartbeat")
-        if raw is None:
-            return None
-        if isinstance(raw, Heartbeat):
-            return raw
-        return Heartbeat.model_validate(raw)
-
-    async def _start_heartbeats(self) -> None:
-        """Start a HeartbeatScheduler for each routed agent whose heartbeat
-        targets this channel. Subclasses must call this after setting up
-        I/O (so `post_reply` is ready) but BEFORE entering any blocking
-        serve loop. Schedulers use `asyncio.create_task` internally, so
-        this call returns immediately."""
-        for agent_name, route_entry in self.routes.items():
-            hb = self._heartbeat_for_route(route_entry)
-            if hb is None or not hb.enabled:
-                continue
-            if hb.target_channel != self.canonical_name:
-                continue
-            scheduler = HeartbeatScheduler(self, agent_name, hb)
-            self._heartbeats.append(scheduler)
-            await scheduler.start()
-
-    async def _stop_heartbeats(self) -> None:
-        """Cancel all running heartbeat schedulers. Subclasses must call this
-        AT THE START of their `stop()` so in-flight fires don't outlive the
-        I/O loop."""
-        for hb in self._heartbeats:
-            await hb.stop()
-        self._heartbeats.clear()
-
-    async def _handle_synthetic_event(self, event: InboundEvent) -> None:
-        """Entry for heartbeat-synthesized events.
-
-        Bypasses parse_event + authorize (synthetic events are trusted).
-        After the agent call, evaluates the reply against `is_heartbeat_ok`;
-        on alerts, synthesizes a *delivery* event with the real scope/thread
-        and passes it to subclass `post_reply`. Always skips `after_reply`
-        (synthetic scopes shouldn't pollute the binding store).
-        """
-        route, reply = await self._call_route_for_event(event)
-        if route is None or reply is None:
-            return
-
-        ack_max = int(event.metadata.get("ack_max_chars", 300))
-        if is_heartbeat_ok(reply.text, ack_max):
-            logger.info(
-                "heartbeat.acked agent=%s thread=%s",
-                route, event.metadata.get("deliver_thread"),
-            )
-            return
-
-        deliver_scope = event.metadata.get("deliver_scope")
-        deliver_thread = event.metadata.get("deliver_thread")
-        if not deliver_scope or not deliver_thread:
-            logger.warning(
-                "heartbeat reply has alert content but no delivery target — "
-                "dropping. agent=%s scope=%s",
-                route, event.scope_id,
-            )
-            return
-
-        delivery_event = event.model_copy(update={
-            "scope_id": deliver_scope,
-            "thread_id": deliver_thread,
-        })
-        await self.post_reply(delivery_event, route, reply)
-        # Intentionally skip after_reply — heartbeat fires must not write
-        # ThreadBindings (synthetic scopes would pollute the store).

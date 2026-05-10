@@ -94,12 +94,10 @@ class SlackChannelRuntime(ChannelRuntime):
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
         await self._start_delivery_receiver()
-        await self._start_heartbeats()
         await self._handler.start_async()
 
     async def stop(self) -> None:
         await self._stop_delivery_receiver()
-        await self._stop_heartbeats()
         if self._handler is not None:
             await self._handler.close_async()
 
@@ -308,17 +306,6 @@ class SlackChannelRuntime(ChannelRuntime):
     async def post_reply(
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None:
-        # Heartbeat-synthesized events have no Slack `say` callable in
-        # metadata. Use the bot's web client directly: post to the channel
-        # named in `event.scope_id` (the `target_thread` from heartbeat
-        # config — a Slack channel id). No threading.
-        if event.metadata.get("heartbeat") and self._app is not None:
-            await self._app.client.chat_postMessage(
-                channel=event.scope_id,
-                text=reply.text,
-            )
-            return
-
         # Clear the assistant typing status once the reply is ready.
         channel_id = event.metadata.get("channel_id")
         thread_ts = self._resolve_assistant_thread_ts(event)

@@ -101,11 +101,9 @@ class ChatChannelRuntime(ChannelRuntime):
         cfg = uvicorn.Config(self._app, host="0.0.0.0", port=port, log_level="info")
         self._server = uvicorn.Server(cfg)
         await self._start_delivery_receiver()
-        await self._start_heartbeats()
         await self._server.serve()
 
     async def stop(self) -> None:
-        await self._stop_heartbeats()
         if self._server is not None:
             self._server.should_exit = True
 
