@@ -54,3 +54,19 @@ def test_plugin_injects_canonical_name():
     assert cfg["canonical_name"] == ch.canonical_name
     # canonical_name is "<channel-name>.channels.<platform-namespace>"
     assert cfg["canonical_name"] == "discord-prod.channels.default"
+
+
+def test_channel_config_includes_delivery_port_and_transport_type():
+    """channel_config.json includes delivery_port + transport_type (heartbeat v2)."""
+    out = DiscordChannelPlugin().generate_code(_channel(), resolved_routes={})
+    cfg = json.loads(out.files["channel_config.json"])
+    assert cfg["delivery_port"] == 9999
+    assert cfg["transport_type"] == "http"
+
+
+def test_transport_type_defaults_to_http_when_no_transport():
+    """Platform has no transport declared → transport_type is 'http'."""
+    ch = _channel()
+    out = DiscordChannelPlugin().generate_code(ch, resolved_routes={})
+    cfg = json.loads(out.files["channel_config.json"])
+    assert cfg["transport_type"] == "http"

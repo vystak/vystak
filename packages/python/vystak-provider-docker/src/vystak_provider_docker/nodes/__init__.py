@@ -10,6 +10,7 @@ from vystak_provider_docker.nodes.hashi_vault import (
     HashiVaultServerNode,
     HashiVaultUnsealNode,
 )
+from vystak_provider_docker.nodes.heartbeat import DockerHeartbeatNode
 from vystak_provider_docker.nodes.nats_server import NatsServerNode
 from vystak_provider_docker.nodes.network import DockerNetworkNode
 from vystak_provider_docker.nodes.otel_lgtm import OtelLgtmNode
@@ -26,6 +27,7 @@ __all__ = [
     "DockerAgentNode",
     "DockerChannelNode",
     "DockerEnvFileNode",
+    "DockerHeartbeatNode",
     "DockerNetworkNode",
     "DockerServiceNode",
     "DockerWorkspaceNode",
