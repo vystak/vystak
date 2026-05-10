@@ -102,15 +102,20 @@ class HeartbeatScheduler:
             self._busy = False
 
     async def _call_agent(self, session_id: str, request_model: str | None):
-        """Invoke the agent via Transport. Wrapped in its own method so
-        tests can stub the Transport surface without depending on the
-        real A2AMessage/AgentRef shapes."""
-        # The plan's exact call uses vystak.transport AgentRef + A2AMessage.
-        # We pass them as kwargs — the test mocks send_task entirely, so
-        # the precise shape only matters in production.
+        """Invoke the agent via Transport using the typed A2A surface.
+
+        Wrapped in its own method so tests can stub `transport.send_task`
+        with AsyncMock — this method's call shape matches what production
+        Transport implementations expect.
+        """
+        from vystak.transport.types import A2AMessage, AgentRef
+
         return await self.transport.send_task(
-            self.agent_canonical,
-            self.hb.prompt or DEFAULT_PROMPT,
+            AgentRef(canonical_name=self.agent_canonical),
+            A2AMessage.from_text(
+                self.hb.prompt or DEFAULT_PROMPT,
+                correlation_id=session_id,
+            ),
             metadata={
                 "heartbeat": True,
                 "model_override": request_model,
@@ -120,15 +125,19 @@ class HeartbeatScheduler:
         )
 
     async def _deliver(self, thread_id: str, text: str) -> None:
+        from vystak_channel_runtime.delivery import DeliveryRequest
+
         await self.delivery.deliver(
             self.channel_canonical,
-            thread_id=thread_id,
-            text=text,
-            metadata={
-                "heartbeat": True,
-                "agent": self.agent_name,
-                "fired_at": datetime.utcnow().isoformat() + "Z",
-            },
+            DeliveryRequest(
+                thread_id=thread_id,
+                text=text,
+                metadata={
+                    "heartbeat": True,
+                    "agent": self.agent_name,
+                    "fired_at": datetime.utcnow().isoformat() + "Z",
+                },
+            ),
         )
 
     async def _run(self) -> None:
