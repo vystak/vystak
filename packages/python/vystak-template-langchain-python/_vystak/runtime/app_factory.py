@@ -19,6 +19,11 @@ from _vystak.runtime.a2a_native.executor import LangGraphExecutor
 from _vystak.runtime.compaction.compactor import ThresholdCompactor
 from _vystak.runtime.compaction.pruner import PreCallPruner
 from _vystak.runtime.graph import build_graph, pick_model_name
+from _vystak.runtime.heartbeat_sessions import (
+    HeartbeatSessions,
+    InMemoryHeartbeatSessions,
+    SqliteHeartbeatSessions,
+)
 from _vystak.runtime.memory import MemoryManager
 from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
@@ -54,6 +59,23 @@ async def persist_model_choice(
     stored = await sessions.get_model(session_id)
     if stored is None:
         await sessions.set_model(session_id, chosen)
+
+
+def build_heartbeat_sessions(agent: Any) -> HeartbeatSessions:
+    """Build a HeartbeatSessions store from the agent's sessions config.
+
+    SQLite path: same DB file the langgraph checkpointer uses (sidecar table).
+    Postgres / no sessions: in-memory (Postgres impl is a follow-up).
+    """
+    sessions_cfg = getattr(agent, "sessions", None)
+    if sessions_cfg is None:
+        return InMemoryHeartbeatSessions()
+    engine = getattr(sessions_cfg, "engine", None)
+    if engine == "sqlite":
+        path = getattr(sessions_cfg, "path", None) or ":memory:"
+        return SqliteHeartbeatSessions(path)
+    # TODO(heartbeat): Postgres impl
+    return InMemoryHeartbeatSessions()
 
 
 def build_agent_app(agent: Any) -> FastAPI:
@@ -166,6 +188,7 @@ def build_agent_app(agent: Any) -> FastAPI:
             yield
 
     app = FastAPI(lifespan=lifespan)
+    app.state.heartbeat_sessions = build_heartbeat_sessions(agent)
 
     # OTel auto-instrumentation. Reads OTEL_* env vars set by the
     # Docker provider when Platform.telemetry is enabled. No-op when
