@@ -22,6 +22,8 @@ class CapturingRuntime(ChannelRuntime):
     async def post_reply(self, e, r, reply):
         self.handled.append((e.scope_id, r, reply.text))
 
+    async def deliver_message(self, *args, **kwargs): pass
+
 
 def test_test_endpoint_dispatches(monkeypatch):
     rt = CapturingRuntime(

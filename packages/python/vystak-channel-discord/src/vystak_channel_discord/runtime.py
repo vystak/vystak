@@ -298,6 +298,9 @@ class DiscordChannelRuntime(ChannelRuntime):
         for chunk in _chunk(text, MAX_DISCORD_MESSAGE_CHARS):
             await msg.channel.send(chunk)
 
+    async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
+        """Deliver an outbound message to a thread. Overridden in Task 14."""
+
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
         from vystak_channel_discord.threads import (
             is_forum_channel,

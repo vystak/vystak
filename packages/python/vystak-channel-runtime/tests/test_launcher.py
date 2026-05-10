@@ -15,6 +15,7 @@ class _Trivial(ChannelRuntime):
         user_id="U", text="hi", is_dm=False, mentions_bot=True,
     )
     async def post_reply(self, e, r, reply): pass
+    async def deliver_message(self, *args, **kwargs): pass
 
 
 def test_build_runtime_with_no_state_returns_memory_store():

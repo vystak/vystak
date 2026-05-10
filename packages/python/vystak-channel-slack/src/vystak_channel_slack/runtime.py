@@ -333,6 +333,9 @@ class SlackChannelRuntime(ChannelRuntime):
             kwargs["thread_ts"] = post_thread_ts
         await say(**kwargs)
 
+    async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
+        """Deliver an outbound message to a thread. Overridden in Task 14."""
+
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
         thread_ts = event.metadata.get("thread_ts")
         channel_id = event.metadata.get("channel_id")

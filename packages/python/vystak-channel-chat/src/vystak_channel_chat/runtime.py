@@ -75,6 +75,9 @@ class ChatChannelRuntime(ChannelRuntime):
         rid = event.metadata["request_id"]
         self._pending_reply[rid] = reply
 
+    async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
+        """Deliver an outbound message to a thread. Overridden in Task 14."""
+
     async def start(self) -> None:
         self._app = build_app(self)
         port = int(self.config.get("port", 8080))

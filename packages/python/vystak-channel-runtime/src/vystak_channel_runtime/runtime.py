@@ -102,6 +102,43 @@ class ChannelRuntime(ABC):
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None: ...
 
+    @abstractmethod
+    async def deliver_message(
+        self, thread_id: str, text: str, metadata: dict
+    ) -> None: ...
+
+    # --- Delivery receiver (subclass may override) -------------------------
+
+    def _start_delivery_receiver(self) -> None:
+        """No-op lifecycle hook. Concrete channels override in Task 14."""
+        return None
+
+    def _stop_delivery_receiver(self) -> None:
+        """No-op lifecycle hook. Concrete channels override in Task 14."""
+        return None
+
+    async def _on_inbound_delivery(self, body: dict) -> None:
+        """Validate an inbound delivery payload and dispatch to deliver_message.
+
+        Invalid bodies are logged and dropped. Exceptions from the subclass
+        deliver_message implementation are caught and logged (not propagated).
+        """
+        from vystak_channel_runtime.delivery import DeliveryRequest
+
+        try:
+            req = DeliveryRequest.model_validate(body)
+        except Exception:
+            logger.warning(
+                "delivery: invalid body dropped: %r", body,
+            )
+            return
+        try:
+            await self.deliver_message(req.thread_id, req.text, req.metadata)
+        except Exception:
+            logger.exception(
+                "delivery: deliver_message raised, swallowing exception",
+            )
+
     # --- Pipeline hooks (subclass may override; defaults below) -----------
 
     async def channel_binding_thread_id(self, event: InboundEvent) -> str | None:

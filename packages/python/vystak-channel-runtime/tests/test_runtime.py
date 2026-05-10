@@ -47,6 +47,9 @@ class TrivialRuntime(ChannelRuntime):
     async def post_reply(self, event, route, reply):
         self.posted.append((event, route, reply))
 
+    async def deliver_message(self, *args, **kwargs):
+        pass
+
 
 def _config(**overrides):
     base = {
