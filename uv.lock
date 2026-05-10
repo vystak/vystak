@@ -18,6 +18,7 @@ members = [
     "vystak-channel-slack",
     "vystak-chat",
     "vystak-cli",
+    "vystak-heartbeat",
     "vystak-provider-azure",
     "vystak-provider-docker",
     "vystak-template-langchain-python",
@@ -3188,6 +3189,36 @@ requires-dist = [
 ]
 
 [[package]]
+name = "vystak-heartbeat"
+source = { editable = "packages/python/vystak-heartbeat" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "croniter" },
+    { name = "httpx" },
+    { name = "nats-py" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-sdk" },
+    { name = "pydantic" },
+    { name = "vystak" },
+    { name = "vystak-channel-runtime" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "croniter", specifier = ">=2.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "nats-py", specifier = ">=2.6" },
+    { name = "opentelemetry-api", specifier = ">=1.27" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.27" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
+]
+
+[[package]]
 name = "vystak-provider-azure"
 source = { editable = "packages/python/vystak-provider-azure" }
 dependencies = [
@@ -3375,6 +3406,7 @@ dev = [
     { name = "vystak-channel-slack" },
     { name = "vystak-chat" },
     { name = "vystak-cli" },
+    { name = "vystak-heartbeat" },
     { name = "vystak-provider-azure" },
     { name = "vystak-provider-docker" },
     { name = "vystak-template-langchain-python" },
@@ -3405,6 +3437,7 @@ dev = [
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
     { name = "vystak-chat", editable = "packages/python/vystak-chat" },
     { name = "vystak-cli", editable = "packages/python/vystak-cli" },
+    { name = "vystak-heartbeat", editable = "packages/python/vystak-heartbeat" },
     { name = "vystak-provider-azure", editable = "packages/python/vystak-provider-azure" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
     { name = "vystak-template-langchain-python", editable = "packages/python/vystak-template-langchain-python" },
