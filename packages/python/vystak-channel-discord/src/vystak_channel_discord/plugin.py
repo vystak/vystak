@@ -95,8 +95,15 @@ class DiscordChannelPlugin(ChannelPlugin):
             "port": int(channel.config.get("port", 8080)),
             "application_id": channel.config.get("application_id"),
             "state": state_cfg,
+            "canonical_name": channel.canonical_name,
             "channel_package_version": channel.channel_package_version,
             "channel_runtime_version": channel.channel_runtime_version,
+            "delivery_port": int(channel.config.get("delivery_port", 9999)),
+            "transport_type": (
+                channel.platform.transport.type
+                if channel.platform and getattr(channel.platform, "transport", None)
+                else "http"
+            ),
         }
 
         return GeneratedCode(

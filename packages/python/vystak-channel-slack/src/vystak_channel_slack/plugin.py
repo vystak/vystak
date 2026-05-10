@@ -112,8 +112,15 @@ class SlackChannelPlugin(ChannelPlugin):
             },
             "stream_tool_calls": bool(channel.config.get("stream_tool_calls", False)),
             "state": state_cfg,
+            "canonical_name": channel.canonical_name,
             "channel_package_version": channel.channel_package_version,
             "channel_runtime_version": channel.channel_runtime_version,
+            "delivery_port": int(channel.config.get("delivery_port", 9999)),
+            "transport_type": (
+                channel.platform.transport.type
+                if channel.platform and getattr(channel.platform, "transport", None)
+                else "http"
+            ),
         }
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list[Provisionable]:

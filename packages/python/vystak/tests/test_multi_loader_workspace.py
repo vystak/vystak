@@ -17,7 +17,7 @@ BASE_CONFIG = {
         {
             "name": "assistant",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "platform": "local",
         }
     ],
@@ -61,7 +61,7 @@ def test_workspace_secrets_on_docker_without_vault_loads():
             {
                 "name": "assistant",
                 "framework": "langchain-python",
-                "model": "sonnet",
+                "default_model": "sonnet",
                 "platform": "docker",
                 "secrets": [{"name": "ANTHROPIC_API_KEY"}],
                 "workspace": {

@@ -19,7 +19,7 @@ def _make_openai_provider() -> Provider:
 
 def _make_agent(name: str = "my-agent") -> Agent:
     model = Model(name="gpt-4o", model_name="gpt-4o", provider=_make_openai_provider())
-    return Agent(name=name, framework="langchain-python", model=model)
+    return Agent(name=name, framework="langchain-python", default_model=model)
 
 
 def test_type():

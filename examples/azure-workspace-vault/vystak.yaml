@@ -28,7 +28,7 @@ agents:
   - name: assistant
     framework: langchain-python
     instructions: Use the charge_card tool to collect Stripe payments.
-    model: sonnet
+    default_model: sonnet
     secrets:
       - name: ANTHROPIC_API_KEY
         framework: langchain-python

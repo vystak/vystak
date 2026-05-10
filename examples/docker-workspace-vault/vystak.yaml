@@ -21,7 +21,7 @@ agents:
   - name: assistant
     framework: langchain-python
     instructions: Use charge_card for Stripe charges.
-    model: sonnet
+    default_model: sonnet
     secrets:
       - name: ANTHROPIC_API_KEY
         framework: langchain-python

@@ -10,7 +10,7 @@ def _agent(model_provider="anthropic"):
     return Agent(
         name="test",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name=model_provider, type=model_provider, api_key="test-key"),
             model_name="claude-sonnet-4-6",
@@ -19,7 +19,7 @@ def _agent(model_provider="anthropic"):
 
 
 def test_build_model_returns_chat_anthropic_for_anthropic_provider():
-    model = build_model(_agent("anthropic"))
+    model = build_model(_agent("anthropic").default_model)
     assert model.__class__.__name__ == "ChatAnthropic"
 
 
@@ -28,7 +28,7 @@ def test_build_model_returns_chat_openai_for_openai_provider(monkeypatch):
     # The Provider schema silently drops the test fixture's api_key= kwarg
     # (pydantic ignores extras), so we set OPENAI_API_KEY in the env instead.
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    model = build_model(_agent("openai"))
+    model = build_model(_agent("openai").default_model)
     assert model.__class__.__name__ == "ChatOpenAI"
 
 

@@ -13,18 +13,18 @@ def build_model(agent: Any):
 
     Credentials are read from environment variables (ANTHROPIC_API_KEY,
     OPENAI_API_KEY, etc.) by the LangChain provider classes. Provider config
-    overrides (base_url, api_key) will land via agent.model.parameters in a
+    overrides (base_url, api_key) will land via agent.default_model.parameters in a
     future phase; the schema doesn't carry them today.
     """
     import importlib
 
-    provider_type = agent.model.provider.type
+    provider_type = agent.default_model.provider.type
     if provider_type not in PROVIDER_FACTORIES:
         raise ValueError(f"Unsupported provider: {provider_type}")
     module_name, cls_name = PROVIDER_FACTORIES[provider_type]
     module = importlib.import_module(module_name)
     cls = getattr(module, cls_name)
-    return cls(model=agent.model.model_name)
+    return cls(model=agent.default_model.model_name)
 
 
 def build_graph(agent: Any, *, prompt, tools: list[Any], checkpointer: Any | None):

@@ -52,7 +52,10 @@ def plan(files, file_path):
 
     for agent in defs.agents:
         click.echo(f"Agent: {agent.name}  ({agent.canonical_name})")
-        click.echo(f"  Provider: {agent.model.provider.type} ({agent.model.model_name})")
+        click.echo(
+            f"  Provider: {agent.default_model.provider.type}"
+            f" ({agent.default_model.model_name})"
+        )
         if agent.platform:
             click.echo(f"  Platform: {agent.platform.type} ({agent.platform.provider.type})")
 

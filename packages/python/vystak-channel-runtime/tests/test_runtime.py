@@ -43,6 +43,9 @@ class TrivialRuntime(ChannelRuntime):
     async def post_reply(self, event, route, reply):
         self.posted.append((event, route, reply))
 
+    async def deliver_message(self, *args, **kwargs):
+        pass
+
 
 def _config(**overrides):
     base = {
@@ -463,3 +466,5 @@ def test_default_agent_client_nats_without_url_raises(monkeypatch):
             routes=_routes(),
             store=MemoryChannelStore(),
         )
+
+

@@ -52,7 +52,7 @@ channels:
     platform: aca
 agents:
   - name: smokeagentazure
-    model: sonnet
+    default_model: sonnet
     platform: aca
     secrets:
       - {{name: ANTHROPIC_API_KEY}}

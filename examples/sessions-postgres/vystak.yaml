@@ -5,7 +5,7 @@ instructions: |
   You are a helpful assistant with persistent memory of our conversation.
   If the user has told you something before, remember it.
   Refer back to earlier parts of the conversation when relevant.
-model:
+default_model:
   name: minimax
   provider:
     name: anthropic

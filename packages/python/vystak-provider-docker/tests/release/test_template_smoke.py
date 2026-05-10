@@ -65,7 +65,7 @@ def test_template_scaffold_and_load(tmp_path):
         "name: tpl-agent\n"
         "framework: langchain-python\n"
         "instructions: A test agent.\n"
-        "model:\n"
+        "default_model:\n"
         "  name: m\n"
         "  provider:\n"
         "    name: anthropic\n"

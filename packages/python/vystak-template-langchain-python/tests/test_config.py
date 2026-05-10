@@ -8,7 +8,7 @@ def test_load_yaml(tmp_path):
     f.write_text(
         "name: test\n"
         "framework: langchain-python\n"
-        "model:\n"
+        "default_model:\n"
         "  name: m\n"
         "  provider:\n"
         "    name: anthropic\n"
@@ -26,7 +26,7 @@ def test_load_py_module(tmp_path):
         "from vystak.schema.model import Model\n"
         "from vystak.schema.provider import Provider\n"
         "agent = Agent(name='test', framework='langchain-python', "
-        "model=Model(name='m', "
+        "default_model=Model(name='m', "
         "provider=Provider(name='anthropic', type='anthropic'), "
         "model_name='claude-sonnet-4-6'))\n"
     )

@@ -1,5 +1,6 @@
 """Tests for ChatChannelRuntime."""
 
+import pytest
 from fastapi.testclient import TestClient
 from vystak_channel_chat.runtime import ChatChannelRuntime, build_app
 from vystak_channel_runtime.store import MemoryChannelStore
@@ -47,3 +48,16 @@ def test_chat_completions_returns_assistant_text():
     assert resp.status_code == 200
     body = resp.json()
     assert body["choices"][0]["message"]["content"] == "pong"
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_does_not_raise():
+    """Chat deliver_message is a TODO stub (no push mechanism); must not raise."""
+    rt = ChatChannelRuntime(
+        config=_config(),
+        routes={},
+        store=MemoryChannelStore(),
+        agent_client=_FakeAgent(),
+    )
+    # Must complete without raising even though there is no outbound queue.
+    await rt.deliver_message("thread-123", "hello", {})

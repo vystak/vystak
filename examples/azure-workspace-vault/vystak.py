@@ -49,7 +49,7 @@ workspace = ast.Workspace(
 agent = ast.Agent(
     name="assistant",
     instructions="Use the charge_card tool to collect Stripe payments.",
-    model=model,
+    default_model=model,
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
     workspace=workspace,
     skills=[ast.Skill(name="payments", tools=["charge_card"])],

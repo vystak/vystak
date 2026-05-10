@@ -115,6 +115,29 @@ class TestNoCodegenShape:
         assert cfg["agent_protocol"] == "a2a-turn"
 
 
+class TestDeliveryFields:
+    """channel_config.json includes delivery_port + transport_type (heartbeat v2)."""
+
+    def test_channel_config_includes_delivery_port_and_transport_type(self):
+        out = ChatChannelPlugin().generate_code(_channel(), resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["delivery_port"] == 9999
+        assert cfg["transport_type"] == "http"
+
+    def test_delivery_port_from_channel_config(self):
+        ch = _channel(config={"delivery_port": 10001})
+        out = ChatChannelPlugin().generate_code(ch, resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["delivery_port"] == 10001
+
+    def test_transport_type_defaults_to_http_when_no_transport(self):
+        """Platform has no transport declared → transport_type is 'http'."""
+        ch = _channel()
+        out = ChatChannelPlugin().generate_code(ch, resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["transport_type"] == "http"
+
+
 class TestAutoRegistration:
     def test_plugin_registered_on_import(self):
         from vystak.channels import get_plugin
@@ -129,3 +152,13 @@ class TestAutoRegistration:
         cfg = json.loads(out.files["channel_config.json"])
         assert "channel_package_version" in cfg
         assert "channel_runtime_version" in cfg
+
+    def test_plugin_injects_canonical_name(self):
+        import json
+
+        ch = _channel()
+        out = ChatChannelPlugin().generate_code(ch, resolved_routes={})
+        cfg = json.loads(out.files["channel_config.json"])
+        assert cfg["canonical_name"] == ch.canonical_name
+        # canonical_name is "<channel-name>.channels.<platform-namespace>"
+        assert cfg["canonical_name"] == "chat.channels.default"

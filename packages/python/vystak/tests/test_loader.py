@@ -15,7 +15,7 @@ def sample_agent_dict():
     return {
         "name": "test-bot",
         "framework": "langchain-python",
-        "model": {
+        "default_model": {
             "name": "claude",
             "provider": {"name": "anthropic", "type": "anthropic"},
             "model_name": "claude-sonnet-4-20250514",
@@ -30,7 +30,7 @@ class TestLoadAgent:
         path.write_text(yaml.dump(sample_agent_dict))
         agent = load_agent(path)
         assert agent.name == "test-bot"
-        assert agent.model.model_name == "claude-sonnet-4-20250514"
+        assert agent.default_model.model_name == "claude-sonnet-4-20250514"
         assert len(agent.skills) == 1
 
     def test_load_json(self, tmp_path, sample_agent_dict):
@@ -60,7 +60,7 @@ class TestDumpAgent:
     def test_dump_yaml(self, tmp_path):
         anthropic = Provider(name="anthropic", type="anthropic")
         model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-        agent = Agent(name="test-bot", framework="langchain-python", model=model)
+        agent = Agent(name="test-bot", framework="langchain-python", default_model=model)
         path = tmp_path / "agent.yaml"
         dump_agent(agent, path)
         loaded = yaml.safe_load(path.read_text())
@@ -69,7 +69,7 @@ class TestDumpAgent:
     def test_dump_json(self, tmp_path):
         anthropic = Provider(name="anthropic", type="anthropic")
         model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-        agent = Agent(name="test-bot", framework="langchain-python", model=model)
+        agent = Agent(name="test-bot", framework="langchain-python", default_model=model)
         path = tmp_path / "agent.json"
         dump_agent(agent, path, format="json")
         loaded = json.loads(path.read_text())
@@ -81,7 +81,7 @@ class TestDumpAgent:
         agent = Agent(
             name="test-bot",
             framework="langchain-python",
-            model=model,
+            default_model=model,
             skills=[Skill(name="greeting", tools=["say_hello"])],
         )
         path = tmp_path / "agent.yaml"
@@ -95,7 +95,7 @@ class TestLoadAgentWithServices:
         data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -117,7 +117,7 @@ class TestLoadAgentWithServices:
         data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -136,7 +136,7 @@ class TestLoadAgentWithServices:
         data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -157,7 +157,7 @@ class TestLoadAgentWithServices:
         data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -180,7 +180,7 @@ class TestLoadAgentWithServices:
         data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -206,7 +206,7 @@ class TestLoadAgentWithServices:
         agent = Agent(
             name="bot",
             framework="langchain-python",
-            model=model,
+            default_model=model,
             sessions=Postgres(provider=docker),
         )
         path = tmp_path / "agent.yaml"

@@ -93,9 +93,11 @@ class SlackChannelRuntime(ChannelRuntime):
                 )
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
+        await self._start_delivery_receiver()
         await self._handler.start_async()
 
     async def stop(self) -> None:
+        await self._stop_delivery_receiver()
         if self._handler is not None:
             await self._handler.close_async()
 
@@ -319,6 +321,12 @@ class SlackChannelRuntime(ChannelRuntime):
         if post_thread_ts:
             kwargs["thread_ts"] = post_thread_ts
         await say(**kwargs)
+
+    async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
+        if self._app is None:
+            logger.warning("slack delivery: app not initialized")
+            return
+        await self._app.client.chat_postMessage(channel=thread_id, text=text)
 
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
         thread_ts = event.metadata.get("thread_ts")

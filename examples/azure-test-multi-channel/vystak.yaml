@@ -1,0 +1,98 @@
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: vystak-test-multi-channel-rg
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+# Key Vault — secrets are uploaded from the local .env at apply time and
+# referenced by ACA via keyVaultUrl. The vault container app pulls each
+# secret with managed identity at runtime.
+vault:
+  name: vystak-test-mc-vault
+  provider: azure
+  mode: deploy
+  config:
+    vault_name: vystak-test-mc-vault
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: weather-agent
+    instructions: |
+      You are a weather specialist. Use the get_weather tool to fetch real
+      weather data for the city the user asks about. Answer concisely.
+    default_model: minimax
+    platform: aca
+    skills:
+      - {name: weather, tools: [get_weather]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: time-agent
+    instructions: |
+      You are a time specialist. Use the get_time tool to fetch the current
+      time. The tool accepts a timezone_name (IANA format like
+      "America/Los_Angeles", "Europe/Lisbon", "Asia/Tokyo"); pass it
+      whenever the user mentions a city, country, or timezone abbreviation.
+      If unspecified, default to UTC and mention that. Answer concisely.
+    default_model: minimax
+    platform: aca
+    skills:
+      - {name: time, tools: [get_time]}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: assistant-agent
+    instructions: |
+      You are a friendly general-purpose assistant.
+      When the user asks about weather, call ask_weather_agent.
+      When the user asks about time, call ask_time_agent.
+      If the user asks about BOTH weather and time, call BOTH tools at once.
+      Pass user questions through verbatim and return the agent reply
+      without paraphrasing.
+    default_model: minimax
+    platform: aca
+    subagents: [weather-agent, time-agent]
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: chat-api
+    type: chat
+    platform: aca
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
+
+  - name: slack-main
+    type: slack
+    platform: aca
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent
+
+  - name: discord-main
+    type: discord
+    platform: aca
+    secrets:
+      - {name: DISCORD_BOT_TOKEN}
+    agents: [assistant-agent, weather-agent, time-agent]
+    default_agent: assistant-agent

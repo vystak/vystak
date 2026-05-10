@@ -38,7 +38,7 @@ def _platform(namespace: str = "default") -> Platform:
 
 
 def _agent(name: str, port: int | None = None) -> Agent:
-    return Agent(name=name, framework="langchain-python", model=_MODEL, port=port)
+    return Agent(name=name, framework="langchain-python", default_model=_MODEL, port=port)
 
 
 # ---------------------------------------------------------------------------

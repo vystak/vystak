@@ -25,7 +25,7 @@ import vystak as ast
 
 anthropic = ast.Provider(name="anthropic", type="anthropic")
 model = ast.Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-agent = ast.Agent(name="support-bot", model=model)
+agent = ast.Agent(name="support-bot", default_model=model)
 ```
 
 See the [main repository](https://github.com/vystak/vystak) for the full CLI, adapters, and providers.

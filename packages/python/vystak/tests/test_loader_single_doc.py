@@ -8,7 +8,7 @@ def test_single_doc_yaml_rejects_subagents(tmp_path):
     yaml_path = tmp_path / "vystak.yaml"
     yaml_path.write_text(yaml.safe_dump({
         "name": "lonely",
-        "model": {
+        "default_model": {
             "name": "m",
             "provider": {"name": "p", "type": "anthropic"},
             "model_name": "claude-sonnet-4-20250514",

@@ -59,7 +59,7 @@ channels:
     platform: aca
 agents:
   - name: a6agent
-    model: sonnet
+    default_model: sonnet
     platform: aca
     secrets:
       - {{name: ANTHROPIC_API_KEY}}

@@ -36,7 +36,7 @@ agents:
     instructions: |
       You are a weather specialist. When asked about weather, use the
       get_weather tool to fetch real data and answer concisely.
-    model: minimax
+    default_model: minimax
     platform: aca
     skills:
       - {name: weather, tools: [get_weather]}
@@ -59,7 +59,7 @@ agents:
         - "Tokyo" / "Japan" -> "Asia/Tokyo"
       If the user doesn't specify a timezone, default to UTC and mention
       that. Answer concisely.
-    model: minimax
+    default_model: minimax
     platform: aca
     skills:
       - {name: time, tools: [get_time]}
@@ -93,7 +93,7 @@ agents:
         remember" — just call the tool and confirm you saved it.
       - If you don't see the fact in your injected memories, say
         you don't know it yet — never hallucinate a memory.
-    model: minimax
+    default_model: minimax
     platform: aca
     subagents: [weather-agent, time-agent]
     sessions:

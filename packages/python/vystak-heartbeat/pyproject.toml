@@ -1,0 +1,55 @@
+[project]
+name = "vystak-heartbeat"
+dynamic = ["version"]
+description = "Vystak heartbeat service — periodic agent invocation + channel push delivery"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Anatoliy Kolodkin", email = "11351966+akolodkin@users.noreply.github.com" },
+]
+keywords = ["vystak", "heartbeat", "agent", "scheduler"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "vystak>=0.1.0",
+    "vystak-channel-runtime>=0.1.0",
+    "httpx>=0.27",
+    "aiosqlite>=0.20",
+    "pydantic>=2.7",
+    "nats-py>=2.6",
+    "croniter>=2.0",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+]
+
+[project.urls]
+Homepage = "https://vystak.dev"
+Repository = "https://github.com/vystak/vystak"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vystak_heartbeat"]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {root = "../../.."}
+
+[tool.uv.sources]
+vystak = { workspace = true }
+vystak-channel-runtime = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

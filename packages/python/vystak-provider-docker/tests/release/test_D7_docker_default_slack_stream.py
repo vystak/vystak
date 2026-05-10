@@ -56,7 +56,7 @@ channels:
       - {name: SLACK_APP_TOKEN}
 agents:
   - name: d7agent
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

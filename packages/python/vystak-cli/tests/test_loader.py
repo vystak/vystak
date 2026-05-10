@@ -13,7 +13,7 @@ def sample_agent_yaml():
     return {
         "name": "test-bot",
         "framework": "langchain-python",
-        "model": {
+        "default_model": {
             "name": "claude",
             "provider": {"name": "anthropic", "type": "anthropic"},
             "model_name": "claude-sonnet-4-20250514",
@@ -67,7 +67,7 @@ class TestLoadAgentFromFile:
         path.write_text(yaml.dump(sample_agent_yaml))
         agent = load_agent_from_file(path)
         assert agent.name == "test-bot"
-        assert agent.model.model_name == "claude-sonnet-4-20250514"
+        assert agent.default_model.model_name == "claude-sonnet-4-20250514"
 
     def test_load_py(self, tmp_path):
         path = tmp_path / "vystak.py"
@@ -78,7 +78,7 @@ from vystak.schema.provider import Provider
 
 anthropic = Provider(name="anthropic", type="anthropic")
 model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-agent = Agent(name="py-bot", framework="langchain-python", model=model)
+agent = Agent(name="py-bot", framework="langchain-python", default_model=model)
 """)
         agent = load_agent_from_file(path)
         assert agent.name == "py-bot"
@@ -108,8 +108,8 @@ class TestLoadDefinitions:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
             },
             "agents": [
-                {"name": "a", "framework": "langchain-python", "model": "claude"},
-                {"name": "b", "framework": "langchain-python", "model": "claude"},
+                {"name": "a", "framework": "langchain-python", "default_model": "claude"},
+                {"name": "b", "framework": "langchain-python", "default_model": "claude"},
             ],
         }
         path = tmp_path / "vystak.yaml"
@@ -133,7 +133,7 @@ class TestLoadDefinitions:
                 {
                     "name": "bot",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
             ],
@@ -163,8 +163,8 @@ class TestLoadDefinitions:
             "anthropic = Provider(name='anthropic', type='anthropic')\n"
             "model = Model(name='claude', provider=anthropic, "
             "model_name='claude-sonnet-4-20250514')\n"
-            "bot_a = Agent(name='bot-a', framework='langchain-python', model=model)\n"
-            "bot_b = Agent(name='bot-b', framework='langchain-python', model=model)\n"
+            "bot_a = Agent(name='bot-a', framework='langchain-python', default_model=model)\n"
+            "bot_b = Agent(name='bot-b', framework='langchain-python', default_model=model)\n"
         )
         defs = load_definitions([path])
         assert len(defs.agents) == 2
@@ -186,7 +186,7 @@ class TestLoadDefinitions:
             "model = Model(name='claude', provider=anthropic, "
             "model_name='claude-sonnet-4-20250514')\n"
             "bot = Agent(name='bot', framework='langchain-python', "
-            "model=model, platform=platform)\n"
+            "default_model=model, platform=platform)\n"
             "api = Channel(name='api', type=ChannelType.API, platform=platform)\n"
         )
         defs = load_definitions([path])
@@ -199,7 +199,7 @@ class TestLoadDefinitions:
             data = {
                 "name": f"bot-{name}",
                 "framework": "langchain-python",
-                "model": {
+                "default_model": {
                     "name": "claude",
                     "provider": {"name": "anthropic", "type": "anthropic"},
                     "model_name": "claude-sonnet-4-20250514",
@@ -215,7 +215,7 @@ class TestLoadDefinitions:
         data = {
             "name": "weather-bot",
             "framework": "langchain-python",
-            "model": {
+            "default_model": {
                 "name": "claude",
                 "provider": {"name": "anthropic", "type": "anthropic"},
                 "model_name": "claude-sonnet-4-20250514",
@@ -244,7 +244,7 @@ class TestLoadDefinitions:
         agent_data = {
             "name": "bot",
             "framework": "langchain-python",
-            "model": "claude",
+            "default_model": "claude",
             "platform": "aca",
         }
         (subdir / "vystak.yaml").write_text(yaml.dump(agent_data))

@@ -49,7 +49,7 @@ weather_agent = ast.Agent(
         "You are a weather specialist. Use get_weather for real data. "
         "Answer concisely with current conditions only."
     ),
-    model=sonnet,
+    default_model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=["get_weather"])],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
@@ -61,7 +61,7 @@ time_agent = ast.Agent(
         "You are a time specialist. Use get_time to report the current "
         "UTC time. Keep replies one sentence."
     ),
-    model=sonnet,
+    default_model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="time", tools=["get_time"])],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],

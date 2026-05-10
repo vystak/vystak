@@ -19,7 +19,7 @@ agents:
     instructions: |
       You are a weather specialist. Use the get_weather tool to fetch real
       weather data for the city the user asks about. Answer concisely.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: weather, tools: [get_weather]}
@@ -32,7 +32,7 @@ agents:
     instructions: |
       You are a time specialist. Use the get_time tool to fetch the current
       UTC time. Answer concisely.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: time, tools: [get_time]}
@@ -49,7 +49,7 @@ agents:
       If the user asks about BOTH weather and time, call BOTH tools at once.
       Pass user questions through verbatim and return the agent reply
       without paraphrasing.
-    model: minimax
+    default_model: minimax
     platform: local
     subagents: [weather-agent, time-agent]
     secrets:

@@ -18,6 +18,7 @@ members = [
     "vystak-channel-slack",
     "vystak-chat",
     "vystak-cli",
+    "vystak-heartbeat",
     "vystak-provider-azure",
     "vystak-provider-docker",
     "vystak-template-langchain-python",
@@ -749,6 +750,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
+]
+
+[[package]]
+name = "croniter"
+version = "6.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/de/5832661ed55107b8a09af3f0a2e71e0957226a59eb1dcf0a445cce6daf20/croniter-6.2.2.tar.gz", hash = "sha256:ba60832a5ec8e12e51b8691c3309a113d1cf6526bdf1a48150ce8ec7a532d0ab", size = 113762, upload-time = "2026-03-15T08:43:48.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/39/783980e78cb92c2d7bdb1fc7dbc86e94ccc6d58224d76a7f1f51b6c51e30/croniter-6.2.2-py3-none-any.whl", hash = "sha256:a5d17b1060974d36251ea4faf388233eca8acf0d09cbd92d35f4c4ac8f279960", size = 45422, upload-time = "2026-03-15T08:43:46.626Z" },
 ]
 
 [[package]]
@@ -2458,6 +2471,18 @@ wheels = [
 ]
 
 [[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
 name = "pywin32"
 version = "311"
 source = { registry = "https://pypi.org/simple" }
@@ -2737,6 +2762,15 @@ wheels = [
 ]
 
 [[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
 name = "slack-bolt"
 version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2986,6 +3020,7 @@ name = "vystak"
 source = { editable = "packages/python/vystak" }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "croniter" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -2993,6 +3028,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "croniter", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
@@ -3053,6 +3089,7 @@ source = { editable = "packages/python/vystak-channel-runtime" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "asyncpg" },
+    { name = "croniter" },
     { name = "httpx" },
     { name = "nats-py" },
     { name = "opentelemetry-api" },
@@ -3073,6 +3110,7 @@ test-endpoint = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "asyncpg", specifier = ">=0.29" },
+    { name = "croniter", specifier = ">=2.0" },
     { name = "fastapi", marker = "extra == 'test-endpoint'", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "nats-py", specifier = ">=2.6" },
@@ -3148,6 +3186,36 @@ requires-dist = [
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
+]
+
+[[package]]
+name = "vystak-heartbeat"
+source = { editable = "packages/python/vystak-heartbeat" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "croniter" },
+    { name = "httpx" },
+    { name = "nats-py" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-sdk" },
+    { name = "pydantic" },
+    { name = "vystak" },
+    { name = "vystak-channel-runtime" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "croniter", specifier = ">=2.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "nats-py", specifier = ">=2.6" },
+    { name = "opentelemetry-api", specifier = ">=1.27" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.27" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
 ]
 
 [[package]]
@@ -3338,6 +3406,7 @@ dev = [
     { name = "vystak-channel-slack" },
     { name = "vystak-chat" },
     { name = "vystak-cli" },
+    { name = "vystak-heartbeat" },
     { name = "vystak-provider-azure" },
     { name = "vystak-provider-docker" },
     { name = "vystak-template-langchain-python" },
@@ -3368,6 +3437,7 @@ dev = [
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
     { name = "vystak-chat", editable = "packages/python/vystak-chat" },
     { name = "vystak-cli", editable = "packages/python/vystak-cli" },
+    { name = "vystak-heartbeat", editable = "packages/python/vystak-heartbeat" },
     { name = "vystak-provider-azure", editable = "packages/python/vystak-provider-azure" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
     { name = "vystak-template-langchain-python", editable = "packages/python/vystak-template-langchain-python" },

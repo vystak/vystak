@@ -19,7 +19,7 @@ agents:
     instructions: |
       You are a weather specialist. When asked about weather, use the
       get_weather tool to fetch real data and answer concisely.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: weather, tools: [get_weather]}
@@ -32,7 +32,7 @@ agents:
     instructions: |
       You are a time specialist. Use the get_time tool to fetch the
       current UTC time. Answer concisely.
-    model: minimax
+    default_model: minimax
     platform: local
     skills:
       - {name: time, tools: [get_time]}
@@ -70,7 +70,7 @@ agents:
         it yet — never hallucinate a memory.
       - When the user asks you to forget something, call forget_memory
         with the corresponding memory_id from the recalled list.
-    model: minimax
+    default_model: minimax
     platform: local
     subagents: [weather-agent, time-agent]
     sessions:

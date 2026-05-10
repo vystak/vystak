@@ -98,6 +98,98 @@ class ChannelRuntime(ABC):
         self, event: InboundEvent, route: str, reply: AgentReply
     ) -> None: ...
 
+    @abstractmethod
+    async def deliver_message(
+        self, thread_id: str, text: str, metadata: dict
+    ) -> None: ...
+
+    # --- Delivery receiver (subclass may override) -------------------------
+
+    async def _start_delivery_receiver(self) -> None:
+        """Mount HTTP /deliver or NATS subscription based on
+        config['transport_type']. Default: HTTP.
+
+        Concrete channels override _start_http_delivery_receiver if they
+        already have a FastAPI app to mount the route on (e.g. chat).
+        """
+        transport_type = self.config.get("transport_type", "http")
+        if transport_type == "http":
+            await self._start_http_delivery_receiver()
+        elif transport_type == "nats":
+            await self._start_nats_delivery_receiver()
+
+    async def _stop_delivery_receiver(self) -> None:
+        srv = getattr(self, "_delivery_server", None)
+        if srv is not None:
+            srv.should_exit = True
+        sub = getattr(self, "_delivery_sub", None)
+        if sub is not None:
+            await sub.unsubscribe()
+
+    async def _start_http_delivery_receiver(self) -> None:
+        """Default HTTP receiver — sidecar uvicorn on `delivery_port`."""
+        import asyncio as _asyncio
+
+        import uvicorn
+        from fastapi import FastAPI
+
+        port = int(self.config.get("delivery_port", 9999))
+        app = FastAPI()
+
+        @app.post("/deliver")
+        async def _deliver(payload: dict):
+            await self._on_inbound_delivery(payload)
+            return {"ok": True}
+
+        cfg = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+        self._delivery_server = uvicorn.Server(cfg)
+        self._delivery_task = _asyncio.create_task(
+            self._delivery_server.serve(),
+            name=f"delivery-{self.config.get('canonical_name', '?')}",
+        )
+
+    async def _start_nats_delivery_receiver(self) -> None:
+        import json as _json
+
+        import nats
+
+        url = self.config.get("nats_url") or os.environ.get("VYSTAK_NATS_URL")
+        if not url:
+            raise RuntimeError("nats transport requested but no nats_url configured")
+        self._delivery_nc = await nats.connect(url)
+        canonical = self.config.get("canonical_name", "")
+        subject = f"vystak.channel.{canonical}.deliver"
+
+        async def _cb(msg):
+            try:
+                await self._on_inbound_delivery(_json.loads(msg.data.decode()))
+            except Exception:
+                logger.exception("delivery message handler failed")
+
+        self._delivery_sub = await self._delivery_nc.subscribe(subject, cb=_cb)
+
+    async def _on_inbound_delivery(self, body: dict) -> None:
+        """Validate an inbound delivery payload and dispatch to deliver_message.
+
+        Invalid bodies are logged and dropped. Exceptions from the subclass
+        deliver_message implementation are caught and logged (not propagated).
+        """
+        from vystak_channel_runtime.delivery import DeliveryRequest
+
+        try:
+            req = DeliveryRequest.model_validate(body)
+        except Exception:
+            logger.warning(
+                "delivery: invalid body dropped: %r", body,
+            )
+            return
+        try:
+            await self.deliver_message(req.thread_id, req.text, req.metadata)
+        except Exception:
+            logger.exception(
+                "delivery: deliver_message raised, swallowing exception",
+            )
+
     # --- Pipeline hooks (subclass may override; defaults below) -----------
 
     async def channel_binding_thread_id(self, event: InboundEvent) -> str | None:
@@ -283,17 +375,15 @@ class ChannelRuntime(ABC):
             finish_reason=finish_reason,
         )
 
-    async def handle_event(self, raw_event: Any) -> None:
-        try:
-            event = self.parse_event(raw_event)
-        except SkipEvent:
-            return
-        if not await self.authorize(event):
-            return
+    async def _call_route_for_event(
+        self, event: InboundEvent,
+    ) -> tuple[str | None, AgentReply | None]:
+        """Resolve route, call agent. Returns (route, reply). Either may
+        be None on no-route or agent-error."""
         route = await self.resolve_route(event)
         if route is None:
             await self.on_no_route(event)
-            return
+            return None, None
         history = await self.fetch_history(event)
         await self.before_call(event, route)
         try:
@@ -303,6 +393,19 @@ class ChannelRuntime(ABC):
                 reply = await self.call_agent(event, route, history)
         except AgentCallError as exc:
             await self.on_agent_error(event, route, exc)
+            return route, None
+        return route, reply
+
+    async def handle_event(self, raw_event: Any) -> None:
+        try:
+            event = self.parse_event(raw_event)
+        except SkipEvent:
+            return
+        if not await self.authorize(event):
+            return
+        route, reply = await self._call_route_for_event(event)
+        if route is None or reply is None:
             return
         await self.post_reply(event, route, reply)
         await self.after_reply(event, route, reply)
+

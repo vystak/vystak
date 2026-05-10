@@ -12,6 +12,7 @@ class _TrivSlack(ChannelRuntime):
     async def stop(self): pass
     def parse_event(self, raw): raise NotImplementedError
     async def post_reply(self, e, r, reply): pass
+    async def deliver_message(self, *args, **kwargs): pass
 
 
 def _ev(scope_id="T1", thread_id=None, user_id="U", is_dm=False):

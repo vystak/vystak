@@ -25,6 +25,39 @@ def _validate_vault_provider_pairing(vault: Vault) -> None:
         )
 
 
+def _validate_heartbeat_targets(
+    agents: list[Agent], channels: list[Channel],
+) -> None:
+    """Cross-deployable check: every agent.heartbeat.target_channel must
+    name a real channel that routes this agent."""
+    channels_by_canonical = {c.canonical_name: c for c in channels}
+    for agent in agents:
+        if agent.heartbeat is None:
+            continue
+        target = agent.heartbeat.target_channel
+        channel = channels_by_canonical.get(target)
+        if channel is None:
+            raise ValueError(
+                f"agent '{agent.name}' heartbeat.target_channel "
+                f"'{target}' does not match any declared channel "
+                f"(have: {sorted(channels_by_canonical)})"
+            )
+        routed = {a.name for a in channel.agents}
+        if agent.name not in routed:
+            raise ValueError(
+                f"channel '{target}' does not route agent '{agent.name}' "
+                f"named in its heartbeat.target_channel"
+            )
+        if agent.heartbeat.model is not None:
+            pool = {agent.default_model.name, *(m.name for m in agent.models)}
+            if agent.heartbeat.model not in pool:
+                raise ValueError(
+                    f"agent '{agent.name}' heartbeat.model "
+                    f"'{agent.heartbeat.model}' not in agent's model pool "
+                    f"(have: {sorted(pool)})"
+                )
+
+
 def _lookup_agent(by_name: dict, name: str, field: str, ctx: str) -> object:
     if name not in by_name:
         raise KeyError(
@@ -154,14 +187,14 @@ def load_multi_yaml(
     for agent_data in data.get("agents", []):
         agent_data = dict(agent_data)
 
-        model_ref = agent_data.get("model")
+        model_ref = agent_data.get("default_model")
         if isinstance(model_ref, str):
             if model_ref not in models:
                 raise KeyError(
                     f"Unknown model '{model_ref}' in agent '{agent_data.get('name')}'. "
                     f"Defined models: {', '.join(models.keys())}"
                 )
-            agent_data["model"] = models[model_ref]
+            agent_data["default_model"] = models[model_ref]
 
         platform_ref = agent_data.get("platform")
         if isinstance(platform_ref, str):
@@ -172,6 +205,21 @@ def load_multi_yaml(
                     f"Defined platforms: {', '.join(platforms.keys())}"
                 )
             agent_data["platform"] = platforms[platform_ref]
+
+        if "models" in agent_data and isinstance(agent_data["models"], list):
+            resolved_models = []
+            for model_ref in agent_data["models"]:
+                if isinstance(model_ref, str):
+                    if model_ref not in models:
+                        raise KeyError(
+                            f"Unknown model '{model_ref}' in agent "
+                            f"'{agent_data.get('name')}' models pool. "
+                            f"Defined models: {', '.join(models.keys())}"
+                        )
+                    resolved_models.append(models[model_ref])
+                else:
+                    resolved_models.append(model_ref)
+            agent_data["models"] = resolved_models
 
         # Stash subagents for phase 2, build agent without them so model_validate works.
         if "subagents" in agent_data:
@@ -209,5 +257,7 @@ def load_multi_yaml(
 
         channel_data = _resolve_channel_agent_refs(channel_data, agents_by_name)
         channels.append(Channel.model_validate(channel_data))
+
+    _validate_heartbeat_targets(agents, channels)
 
     return agents, channels, vault

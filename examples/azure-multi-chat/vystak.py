@@ -56,7 +56,7 @@ weather_agent = ast.Agent(
         "You are a weather specialist. Use get_weather for real data. "
         "Answer concisely with current conditions only."
     ),
-    model=llm,
+    default_model=llm,
     platform=platform,
     skills=[ast.Skill(name="weather", tools=["get_weather"])],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
@@ -68,7 +68,7 @@ time_agent = ast.Agent(
         "You are a time specialist. Use get_time to report the current "
         "UTC time. Keep replies one sentence."
     ),
-    model=llm,
+    default_model=llm,
     platform=platform,
     skills=[ast.Skill(name="time", tools=["get_time"])],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
@@ -92,7 +92,7 @@ assistant_agent = ast.Agent(
         "asks a combined question (e.g. 'what is the weather and time'). "
         "Synthesize the answers into a concise single reply."
     ),
-    model=llm,
+    default_model=llm,
     platform=platform,
     skills=[
         ast.Skill(name="coordinator", tools=["ask_weather_agent", "ask_time_agent"]),

@@ -45,7 +45,7 @@ models:
     model_name: claude-sonnet-4-20250514
 agents:
   - name: {AGENT_NAME}
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets: [{{name: ANTHROPIC_API_KEY}}]
     skills:

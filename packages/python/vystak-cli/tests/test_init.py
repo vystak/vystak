@@ -22,7 +22,7 @@ class TestInit:
             data = yaml.safe_load(content)
             agent = Agent.model_validate(data)
             assert agent.name == "example-agent"
-            assert agent.model.provider.type == "anthropic"
+            assert agent.default_model.provider.type == "anthropic"
             assert agent.framework == "langchain-python"
 
     def test_no_overwrite(self, tmp_path):

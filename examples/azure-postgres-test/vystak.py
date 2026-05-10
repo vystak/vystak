@@ -18,7 +18,7 @@ db = ast.Postgres(name="test-db", provider=azure)
 agent = ast.Agent(
     name="pg-test-agent",
     instructions="You are a helpful assistant. Remember what the user tells you across messages.",
-    model=model,
+    default_model=model,
     platform=platform,
     sessions=db,
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],

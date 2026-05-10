@@ -35,7 +35,7 @@ def sample_agent():
     return Agent(
         name="test-bot",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="claude",
             provider=Provider(name="anthropic", type="anthropic"),
             model_name="claude-sonnet-4-20250514",
@@ -209,7 +209,7 @@ class TestApply:
         agent = Agent(
             name="nats-bot",
             framework="langchain-python",
-            model=Model(
+            default_model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
                 model_name="claude-sonnet-4-20250514",
@@ -281,7 +281,7 @@ class TestApply:
         agent = Agent(
             name="otel-bot",
             framework="langchain-python",
-            model=Model(
+            default_model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
                 model_name="claude-sonnet-4-20250514",
@@ -347,7 +347,7 @@ class TestApply:
         agent = Agent(
             name="otel-bot",
             framework="langchain-python",
-            model=Model(
+            default_model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
                 model_name="claude-sonnet-4-20250514",
@@ -405,7 +405,7 @@ class TestApply:
         agent = Agent(
             name="otel-bot",
             framework="langchain-python",
-            model=Model(
+            default_model=Model(
                 name="claude",
                 provider=Provider(name="anthropic", type="anthropic"),
                 model_name="claude-sonnet-4-20250514",
@@ -724,7 +724,7 @@ def test_agent_node_default_path_env_and_ssh_mount(tmp_path, monkeypatch):
     agent = Agent(
         name="assistant",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
         ),
         secrets=[Secret(name="ANTHROPIC_API_KEY")],
@@ -800,7 +800,7 @@ def test_apply_graph_default_path_no_vault_nodes(tmp_path, monkeypatch):
     agent = Agent(
         name="assistant",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="sonnet", provider=anthropic, model_name="claude-sonnet-4-6"
         ),
         platform=Platform(name="docker", type="docker", provider=docker_p),

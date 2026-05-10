@@ -59,7 +59,7 @@ sonnet = ast.Model(
     name="{AGENT_NAME}",
     framework="langchain-python",
     instructions="You answer concisely.",
-    model=sonnet,
+    default_model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="noop", tools=[])],
 )

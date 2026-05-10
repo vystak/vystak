@@ -4,7 +4,7 @@ framework: langchain-python
 instructions: |
   You are a minimal agent. You have no tools and no memory.
   Just chat and be helpful.
-model:
+default_model:
   name: minimax
   provider:
     name: anthropic

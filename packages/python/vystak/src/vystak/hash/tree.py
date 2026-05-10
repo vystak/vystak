@@ -30,6 +30,8 @@ class AgentHashTree:
     grants: str
     # Compaction policy
     compaction: str
+    # Heartbeat scheduler config (schedule, target_channel, prompt, enabled, etc.)
+    heartbeat: str
     # Template digest. Captures the framework template's identity
     # (``_vystak/manifest.json`` ``template.{name, version}``) so a template
     # version bump triggers redeploy even when the Agent schema hasn't moved.
@@ -207,7 +209,13 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
     the project's ``_vystak/manifest.json``. Defaults to the canonical
     "null" hash when no manifest is in hand.
     """
-    brain = hash_model(agent.model)
+    # Sort by hash (consistent with _hash_list) so any reordering of
+    # `agent.models` produces the same brain hash.
+    brain_default = hash_model(agent.default_model)
+    brain_models = sorted(hash_model(m) for m in agent.models)
+    brain = hashlib.sha256(
+        "|".join([brain_default, *brain_models]).encode()
+    ).hexdigest()
     framework = _hash_str(agent.framework)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
@@ -227,6 +235,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
     )
     grants = compute_grants_hash(agent)
     compaction = _hash_optional(agent.compaction)
+    heartbeat = _hash_optional(agent.heartbeat)
     template = template_hash if template_hash is not None else _hash_str(None)
 
     sections = "|".join(
@@ -246,6 +255,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
             workspace_identity,
             grants,
             compaction,
+            heartbeat,
             template,
         ]
     )
@@ -266,6 +276,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
         workspace_identity=workspace_identity,
         grants=grants,
         compaction=compaction,
+        heartbeat=heartbeat,
         template=template,
         root=root,
     )

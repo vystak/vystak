@@ -16,6 +16,7 @@ pyyaml>=6.0
 aiosqlite>=0.20
 asyncpg>=0.29
 nats-py>=2.6
+croniter>=2.0
 psycopg[binary]>=3.0
 opentelemetry-api>=1.27
 opentelemetry-sdk>=1.27
@@ -33,5 +34,6 @@ RUN mkdir -p /etc/vystak
 COPY . .
 RUN cp channel_config.json routes.json /etc/vystak/ 2>/dev/null || true
 ENV VYSTAK_CONFIG_DIR=/etc/vystak PYTHONPATH=/app
+EXPOSE 9999
 CMD ["python", "-m", "vystak_channel_discord"]
 """

@@ -1,0 +1,42 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  claude:
+    provider: anthropic
+    model_name: claude-sonnet-4-6
+    parameters: {temperature: 0.3}
+
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    instructions: |
+      You are an ops assistant. On every heartbeat, scan the workspace's
+      HEARTBEAT.md checklist and surface anything that needs attention.
+      If nothing is wrong, reply with HEARTBEAT_OK and nothing else.
+    default_model: claude
+    platform: local
+    skills:
+      - {name: ops, tools: []}
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    heartbeat:
+      schedule: "*/30 9-18 * * 1-5"
+      timezone: America/New_York
+      target_channel: chat-main.channels.dev
+      target_thread: standup-room
+      isolated_session: true
+      skip_when_busy: true
+      ack_max_chars: 300
+
+channels:
+  - name: chat-main
+    type: chat
+    platform: local
+    config: {port: 8080}
+    agents: [ops-bot]
+    default_agent: ops-bot

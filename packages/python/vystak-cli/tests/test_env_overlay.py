@@ -19,7 +19,7 @@ _VYSTAK_PY = """\
     agent = Agent(
         name="a",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m",
             provider=Provider(name="p", type="anthropic", api_key_env="K"),
             model_name="claude-sonnet-4-20250514",

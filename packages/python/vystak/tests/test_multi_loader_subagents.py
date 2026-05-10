@@ -14,19 +14,19 @@ BASE = {
         {
             "name": "weather-agent",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "platform": "local",
         },
         {
             "name": "time-agent",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "platform": "local",
         },
         {
             "name": "assistant-agent",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "platform": "local",
             "subagents": ["weather-agent", "time-agent"],
         },

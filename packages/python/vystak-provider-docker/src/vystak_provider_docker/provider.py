@@ -1191,6 +1191,88 @@ class DockerProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
+    def apply_heartbeat(
+        self,
+        agents_with_heartbeat: list[Agent],
+        channels: list[Channel],
+        *,
+        platform=None,
+    ) -> None:
+        """Auto-provision the vystak-heartbeat container.
+
+        Called once after all agents and channels are deployed.  Only
+        executes when at least one agent carries a ``heartbeat``
+        declaration — callers must pre-filter ``agents_with_heartbeat``
+        before calling this method (the method also double-checks and
+        returns early when the list is empty).
+
+        The container depends on every agent + channel already being
+        up on ``vystak-net``, which is guaranteed by provisioning them
+        first in the CLI orchestration loop.
+        """
+        if not agents_with_heartbeat:
+            return
+
+        from vystak.provisioning import ProvisionGraph
+        from vystak_heartbeat.plugin import generate_code as hb_generate
+
+        from vystak_provider_docker.nodes import (
+            DockerHeartbeatNode,
+            DockerNetworkNode,
+            OtelLgtmNode,
+        )
+
+        transport_cfg: dict = {"type": "http"}
+        if platform and getattr(platform, "transport", None):
+            t = platform.transport
+            if t.type == "nats":
+                transport_cfg = {
+                    "type": "nats",
+                    "url": "nats://vystak-nats:4222",
+                }
+
+        code = hb_generate(
+            agents_with_heartbeat=agents_with_heartbeat,
+            agent_addresses={
+                a.canonical_name: f"http://vystak-{a.name}:8000/a2a"
+                for a in agents_with_heartbeat
+            },
+            channel_addresses={
+                c.canonical_name: f"http://vystak-channel-{c.name}:9999"
+                for c in channels
+            },
+            transport_cfg=transport_cfg,
+            session_store_cfg={"type": "sqlite", "path": "/data/heartbeat.db"},
+        )
+
+        extra_env: dict[str, str] = {}
+
+        # Telemetry — same shared OTLP sink as agents/channels.
+        tel = None
+        if platform:
+            tel = getattr(platform, "telemetry", None)
+        if tel is None:
+            for a in agents_with_heartbeat:
+                if a.platform:
+                    tel = getattr(a.platform, "telemetry", None)
+                    if tel:
+                        break
+        if tel and tel.enabled:
+            endpoint = tel.endpoint or f"http://{OtelLgtmNode.CONTAINER_NAME}:4317"
+            extra_env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
+            extra_env["OTEL_TRACES_EXPORTER"] = "otlp"
+            extra_env["OTEL_METRICS_EXPORTER"] = "otlp"
+            extra_env["OTEL_SERVICE_NAME"] = "vystak-heartbeat"
+
+        graph = ProvisionGraph()
+        graph.add(DockerNetworkNode(self._client))
+        graph.add(DockerHeartbeatNode(
+            self._client,
+            code,
+            extra_env=extra_env,
+        ))
+        graph.execute()
+
     def destroy_channel(
         self, channel: Channel, *, delete_channel_data: bool = False
     ) -> None:

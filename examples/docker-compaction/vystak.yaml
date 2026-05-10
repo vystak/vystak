@@ -22,7 +22,7 @@ agents:
       You are a verbose assistant. Always include a fresh 30-50 word
       preamble before answering. The preamble should describe what
       you're about to do, then the answer follows.
-    model: agent_model
+    default_model: agent_model
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

@@ -36,7 +36,7 @@ agent = ast.Agent(
         "You are a coding assistant. Use fs.readFile to read, fs.edit to change, "
         "exec.run to test, git.status / git.diff to review changes."
     ),
-    model=model,
+    default_model=model,
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
     workspace=workspace,
     skills=[

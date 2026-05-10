@@ -51,8 +51,15 @@ class ChatChannelPlugin(ChannelPlugin):
                 channel.state.model_dump(exclude_none=True)
                 if channel.state is not None else None
             ),
+            "canonical_name": channel.canonical_name,
             "channel_package_version": channel.channel_package_version,
             "channel_runtime_version": channel.channel_runtime_version,
+            "delivery_port": int(channel.config.get("delivery_port", 9999)),
+            "transport_type": (
+                channel.platform.transport.type
+                if channel.platform and getattr(channel.platform, "transport", None)
+                else "http"
+            ),
         }
         return GeneratedCode(
             files={

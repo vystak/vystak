@@ -23,7 +23,7 @@ models:
 agents:
   - name: assistant
     framework: langchain-python
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets: [{name: ANTHROPIC_API_KEY}]
 """
@@ -109,7 +109,7 @@ def test_destroy_skips_default_path_cleanup_when_vault_declared(tmp_path, monkey
         "agents:\n"
         "  - name: assistant\n"
         "    framework: langchain-python\n"
-        "    model: sonnet\n"
+        "    default_model: sonnet\n"
         "    platform: local\n"
         "    secrets: [{name: ANTHROPIC_API_KEY}]\n"
     )

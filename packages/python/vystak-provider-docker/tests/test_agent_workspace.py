@@ -17,7 +17,7 @@ def _agent_fixture():
     return Agent(
         name="assistant",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="m", provider=anthropic, model_name="claude-sonnet-4-20250514"
         ),
         platform=platform,

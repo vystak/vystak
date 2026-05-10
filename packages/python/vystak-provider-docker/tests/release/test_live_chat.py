@@ -61,7 +61,7 @@ agents:
       You are a test assistant. When you receive any user message,
       respond with EXACTLY the single word "pong" and nothing else.
       No punctuation, no quotes, no explanation.
-    model: sonnet
+    default_model: sonnet
     platform: local
     secrets:
       - {name: ANTHROPIC_API_KEY}

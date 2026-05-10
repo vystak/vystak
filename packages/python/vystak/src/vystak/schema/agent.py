@@ -6,6 +6,7 @@ from pydantic import model_validator
 
 from vystak.schema.common import NamedModel
 from vystak.schema.compaction import Compaction
+from vystak.schema.heartbeat import Heartbeat
 from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
@@ -25,7 +26,8 @@ class Agent(NamedModel):
 
     framework: str
     instructions: str | None = None
-    model: Model
+    default_model: Model
+    models: list[Model] = []
     skills: list[Skill] = []
     mcp_servers: list[McpServer] = []
     workspace: Workspace | None = None
@@ -47,6 +49,7 @@ class Agent(NamedModel):
     subagents: list["Agent"] = []
 
     compaction: Compaction | None = None
+    heartbeat: Heartbeat | None = None
 
     @property
     def canonical_name(self) -> str:
@@ -75,6 +78,21 @@ class Agent(NamedModel):
                     f"Agent '{self.name}' has duplicate subagent name '{n}'."
                 )
             seen.add(n)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_models_unique(self) -> Self:
+        """Each Model in the agent's pool must have a unique name. This is
+        a hard requirement for Plan Task 3's dispatcher (which keys on
+        Model.name) and prevents ambiguity for Heartbeat.model lookups."""
+        seen: set[str] = {self.default_model.name}
+        for m in self.models:
+            if m.name in seen:
+                raise ValueError(
+                    f"Agent '{self.name}' has duplicate model name '{m.name}' "
+                    f"in default_model + models pool."
+                )
+            seen.add(m.name)
         return self
 
 

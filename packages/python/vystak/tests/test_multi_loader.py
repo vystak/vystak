@@ -20,13 +20,13 @@ class TestLoadMultiYaml:
                 {
                     "name": "bot-a",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
                 {
                     "name": "bot-b",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
             ],
@@ -46,13 +46,13 @@ class TestLoadMultiYaml:
                 {
                     "name": "a",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
                 {
                     "name": "b",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
             ],
@@ -68,12 +68,12 @@ class TestLoadMultiYaml:
                 "claude": {"provider": "anthropic", "model_name": "claude-sonnet-4-20250514"}
             },
             "agents": [
-                {"name": "a", "framework": "langchain-python", "model": "claude"},
-                {"name": "b", "framework": "langchain-python", "model": "claude"},
+                {"name": "a", "framework": "langchain-python", "default_model": "claude"},
+                {"name": "b", "framework": "langchain-python", "default_model": "claude"},
             ],
         }
         agents, _channels, _vault = load_multi_yaml(data)
-        assert agents[0].model is agents[1].model
+        assert agents[0].default_model is agents[1].default_model
 
     def test_unknown_provider_raises(self):
         data = {
@@ -90,7 +90,7 @@ class TestLoadMultiYaml:
             "providers": {"anthropic": {"type": "anthropic"}},
             "platforms": {},
             "models": {},
-            "agents": [{"name": "a", "model": "nonexistent"}],
+            "agents": [{"name": "a", "default_model": "nonexistent"}],
         }
         with pytest.raises(KeyError, match="nonexistent"):
             load_multi_yaml(data)
@@ -109,7 +109,7 @@ class TestLoadMultiYaml:
                 {
                     "name": "bot",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "aca",
                 },
             ],
@@ -126,7 +126,7 @@ class TestLoadMultiYaml:
                 {
                     "name": "bot",
                     "framework": "langchain-python",
-                    "model": {
+                    "default_model": {
                         "name": "claude",
                         "provider": {"name": "anthropic", "type": "anthropic"},
                         "model_name": "claude-sonnet-4-20250514",
@@ -135,7 +135,7 @@ class TestLoadMultiYaml:
             ],
         }
         agents, _channels, _vault = load_multi_yaml(data)
-        assert agents[0].model.model_name == "claude-sonnet-4-20250514"
+        assert agents[0].default_model.model_name == "claude-sonnet-4-20250514"
 
     def test_empty_returns_empty(self):
         data = {"providers": {}, "platforms": {}, "models": {}, "agents": []}
@@ -195,7 +195,7 @@ class TestLoadMultiYamlChannels:
                 {
                     "name": "bot",
                     "framework": "langchain-python",
-                    "model": "claude",
+                    "default_model": "claude",
                     "platform": "local",
                 },
             ],

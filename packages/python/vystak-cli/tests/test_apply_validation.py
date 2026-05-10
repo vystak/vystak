@@ -9,7 +9,7 @@ from vystak_cli.commands.apply import _validate_template_for_apply
 def test_apply_errors_when_vystak_dir_missing(tmp_path):
     (tmp_path / "vystak.yaml").write_text(
         "name: t\nframework: langchain-python\n"
-        "model:\n  name: m\n  provider:\n    name: anthropic\n"
+        "default_model:\n  name: m\n  provider:\n    name: anthropic\n"
         "    type: anthropic\n  model_name: claude-sonnet-4-6\n"
     )
     with pytest.raises(FileNotFoundError, match="_vystak"):
@@ -19,7 +19,7 @@ def test_apply_errors_when_vystak_dir_missing(tmp_path):
 def test_apply_errors_when_framework_mismatch(tmp_path):
     (tmp_path / "vystak.yaml").write_text(
         "name: t\nframework: mastra-typescript\n"
-        "model:\n  name: m\n  provider:\n    name: anthropic\n"
+        "default_model:\n  name: m\n  provider:\n    name: anthropic\n"
         "    type: anthropic\n  model_name: claude-sonnet-4-6\n"
     )
     (tmp_path / "_vystak").mkdir()
@@ -40,7 +40,7 @@ def test_apply_errors_when_framework_mismatch(tmp_path):
 def test_apply_passes_when_framework_matches(tmp_path):
     (tmp_path / "vystak.yaml").write_text(
         "name: t\nframework: langchain-python\n"
-        "model:\n  name: m\n  provider:\n    name: anthropic\n"
+        "default_model:\n  name: m\n  provider:\n    name: anthropic\n"
         "    type: anthropic\n  model_name: claude-sonnet-4-6\n"
     )
     (tmp_path / "_vystak").mkdir()

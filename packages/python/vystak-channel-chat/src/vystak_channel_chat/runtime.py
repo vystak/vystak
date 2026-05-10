@@ -75,11 +75,32 @@ class ChatChannelRuntime(ChannelRuntime):
         rid = event.metadata["request_id"]
         self._pending_reply[rid] = reply
 
+    async def _start_delivery_receiver(self) -> None:
+        # Mount /deliver onto the existing FastAPI app rather than a sidecar.
+        @self._app.post("/deliver")
+        async def _deliver(payload: dict):
+            await self._on_inbound_delivery(payload)
+            return {"ok": True}
+
+    async def _stop_delivery_receiver(self) -> None:
+        return None  # Route lives until the existing app shuts down
+
+    async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
+        # TODO(heartbeat-v2): chat is request/response (_pending_reply dict);
+        # there is no per-thread outbound queue or broadcast helper to push to.
+        # A real push delivery would require SSE or WebSocket support.
+        logger.warning(
+            "chat deliver_message: no outbound push mechanism; "
+            "thread_id=%s text_len=%d",
+            thread_id, len(text),
+        )
+
     async def start(self) -> None:
         self._app = build_app(self)
         port = int(self.config.get("port", 8080))
         cfg = uvicorn.Config(self._app, host="0.0.0.0", port=port, log_level="info")
         self._server = uvicorn.Server(cfg)
+        await self._start_delivery_receiver()
         await self._server.serve()
 
     async def stop(self) -> None:

@@ -426,6 +426,32 @@ def _run_provider_apply(
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
 
+    # Auto-spawn vystak-heartbeat once, after all agents and channels are up.
+    agents_with_heartbeat = [
+        a["agent"] for a in deployed_agents
+        if getattr(a["agent"], "heartbeat", None) is not None
+    ]
+    if agents_with_heartbeat:
+        # Use the first heartbeat agent's platform for transport/telemetry config.
+        hb_platform = None
+        for a in agents_with_heartbeat:
+            if a.platform:
+                hb_platform = a.platform
+                break
+        provider = get_provider(agents_with_heartbeat[0])
+        if hasattr(provider, "apply_heartbeat"):
+            all_channels = [d["channel"] for d in deployed_channels]
+            click.echo("\nHeartbeat: provisioning vystak-heartbeat container")
+            try:
+                provider.apply_heartbeat(
+                    agents_with_heartbeat,
+                    all_channels,
+                    platform=hb_platform,
+                )
+                click.echo("  OK")
+            except Exception as e:
+                click.echo(f"  Warning: heartbeat provisioning failed: {e}", err=True)
+
     if deployed_agents or deployed_channels:
         _print_summary(deployed_agents, deployed_channels)
 

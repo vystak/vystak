@@ -15,7 +15,7 @@ from vystak.schema.workspace import Workspace
 def make_agent(**overrides):
     anthropic = Provider(name="anthropic", type="anthropic")
     model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
-    defaults = {"name": "bot", "framework": "langchain-python", "model": model}
+    defaults = {"name": "bot", "framework": "langchain-python", "default_model": model}
     defaults.update(overrides)
     return Agent(**defaults)
 
@@ -49,7 +49,7 @@ class TestAgentHashTree:
         different_model = Model(
             name="opus", provider=anthropic, model_name="claude-opus-4-20250514"
         )
-        agent2 = make_agent(model=different_model)
+        agent2 = make_agent(default_model=different_model)
         tree1 = hash_agent(agent1)
         tree2 = hash_agent(agent2)
         assert tree1.brain != tree2.brain
@@ -270,12 +270,12 @@ def test_adding_subagent_changes_caller_root_hash():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", framework="langchain-python", model=m)
-    bare = Agent(name="assistant-agent", framework="langchain-python", model=m)
+    weather = Agent(name="weather-agent", framework="langchain-python", default_model=m)
+    bare = Agent(name="assistant-agent", framework="langchain-python", default_model=m)
     with_peer = Agent(
         name="assistant-agent",
         framework="langchain-python",
-        model=m,
+        default_model=m,
         subagents=[weather],
     )
 
@@ -290,18 +290,18 @@ def test_reordering_subagents_does_not_change_caller_hash():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", framework="langchain-python", model=m)
-    time = Agent(name="time-agent", framework="langchain-python", model=m)
+    weather = Agent(name="weather-agent", framework="langchain-python", default_model=m)
+    time = Agent(name="time-agent", framework="langchain-python", default_model=m)
     a = Agent(
         name="assistant",
         framework="langchain-python",
-        model=m,
+        default_model=m,
         subagents=[weather, time],
     )
     b = Agent(
         name="assistant",
         framework="langchain-python",
-        model=m,
+        default_model=m,
         subagents=[time, weather],
     )
 
@@ -317,14 +317,41 @@ def test_peer_hash_unchanged_when_added_as_subagent():
 
     p = Provider(name="p", type="anthropic")
     m = Model(name="m", provider=p, model_name="claude-sonnet-4-20250514")
-    weather = Agent(name="weather-agent", framework="langchain-python", model=m)
+    weather = Agent(name="weather-agent", framework="langchain-python", default_model=m)
     weather_alone_root = hash_agent(weather).root
 
     # Build a caller that references it; weather's own hash must not change.
     _assistant = Agent(
         name="assistant",
         framework="langchain-python",
-        model=m,
+        default_model=m,
         subagents=[weather],
     )
     assert hash_agent(weather).root == weather_alone_root
+
+
+def test_models_reorder_does_not_change_brain():
+    """Agent.models is sorted by hash before contributing to brain, so
+    reordering the list must not affect tree.brain."""
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.platform import Platform
+    from vystak.schema.provider import Provider
+
+    anthropic = Provider(name="anthropic", type="anthropic")
+    docker = Provider(name="docker", type="docker")
+    platform = Platform(name="local", type="docker", provider=docker, namespace="dev")
+    m_a = Model(name="a", provider=anthropic, model_name="claude-a")
+    m_b = Model(name="b", provider=anthropic, model_name="claude-b")
+    default = Model(name="d", provider=anthropic, model_name="claude-d")
+
+    a1 = Agent(
+        name="bot", framework="langchain-python",
+        default_model=default, models=[m_a, m_b], platform=platform,
+    )
+    a2 = Agent(
+        name="bot", framework="langchain-python",
+        default_model=default, models=[m_b, m_a], platform=platform,
+    )
+    assert hash_agent(a1).brain == hash_agent(a2).brain
