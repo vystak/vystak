@@ -328,3 +328,30 @@ def test_peer_hash_unchanged_when_added_as_subagent():
         subagents=[weather],
     )
     assert hash_agent(weather).root == weather_alone_root
+
+
+def test_models_reorder_does_not_change_brain():
+    """Agent.models is sorted by hash before contributing to brain, so
+    reordering the list must not affect tree.brain."""
+    from vystak.hash.tree import hash_agent
+    from vystak.schema.agent import Agent
+    from vystak.schema.model import Model
+    from vystak.schema.platform import Platform
+    from vystak.schema.provider import Provider
+
+    anthropic = Provider(name="anthropic", type="anthropic")
+    docker = Provider(name="docker", type="docker")
+    platform = Platform(name="local", type="docker", provider=docker, namespace="dev")
+    m_a = Model(name="a", provider=anthropic, model_name="claude-a")
+    m_b = Model(name="b", provider=anthropic, model_name="claude-b")
+    default = Model(name="d", provider=anthropic, model_name="claude-d")
+
+    a1 = Agent(
+        name="bot", framework="langchain-python",
+        default_model=default, models=[m_a, m_b], platform=platform,
+    )
+    a2 = Agent(
+        name="bot", framework="langchain-python",
+        default_model=default, models=[m_b, m_a], platform=platform,
+    )
+    assert hash_agent(a1).brain == hash_agent(a2).brain

@@ -371,3 +371,39 @@ def test_agent_framework_can_be_overridden():
         ),
     )
     assert agent.framework == "mastra-typescript"
+
+
+def test_agent_rejects_duplicate_model_name_in_pool():
+    import pytest
+    from pydantic import ValidationError
+    from vystak.schema import Agent, Model, Platform, Provider
+
+    anthropic = Provider(name="anthropic", type="anthropic")
+    docker = Provider(name="docker", type="docker")
+    platform = Platform(name="local", type="docker", provider=docker, namespace="dev")
+    same_name_a = Model(name="dup", provider=anthropic, model_name="x")
+    same_name_b = Model(name="dup", provider=anthropic, model_name="y")
+
+    with pytest.raises(ValidationError, match="duplicate model name"):
+        Agent(
+            name="bot", framework="langchain-python",
+            default_model=same_name_a, models=[same_name_b], platform=platform,
+        )
+
+
+def test_agent_rejects_duplicate_with_default_model_name():
+    import pytest
+    from pydantic import ValidationError
+    from vystak.schema import Agent, Model, Platform, Provider
+
+    anthropic = Provider(name="anthropic", type="anthropic")
+    docker = Provider(name="docker", type="docker")
+    platform = Platform(name="local", type="docker", provider=docker, namespace="dev")
+    default = Model(name="x", provider=anthropic, model_name="claude-d")
+    pool_dup = Model(name="x", provider=anthropic, model_name="claude-p")
+
+    with pytest.raises(ValidationError, match="duplicate model name"):
+        Agent(
+            name="bot", framework="langchain-python",
+            default_model=default, models=[pool_dup], platform=platform,
+        )
