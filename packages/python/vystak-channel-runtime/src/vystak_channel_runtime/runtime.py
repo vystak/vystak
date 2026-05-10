@@ -109,13 +109,68 @@ class ChannelRuntime(ABC):
 
     # --- Delivery receiver (subclass may override) -------------------------
 
-    def _start_delivery_receiver(self) -> None:
-        """No-op lifecycle hook. Concrete channels override in Task 14."""
-        return None
+    async def _start_delivery_receiver(self) -> None:
+        """Mount HTTP /deliver or NATS subscription based on
+        config['transport_type']. Default: HTTP.
 
-    def _stop_delivery_receiver(self) -> None:
-        """No-op lifecycle hook. Concrete channels override in Task 14."""
-        return None
+        Concrete channels override _start_http_delivery_receiver if they
+        already have a FastAPI app to mount the route on (e.g. chat).
+        """
+        transport_type = self.config.get("transport_type", "http")
+        if transport_type == "http":
+            await self._start_http_delivery_receiver()
+        elif transport_type == "nats":
+            await self._start_nats_delivery_receiver()
+
+    async def _stop_delivery_receiver(self) -> None:
+        srv = getattr(self, "_delivery_server", None)
+        if srv is not None:
+            srv.should_exit = True
+        sub = getattr(self, "_delivery_sub", None)
+        if sub is not None:
+            await sub.unsubscribe()
+
+    async def _start_http_delivery_receiver(self) -> None:
+        """Default HTTP receiver — sidecar uvicorn on `delivery_port`."""
+        import asyncio as _asyncio
+
+        import uvicorn
+        from fastapi import FastAPI
+
+        port = int(self.config.get("delivery_port", 9999))
+        app = FastAPI()
+
+        @app.post("/deliver")
+        async def _deliver(payload: dict):
+            await self._on_inbound_delivery(payload)
+            return {"ok": True}
+
+        cfg = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+        self._delivery_server = uvicorn.Server(cfg)
+        self._delivery_task = _asyncio.create_task(
+            self._delivery_server.serve(),
+            name=f"delivery-{self.config.get('canonical_name', '?')}",
+        )
+
+    async def _start_nats_delivery_receiver(self) -> None:
+        import json as _json
+
+        import nats
+
+        url = self.config.get("nats_url") or os.environ.get("VYSTAK_NATS_URL")
+        if not url:
+            raise RuntimeError("nats transport requested but no nats_url configured")
+        self._delivery_nc = await nats.connect(url)
+        canonical = self.config.get("canonical_name", "")
+        subject = f"vystak.channel.{canonical}.deliver"
+
+        async def _cb(msg):
+            try:
+                await self._on_inbound_delivery(_json.loads(msg.data.decode()))
+            except Exception:
+                logger.exception("delivery message handler failed")
+
+        self._delivery_sub = await self._delivery_nc.subscribe(subject, cb=_cb)
 
     async def _on_inbound_delivery(self, body: dict) -> None:
         """Validate an inbound delivery payload and dispatch to deliver_message.

@@ -301,3 +301,20 @@ async def test_on_no_route_posts_message_when_configured():
     ev = rt.parse_event({"kind": "message", "message": msg})
     await rt.on_no_route(ev)
     assert chan.sent == ["no agent here"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_calls_channel_send():
+    from unittest.mock import AsyncMock, MagicMock
+
+    rt = DiscordChannelRuntime(
+        config=_config(),
+        routes={},
+        store=MemoryChannelStore(),
+    )
+    rt._client = MagicMock()
+    channel = MagicMock()
+    channel.send = AsyncMock()
+    rt._client.get_channel = MagicMock(return_value=channel)
+    await rt.deliver_message("123456789012345678", "hello", {})
+    channel.send.assert_awaited()

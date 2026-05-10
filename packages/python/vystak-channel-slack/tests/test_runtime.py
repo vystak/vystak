@@ -275,3 +275,20 @@ async def test_slack_runtime_channel_binding_fallback():
     raw = {"type": "app_mention", "event": _bolt_event(), "say": None}
     ev = rt.parse_event(raw)
     assert await rt.resolve_route(ev) == "channel-pinned"
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_calls_chat_postMessage():
+    from unittest.mock import AsyncMock, MagicMock
+
+    rt = SlackChannelRuntime(
+        config=_config(canonical_name="x.channels.dev"),
+        routes={},
+        store=MemoryChannelStore(),
+    )
+    rt._app = MagicMock()
+    rt._app.client.chat_postMessage = AsyncMock()
+    await rt.deliver_message("C0AV6PJ4VHU", "digest", {})
+    rt._app.client.chat_postMessage.assert_awaited_once_with(
+        channel="C0AV6PJ4VHU", text="digest",
+    )

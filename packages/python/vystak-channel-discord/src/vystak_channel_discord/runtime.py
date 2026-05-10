@@ -145,10 +145,12 @@ class DiscordChannelRuntime(ChannelRuntime):
                 except Exception:  # noqa: BLE001
                     logger.warning("welcome send failed", exc_info=True)
 
+        await self._start_delivery_receiver()
         await self._start_heartbeats()
         await self._client.start(self._token)
 
     async def stop(self) -> None:
+        await self._stop_delivery_receiver()
         await self._stop_heartbeats()
         if self._client is not None:
             await self._client.close()
@@ -299,7 +301,15 @@ class DiscordChannelRuntime(ChannelRuntime):
             await msg.channel.send(chunk)
 
     async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
-        """Deliver an outbound message to a thread. Overridden in Task 14."""
+        if self._client is None:
+            logger.warning("discord delivery: client not initialized")
+            return
+        channel = self._client.get_channel(int(thread_id))
+        if channel is None:
+            channel = await self._client.fetch_channel(int(thread_id))
+        # _chunk and MAX_DISCORD_MESSAGE_CHARS are existing module-level helpers
+        for chunk in _chunk(text or "", MAX_DISCORD_MESSAGE_CHARS):
+            await channel.send(chunk)
 
     async def fetch_history(self, event: InboundEvent) -> list[Message]:
         from vystak_channel_discord.threads import (

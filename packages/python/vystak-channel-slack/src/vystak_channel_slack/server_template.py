@@ -38,5 +38,6 @@ RUN mkdir -p /data /etc/vystak
 COPY . .
 RUN cp channel_config.json routes.json /etc/vystak/ 2>/dev/null || true
 ENV VYSTAK_CONFIG_DIR=/etc/vystak PYTHONPATH=/app
+EXPOSE 9999
 CMD ["python", "-m", "vystak_channel_slack"]
 """
