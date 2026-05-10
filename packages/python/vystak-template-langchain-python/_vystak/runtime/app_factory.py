@@ -18,7 +18,7 @@ from _vystak.runtime.a2a_native.card import build_agent_card
 from _vystak.runtime.a2a_native.executor import LangGraphExecutor
 from _vystak.runtime.compaction.compactor import ThresholdCompactor
 from _vystak.runtime.compaction.pruner import PreCallPruner
-from _vystak.runtime.graph import build_graph
+from _vystak.runtime.graph import build_graph, pick_model_name
 from _vystak.runtime.memory import MemoryManager
 from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
@@ -33,6 +33,27 @@ from _vystak.runtime.store import (
 from _vystak.runtime.subagents import build_subagent_tools
 from _vystak.runtime.telemetry import instrument_app
 from _vystak.runtime.tools import load_user_tools
+
+
+async def pick_model_for_turn(
+    agent: Any, *, sessions, session_id: str, override: str | None,
+) -> str:
+    """Resolve the model name to use for this turn.
+
+    Reads session-stored first; falls back to override; falls back to default.
+    Does NOT persist — call persist_model_choice after the LLM call succeeds.
+    """
+    stored = await sessions.get_model(session_id)
+    return pick_model_name(agent, session_stored=stored, override=override)
+
+
+async def persist_model_choice(
+    *, sessions, session_id: str, chosen: str,
+) -> None:
+    """Persist `chosen` only if the session does not already have a model."""
+    stored = await sessions.get_model(session_id)
+    if stored is None:
+        await sessions.set_model(session_id, chosen)
 
 
 def build_agent_app(agent: Any) -> FastAPI:

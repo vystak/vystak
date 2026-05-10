@@ -1,7 +1,94 @@
-"""build_agent_app integration test — TestClient hits all routes."""
+"""build_agent_app integration test — TestClient hits all routes.
 
-from _vystak.runtime.app_factory import build_agent_app
+Also tests A2A handler model dispatch helpers:
+  pick_model_for_turn, persist_model_choice.
+"""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from _vystak.runtime.app_factory import (
+    build_agent_app,
+    persist_model_choice,
+    pick_model_for_turn,
+)
 from fastapi.testclient import TestClient
+
+# ---------------------------------------------------------------------------
+# Helpers for model-dispatch tests
+# ---------------------------------------------------------------------------
+
+def _model(name: str):
+    return SimpleNamespace(
+        name=name, model_name="x",
+        provider=SimpleNamespace(type="anthropic"),
+        parameters={},
+    )
+
+
+def _agent_multi(default_name: str, extra_names: list):
+    return SimpleNamespace(
+        default_model=_model(default_name),
+        models=[_model(n) for n in extra_names],
+    )
+
+
+@pytest.mark.asyncio
+async def test_pick_uses_session_stored_when_present():
+    sessions = AsyncMock()
+    sessions.get_model = AsyncMock(return_value="haiku")
+    chosen = await pick_model_for_turn(
+        _agent_multi("opus", ["haiku", "sonnet"]),
+        sessions=sessions,
+        session_id="t1",
+        override="sonnet",
+    )
+    assert chosen == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_pick_uses_override_when_no_session_stored():
+    sessions = AsyncMock()
+    sessions.get_model = AsyncMock(return_value=None)
+    chosen = await pick_model_for_turn(
+        _agent_multi("opus", ["haiku"]),
+        sessions=sessions,
+        session_id="t1",
+        override="haiku",
+    )
+    assert chosen == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_pick_falls_back_to_default_when_no_inputs():
+    sessions = AsyncMock()
+    sessions.get_model = AsyncMock(return_value=None)
+    chosen = await pick_model_for_turn(
+        _agent_multi("opus", ["haiku"]),
+        sessions=sessions,
+        session_id="t1",
+        override=None,
+    )
+    assert chosen == "opus"
+
+
+@pytest.mark.asyncio
+async def test_persist_writes_only_when_no_session_stored():
+    sessions = AsyncMock()
+    sessions.get_model = AsyncMock(return_value=None)
+    sessions.set_model = AsyncMock()
+    await persist_model_choice(sessions=sessions, session_id="t1", chosen="haiku")
+    sessions.set_model.assert_awaited_once_with("t1", "haiku")
+
+
+@pytest.mark.asyncio
+async def test_persist_skips_when_session_already_has_one():
+    sessions = AsyncMock()
+    sessions.get_model = AsyncMock(return_value="haiku")
+    sessions.set_model = AsyncMock()
+    await persist_model_choice(sessions=sessions, session_id="t1", chosen="haiku")
+    sessions.set_model.assert_not_called()
 
 
 def _agent():
