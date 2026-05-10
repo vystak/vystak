@@ -67,6 +67,14 @@ class Heartbeat(BaseModel):
         True,
         description="Set False to keep config but disable scheduling.",
     )
+    model: str | None = Field(
+        None,
+        description=(
+            "Name of a Model in the agent's pool "
+            "(default_model, *models). When set, agents honor it as a "
+            "model_override in metadata. None → agent's default_model."
+        ),
+    )
 
     @field_validator("schedule")
     @classmethod

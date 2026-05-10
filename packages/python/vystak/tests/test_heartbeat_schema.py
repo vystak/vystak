@@ -232,3 +232,18 @@ channels:
     agent = next(a for a in agents if a.name == "ops-bot")
     assert agent.heartbeat is not None
     assert agent.heartbeat.target_channel == "slack-main.channels.dev"
+
+
+def test_heartbeat_model_default_none():
+    hb = Heartbeat(schedule="*/30 * * * *", target_channel="x.channels.dev")
+    assert hb.model is None
+
+
+def test_heartbeat_model_round_trips():
+    hb = Heartbeat(
+        schedule="*/30 * * * *",
+        target_channel="x.channels.dev",
+        model="haiku",
+    )
+    restored = Heartbeat.model_validate(hb.model_dump())
+    assert restored.model == "haiku"
