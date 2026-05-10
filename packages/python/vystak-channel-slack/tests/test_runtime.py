@@ -138,6 +138,44 @@ async def test_post_reply_uses_say_with_thread_ts():
 
 
 @pytest.mark.asyncio
+async def test_post_reply_heartbeat_uses_chat_postMessage():
+    """Heartbeat-synthesized events have no `say` callable; the runtime
+    must fall back to app.client.chat_postMessage with channel=scope_id."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from vystak.schema.common import ChannelType
+    from vystak_channel_runtime.types import InboundEvent
+
+    rt = SlackChannelRuntime(
+        config=_config(),
+        routes={"hero": {"address": "http://hero:8000"}},
+        store=MemoryChannelStore(),
+    )
+    rt._app = MagicMock()
+    rt._app.client = MagicMock()
+    rt._app.client.chat_postMessage = AsyncMock()
+
+    heartbeat_event = InboundEvent(
+        channel_type=ChannelType.SLACK,
+        scope_id="C0AV6PJ4VHU",
+        thread_id="C0AV6PJ4VHU",
+        user_id="__heartbeat__",
+        text="ping",
+        is_dm=False,
+        mentions_bot=True,
+        metadata={
+            "heartbeat": True,
+            "deliver_scope": "C0AV6PJ4VHU",
+            "deliver_thread": "C0AV6PJ4VHU",
+        },
+    )
+    await rt.post_reply(heartbeat_event, "hero", AgentReply(text="🌤️ digest"))
+    rt._app.client.chat_postMessage.assert_awaited_once_with(
+        channel="C0AV6PJ4VHU", text="🌤️ digest",
+    )
+
+
+@pytest.mark.asyncio
 async def test_fetch_history_returns_empty_when_no_thread_ts(monkeypatch):
     rt = SlackChannelRuntime(
         config=_config(),
