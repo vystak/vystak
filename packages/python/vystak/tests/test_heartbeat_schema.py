@@ -247,3 +247,52 @@ def test_heartbeat_model_round_trips():
     )
     restored = Heartbeat.model_validate(hb.model_dump())
     assert restored.model == "haiku"
+
+
+def test_heartbeat_model_in_pool_passes(tmp_path):
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+    text = """
+providers: {anthropic: {type: anthropic}, docker: {type: docker}}
+platforms: {local: {type: docker, provider: docker, namespace: dev}}
+models:
+  opus:   {provider: anthropic, model_name: claude-opus-4-7}
+  haiku:  {provider: anthropic, model_name: claude-haiku-4-5-20251001}
+agents:
+  - name: bot
+    framework: langchain-python
+    default_model: opus
+    models: [haiku]
+    platform: local
+    heartbeat:
+      schedule: "*/30 * * * *"
+      target_channel: chat-main.channels.dev
+      model: haiku
+channels:
+  - {name: chat-main, type: chat, platform: local, agents: [bot]}
+"""
+    load_multi_yaml(yaml.safe_load(text))   # must not raise
+
+
+def test_heartbeat_model_not_in_pool_rejected():
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+    text = """
+providers: {anthropic: {type: anthropic}, docker: {type: docker}}
+platforms: {local: {type: docker, provider: docker, namespace: dev}}
+models:
+  opus:  {provider: anthropic, model_name: claude-opus-4-7}
+agents:
+  - name: bot
+    framework: langchain-python
+    default_model: opus
+    platform: local
+    heartbeat:
+      schedule: "*/30 * * * *"
+      target_channel: chat-main.channels.dev
+      model: ghost
+channels:
+  - {name: chat-main, type: chat, platform: local, agents: [bot]}
+"""
+    with pytest.raises(ValueError, match="not in agent's model pool"):
+        load_multi_yaml(yaml.safe_load(text))

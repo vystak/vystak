@@ -48,6 +48,14 @@ def _validate_heartbeat_targets(
                 f"channel '{target}' does not route agent '{agent.name}' "
                 f"named in its heartbeat.target_channel"
             )
+        if agent.heartbeat.model is not None:
+            pool = {agent.default_model.name, *(m.name for m in agent.models)}
+            if agent.heartbeat.model not in pool:
+                raise ValueError(
+                    f"agent '{agent.name}' heartbeat.model "
+                    f"'{agent.heartbeat.model}' not in agent's model pool "
+                    f"(have: {sorted(pool)})"
+                )
 
 
 def _lookup_agent(by_name: dict, name: str, field: str, ctx: str) -> object:
@@ -197,6 +205,21 @@ def load_multi_yaml(
                     f"Defined platforms: {', '.join(platforms.keys())}"
                 )
             agent_data["platform"] = platforms[platform_ref]
+
+        if "models" in agent_data and isinstance(agent_data["models"], list):
+            resolved_models = []
+            for model_ref in agent_data["models"]:
+                if isinstance(model_ref, str):
+                    if model_ref not in models:
+                        raise KeyError(
+                            f"Unknown model '{model_ref}' in agent "
+                            f"'{agent_data.get('name')}' models pool. "
+                            f"Defined models: {', '.join(models.keys())}"
+                        )
+                    resolved_models.append(models[model_ref])
+                else:
+                    resolved_models.append(model_ref)
+            agent_data["models"] = resolved_models
 
         # Stash subagents for phase 2, build agent without them so model_validate works.
         if "subagents" in agent_data:
