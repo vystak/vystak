@@ -118,6 +118,20 @@ def destroy(
             click.echo(f"'{agent_name}' not found in definition.", err=True)
             raise SystemExit(1)
 
+    # Stop the heartbeat scheduler first so it doesn't keep firing
+    # against agents/channels we're about to remove. Mirror of
+    # provider.apply_heartbeat in the apply flow.
+    agents_with_heartbeat = [a for a in agents if getattr(a, "heartbeat", None)]
+    if agents_with_heartbeat:
+        provider = get_provider(agents_with_heartbeat[0])
+        if hasattr(provider, "destroy_heartbeat"):
+            click.echo("Destroying heartbeat scheduler")
+            try:
+                provider.destroy_heartbeat()
+                click.echo("  OK")
+            except Exception as e:
+                click.echo(f"  FAILED: {e}", err=True)
+
     for channel in channels:
         click.echo(f"Destroying channel: {channel.name}")
         provider = get_provider(channel)

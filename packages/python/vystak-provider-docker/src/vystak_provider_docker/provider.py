@@ -1287,6 +1287,23 @@ class DockerProvider(PlatformProvider):
             with contextlib.suppress(docker.errors.NotFound):
                 self._client.volumes.get(state_volume).remove()
 
+    def destroy_heartbeat(self) -> None:
+        """Stop and remove the auto-spawned ``vystak-heartbeat`` container.
+
+        Counterpart to :meth:`apply_heartbeat`. Safe to call when no
+        heartbeat container exists — silently no-ops. Called once during
+        ``vystak destroy`` before channels are torn down so the scheduler
+        stops attempting deliveries against soon-dead channels.
+        """
+        import contextlib
+
+        from vystak_provider_docker.nodes.heartbeat import CONTAINER_NAME
+
+        with contextlib.suppress(docker.errors.NotFound):
+            c = self._client.containers.get(CONTAINER_NAME)
+            c.stop()
+            c.remove()
+
     def channel_status(self, channel: Channel) -> AgentStatus:
         container = self._get_channel_container(channel.name)
         if container is None:
