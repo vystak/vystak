@@ -36,6 +36,7 @@ def test_provision_creates_env_storage_when_missing():
     )
     assert body["properties"]["azureFile"]["accessMode"] == "ReadWrite"
     assert result.info["storage_name"] == "vystak-assistant-workspace"
+    assert result.info["created"] is True
 
 
 def test_provision_idempotent_when_env_storage_exists():
@@ -56,3 +57,4 @@ def test_provision_idempotent_when_env_storage_exists():
 
     assert result.success is True
     aca_client.managed_environments_storages.create_or_update.assert_not_called()
+    assert result.info["created"] is False
