@@ -9,8 +9,15 @@ from vystak.provisioning import Provisionable, ProvisionResult
 class AzureFilesShareNode(Provisionable):
     """Create or look up an Azure Files share. Idempotent.
 
-    The storage account itself must exist; we do not create it (the spec
-    requires the user provides ``platform.config.storage_account``).
+    Caller must ensure the storage account exists (the spec requires the
+    user provides ``platform.config.storage_account``). If the account is
+    missing, ``file_shares.get`` raises ``ResourceNotFoundError`` and we
+    proceed to ``create``, which will then fail with a parent-resource
+    error from Azure — not a friendly message, but fail-fast.
+
+    Destroy is intentionally a no-op (inherited from ``Provisionable``):
+    workspace data on the share survives provider destroy unless the user
+    passes ``--delete-workspace-data``.
     """
 
     def __init__(
@@ -45,6 +52,8 @@ class AzureFilesShareNode(Provisionable):
                 },
             )
         except ResourceNotFoundError:
+            # Empty body — Azure defaults share_quota from the storage account
+            # (typically 5 TiB SMB). Override here if a specific quota is needed.
             self._client.file_shares.create(
                 self._rg_name,
                 self._storage_account,

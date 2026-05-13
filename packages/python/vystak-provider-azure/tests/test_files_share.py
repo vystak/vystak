@@ -24,8 +24,7 @@ def test_provision_creates_share_when_missing():
 
 def test_provision_idempotent_when_share_exists():
     storage_client = MagicMock()
-    existing = MagicMock(name="existing-share")
-    storage_client.file_shares.get.return_value = existing
+    storage_client.file_shares.get.return_value = MagicMock()
 
     node = AzureFilesShareNode(
         client=storage_client,
