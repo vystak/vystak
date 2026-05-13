@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+from azure.core.exceptions import ResourceNotFoundError
 from vystak_provider_azure.nodes.workspace_ssh_keygen import (
     AzureWorkspaceSshKeygenNode,
     _kv_secret_name,
@@ -25,7 +26,7 @@ def test_kv_secret_names_match_spec():
 def test_provision_pushes_four_secrets_to_keyvault():
     """First provision generates keys and uploads all 4 to KV."""
     secret_client = MagicMock()
-    secret_client.get_secret.side_effect = Exception("ResourceNotFound")
+    secret_client.get_secret.side_effect = ResourceNotFoundError("not found")
     docker_client = MagicMock()
 
     node = AzureWorkspaceSshKeygenNode(

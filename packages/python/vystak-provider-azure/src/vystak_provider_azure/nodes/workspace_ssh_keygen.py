@@ -10,9 +10,10 @@ from __future__ import annotations
 import pathlib
 import tempfile
 
+from azure.core.exceptions import ResourceNotFoundError
 from vystak.provisioning import Provisionable, ProvisionResult
 
-_KEY_KINDS = ("client-key", "client-key-pub", "host-key", "host-key-pub")
+_KEY_KINDS = ("client-key", "host-key", "client-key-pub", "host-key-pub")
 
 
 def _kv_secret_name(agent_name: str, kind: str) -> str:
@@ -68,7 +69,7 @@ class AzureWorkspaceSshKeygenNode(Provisionable):
         for kind in _KEY_KINDS:
             try:
                 self._secret_client.get_secret(_kv_secret_name(self._agent_name, kind))
-            except Exception:
+            except ResourceNotFoundError:
                 return False
         return True
 
