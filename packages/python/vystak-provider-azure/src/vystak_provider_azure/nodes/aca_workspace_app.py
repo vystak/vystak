@@ -234,7 +234,7 @@ class ACAWorkspaceAppNode(Provisionable):
         )
         result = poller.result()
 
-        env_default_domain = context[f"aca-env-{self._env_name}"].info[
+        env_default_domain = context["aca-environment"].info[
             "default_domain"
         ]
         workspace_host = f"{self.app_name}.internal.{env_default_domain}"
@@ -259,7 +259,10 @@ class ACAWorkspaceAppNode(Provisionable):
     ) -> str:
         """Reuse Docker provider's dockerfile generator + workspace_rpc bundle.
 
-        Image tag includes a content hash so reused builds are skipped by ACR.
+        Builds locally via the Docker SDK, tags ``<acr>/vystak-<agent>-workspace:latest``,
+        and pushes to ACR. Layer cache (local Docker) speeds up rebuilds when the
+        Dockerfile + bundle are unchanged. A content-hash tagging strategy can be
+        layered on later if ACR pull churn becomes painful.
         """
         import shutil
         from pathlib import Path
