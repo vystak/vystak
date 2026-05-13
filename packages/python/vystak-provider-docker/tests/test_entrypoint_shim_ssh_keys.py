@@ -23,9 +23,26 @@ def test_shim_writes_client_key_from_env_var():
     assert 'VYSTAK_SSH_CLIENT_KEY' in shim
     assert '/vystak/ssh/id_ed25519' in shim
     assert 'chmod 600 /vystak/ssh/id_ed25519' in shim
+    assert 'unset VYSTAK_SSH_CLIENT_KEY' in shim
 
 
 def test_shim_writes_known_hosts_from_env_var():
     shim = generate_entrypoint_shim()
     assert 'VYSTAK_SSH_KNOWN_HOSTS_PUB' in shim
     assert '/vystak/ssh/known_hosts' in shim
+    assert 'unset VYSTAK_SSH_KNOWN_HOSTS_PUB' in shim
+
+
+def test_shim_no_op_when_no_ssh_vars():
+    """Backward-compat invariant: when no VYSTAK_SSH_* vars are set,
+    the shim must not write to any SSH key path.
+
+    Verified structurally — each block must be guarded by a -n test
+    against the unset-default expansion, and exec "$@" must be reached.
+    """
+    shim = generate_entrypoint_shim()
+    assert '${VYSTAK_SSH_HOST_KEY:-}' in shim
+    assert '${VYSTAK_SSH_AUTHORIZED_KEYS:-}' in shim
+    assert '${VYSTAK_SSH_CLIENT_KEY:-}' in shim
+    assert '${VYSTAK_SSH_KNOWN_HOSTS_PUB:-}' in shim
+    assert 'exec "$@"' in shim
