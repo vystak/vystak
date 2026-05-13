@@ -170,23 +170,59 @@ set -e
 
 SECRETS_FILE="/shared/secrets.env"
 
-for i in $(seq 1 30); do
-  [ -e "$SECRETS_FILE" ] && break
-  sleep 1
-done
+# Default-path containers won't have /shared/ — skip the wait when the file
+# location doesn't exist either.
+if [ -d /shared ]; then
+  for i in $(seq 1 30); do
+    [ -e "$SECRETS_FILE" ] && break
+    sleep 1
+  done
 
-if [ ! -e "$SECRETS_FILE" ]; then
-  echo "vystak: $SECRETS_FILE never populated — Vault Agent unhealthy?" >&2
-  exit 1
+  if [ ! -e "$SECRETS_FILE" ]; then
+    echo "vystak: $SECRETS_FILE never populated — Vault Agent unhealthy?" >&2
+    exit 1
+  fi
+
+  # Settle: give sibling templates (SSH keys, etc.) a moment to finish.
+  sleep 1
+
+  if [ -s "$SECRETS_FILE" ]; then
+    set -a
+    . "$SECRETS_FILE"
+    set +a
+  fi
 fi
 
-# Settle: give sibling templates (SSH keys, etc.) a moment to finish.
-sleep 1
+# Materialize SSH key material from env vars (Azure path: secretRef → env).
+# Each block writes one file with appropriate perms then unsets the env var
+# so the value doesn't leak into the main process's /proc/<pid>/environ.
 
-if [ -s "$SECRETS_FILE" ]; then
-  set -a
-  . "$SECRETS_FILE"
-  set +a
+if [ -n "${VYSTAK_SSH_HOST_KEY:-}" ]; then
+  mkdir -p /etc/ssh
+  printf '%s' "$VYSTAK_SSH_HOST_KEY" > /etc/ssh/ssh_host_ed25519_key
+  chmod 600 /etc/ssh/ssh_host_ed25519_key
+  unset VYSTAK_SSH_HOST_KEY
+fi
+
+if [ -n "${VYSTAK_SSH_AUTHORIZED_KEYS:-}" ]; then
+  mkdir -p /etc/ssh
+  printf '%s\\n' "$VYSTAK_SSH_AUTHORIZED_KEYS" > /etc/ssh/authorized_keys_vystak-agent
+  chmod 444 /etc/ssh/authorized_keys_vystak-agent
+  unset VYSTAK_SSH_AUTHORIZED_KEYS
+fi
+
+if [ -n "${VYSTAK_SSH_CLIENT_KEY:-}" ]; then
+  mkdir -p /vystak/ssh
+  printf '%s' "$VYSTAK_SSH_CLIENT_KEY" > /vystak/ssh/id_ed25519
+  chmod 600 /vystak/ssh/id_ed25519
+  unset VYSTAK_SSH_CLIENT_KEY
+fi
+
+if [ -n "${VYSTAK_SSH_KNOWN_HOSTS_PUB:-}" ]; then
+  mkdir -p /vystak/ssh
+  printf '%s\\n' "$VYSTAK_SSH_KNOWN_HOSTS_PUB" > /vystak/ssh/known_hosts
+  chmod 444 /vystak/ssh/known_hosts
+  unset VYSTAK_SSH_KNOWN_HOSTS_PUB
 fi
 
 exec "$@"
