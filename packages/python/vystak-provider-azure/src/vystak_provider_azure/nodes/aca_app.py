@@ -379,6 +379,8 @@ class ContainerAppNode(Provisionable):
         self._workspace_image: str | None = None
 
         # Workspace SSH context (set via set_workspace_context).
+        self._workspace_app_node_name: str | None = None
+        # _workspace_host resolved from context in _build_body
         self._workspace_host: str | None = None
         self._workspace_ssh_kv_secrets: list[str] = []
 
@@ -409,15 +411,17 @@ class ContainerAppNode(Provisionable):
     def set_workspace_context(
         self,
         *,
-        workspace_host: str,
+        workspace_app_node_name: str,
         workspace_ssh_kv_secrets: list[str],
     ) -> None:
         """Wire workspace SSH client keys + known_hosts into the agent app.
 
-        Agent receives VYSTAK_WORKSPACE_HOST and materializes its client key
-        + known_hosts pub from KV-delivered secrets via the entrypoint shim.
+        ``workspace_app_node_name`` is the ``.name`` of the
+        ``ACAWorkspaceAppNode`` whose provision result info dict carries
+        ``"workspace_host"``. The actual FQDN is resolved from context at
+        ``_build_body`` time.
         """
-        self._workspace_host = workspace_host
+        self._workspace_app_node_name = workspace_app_node_name
         self._workspace_ssh_kv_secrets = workspace_ssh_kv_secrets
 
     def _build_body(self, context: dict, acr_info: dict) -> dict:
@@ -429,6 +433,10 @@ class ContainerAppNode(Provisionable):
         assert self._vault_key is not None, (
             "_build_body called without vault context; use legacy path"
         )
+        if self._workspace_app_node_name is not None:
+            ws_result = context.get(self._workspace_app_node_name)
+            if ws_result is not None:
+                self._workspace_host = ws_result.info.get("workspace_host")
         vault_info = context[self._vault_key].info
         agent_id_info = context[self._agent_identity_key].info
         ws_id_info: dict = {}
@@ -492,6 +500,8 @@ class ContainerAppNode(Provisionable):
             and self._agent.memory.name not in deps
         ):
             deps.append(self._agent.memory.name)
+        if self._workspace_app_node_name:
+            deps.append(self._workspace_app_node_name)
         return deps
 
     def provision(self, context: dict) -> ProvisionResult:
