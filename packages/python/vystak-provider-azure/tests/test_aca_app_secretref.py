@@ -454,3 +454,62 @@ def test_build_revision_for_vault_drops_dead_workspace_refs():
     assert "stripe-api-key" not in kv_names, (
         "workspace KV ref transmitted to Azure with no container to consume it"
     )
+
+
+def _make_test_agent_no_workspace() -> Agent:
+    """Minimal agent fixture without a workspace — for testing agent-side
+    workspace context injection independently of sidecar emission."""
+    azure = Provider(name="azure", type="azure", config={"location": "eastus2"})
+    platform = Platform(name="aca", type="container-apps", provider=azure)
+    anthropic = Provider(name="anthropic", type="anthropic")
+    return Agent(
+        name="assistant",
+        framework="langchain-python",
+        model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
+        secrets=[Secret(name="ANTHROPIC_API_KEY")],
+        workspace=None,
+        platform=platform,
+    )
+
+
+def test_agent_revision_includes_workspace_host_when_context_set():
+    """When workspace_host + ssh KV secrets are passed to build_revision_for_vault,
+    the agent env contains VYSTAK_WORKSPACE_HOST and the two SSH KV secretRefs."""
+    from vystak_provider_azure.nodes.aca_app import build_revision_for_vault
+
+    revision = build_revision_for_vault(
+        agent=_make_test_agent_no_workspace(),
+        vault_uri="https://kv.vault.azure.net/",
+        agent_identity_resource_id=(
+            "/subscriptions/x/resourceGroups/rg/providers/"
+            "Microsoft.ManagedIdentity/userAssignedIdentities/uami-agent"
+        ),
+        agent_identity_client_id=None,
+        workspace_identity_resource_id=None,
+        workspace_identity_client_id=None,
+        model_secrets=["ANTHROPIC_API_KEY"],
+        workspace_secrets=[],
+        acr_login_server="acr.azurecr.io",
+        acr_password_secret_ref="acr-pwd",
+        acr_password_value="REDACTED",
+        agent_image="acr.azurecr.io/agent:tag",
+        workspace_image=None,
+        workspace_host=(
+            "vystak-assistant-workspace.internal.eastus.azurecontainerapps.io"
+        ),
+        workspace_ssh_kv_secrets=[
+            "vystak-workspace-ssh-assistant-client-key",
+            "vystak-workspace-ssh-assistant-host-key-pub",
+        ],
+    )
+    agent_container = revision["properties"]["template"]["containers"][0]
+    env_by_name = {e["name"]: e for e in agent_container["env"]}
+    assert env_by_name["VYSTAK_WORKSPACE_HOST"]["value"] == (
+        "vystak-assistant-workspace.internal.eastus.azurecontainerapps.io"
+    )
+    assert env_by_name["VYSTAK_SSH_CLIENT_KEY"]["secretRef"] == (
+        "vystak-workspace-ssh-assistant-client-key"
+    )
+    assert env_by_name["VYSTAK_SSH_KNOWN_HOSTS_PUB"]["secretRef"] == (
+        "vystak-workspace-ssh-assistant-host-key-pub"
+    )
