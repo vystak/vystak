@@ -293,5 +293,5 @@ This is a **public** repo. Every commit is indexable by credential-harvesting bo
 
 - Renamed from **AgentStack → Vystak** (commit history still shows `AgentStack` in older messages).
 - Legacy `.agentstack/` output path is retained in `.gitignore` alongside new `.vystak/`.
-- Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. As of `2edb7a0` the list is stale: it still names removed `vystak-adapter-langchain` and omits `vystak-template-langchain-python`, `vystak-channel-discord`, `vystak-channel-runtime`, `vystak-heartbeat`, `vystak-workspace-rpc`.
+- Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. Deliberately unpublished: `vystak-adapter-mastra` (stub) and `vystak-template-langchain-python` (bundled into the `vystak-cli` wheel by its build hook).
 - TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented.

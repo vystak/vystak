@@ -61,18 +61,24 @@ jobs:
         run: pnpm -r run build
 
       - name: Publish Python packages to PyPI
-        # Explicit list (not a glob) — keeps unreleased stubs/internals off PyPI.
-        # Order: base SDK first, then leaf packages that depend on it.
+        # Explicit list (not a glob) — keeps unreleased stubs/internals off
+        # PyPI. Currently excluded on purpose: vystak-adapter-mastra
+        # (unreleased stub) and vystak-template-langchain-python (bundled
+        # into the vystak-cli wheel by its build hook, not a PyPI dep).
+        # Order: base SDK first, then packages in dependency order.
         # Build artifacts go to the workspace-root ./dist/, so clear between
         # packages and publish one at a time for deterministic ordering.
         run: |
           for pkg in vystak \
+                     vystak-workspace-rpc \
                      vystak-transport-http \
                      vystak-transport-nats \
-                     vystak-adapter-langchain \
+                     vystak-channel-runtime \
                      vystak-channel-api \
                      vystak-channel-chat \
                      vystak-channel-slack \
+                     vystak-channel-discord \
+                     vystak-heartbeat \
                      vystak-provider-docker \
                      vystak-provider-azure \
                      vystak-cli \
