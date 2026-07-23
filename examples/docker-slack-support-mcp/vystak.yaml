@@ -1,0 +1,59 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  minimax:
+    provider: anthropic
+    model_name: MiniMax-M2.7
+    parameters:
+      temperature: 0.3
+      anthropic_api_url: https://api.minimax.io/anthropic
+
+agents:
+  - name: support-agent
+    framework: langchain-python
+    instructions: |
+      You are a friendly customer support agent for the Vystak project.
+      Answer questions about deploying and running agents concisely.
+      When a question needs research into a public GitHub repository's
+      code or documentation (how a library works, where something is
+      implemented, what an API does), delegate to ask_research-agent and
+      relay its findings. Pass the user's question through verbatim.
+    default_model: minimax
+    platform: local
+    subagents: [research-agent]
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+  - name: research-agent
+    framework: langchain-python
+    instructions: |
+      You are a research specialist. Use your DeepWiki MCP tools to look
+      up public GitHub repositories: read_wiki_structure to see what
+      documentation exists, read_wiki_contents to read it, and
+      ask_question to ask about a specific repo. Cite the repo you
+      consulted and keep answers concise.
+    default_model: minimax
+    platform: local
+    mcp_servers:
+      # Public DeepWiki MCP server — no auth required.
+      - name: deepwiki
+        url: https://mcp.deepwiki.com/mcp
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+      - {name: ANTHROPIC_API_URL}
+
+channels:
+  - name: slack-support
+    type: slack
+    platform: local
+    secrets:
+      - {name: SLACK_BOT_TOKEN}
+      - {name: SLACK_APP_TOKEN}
+    agents: [support-agent, research-agent]
+    default_agent: support-agent

@@ -168,7 +168,7 @@ async def test_subagent_tool_returns_task_status_text(monkeypatch):
     fake_client = FakeClient([_make_task_event("the answer is 42")])
     captured: dict[str, str] = {}
 
-    async def fake_create_client(*, agent, relative_card_path=None):  # noqa: ANN001
+    async def fake_create_client(*, agent, relative_card_path=None, **kw):  # noqa: ANN001
         captured["agent"] = agent
         captured["relative_card_path"] = relative_card_path
         return fake_client
@@ -210,7 +210,7 @@ async def test_subagent_tool_returns_status_update_completion_text(monkeypatch):
 
     fake_client = FakeClient([initial_task, working, final])
 
-    async def fake_create_client(*, agent, relative_card_path=None):  # noqa: ANN001
+    async def fake_create_client(*, agent, relative_card_path=None, **kw):  # noqa: ANN001
         return fake_client
 
     monkeypatch.setattr(subagents, "create_client", fake_create_client)
@@ -231,7 +231,7 @@ async def test_subagent_tool_returns_message_event_text(monkeypatch):
     )
     fake_client = FakeClient([_make_message_event("hello")])
 
-    async def fake_create_client(*, agent, relative_card_path=None):  # noqa: ANN001
+    async def fake_create_client(*, agent, relative_card_path=None, **kw):  # noqa: ANN001
         return fake_client
 
     monkeypatch.setattr(subagents, "create_client", fake_create_client)
@@ -250,7 +250,7 @@ async def test_subagent_tool_swallows_client_errors(monkeypatch):
         json.dumps({"weather": {"card_url": "http://w:8000/.well-known/agent.json"}}),
     )
 
-    async def fake_create_client(*, agent, relative_card_path=None):  # noqa: ANN001
+    async def fake_create_client(*, agent, relative_card_path=None, **kw):  # noqa: ANN001
         raise RuntimeError("connection refused")
 
     monkeypatch.setattr(subagents, "create_client", fake_create_client)
@@ -489,3 +489,32 @@ async def test_nats_subagent_tool_includes_traceparent_in_metadata(monkeypatch):
 
     # Cleanup so other tests don't see this provider.
     provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_call_uses_long_timeout_client(monkeypatch):
+    """Subagent A2A calls must not use httpx's ~5s default read timeout —
+    MCP-backed children routinely take tens of seconds."""
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        '{"research": {"address": "http://vystak-research:8000/a2a"}}',
+    )
+    monkeypatch.setattr(
+        subagents, "_fetch_card_with_retries", lambda client, url: None
+    )
+    captured = {}
+
+    async def fake_create_client(agent, client_config=None, **kw):
+        captured["config"] = client_config
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(subagents, "create_client", fake_create_client)
+
+    agent = SimpleNamespace(subagents=["research"])
+    (tool,) = subagents.build_subagent_tools(agent)
+    result = await tool.ainvoke({"query": "q"})
+    assert "stop here" in result  # error path returns, not raises
+
+    config = captured["config"]
+    assert config is not None and config.httpx_client is not None
+    assert config.httpx_client.timeout.read >= 60
