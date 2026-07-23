@@ -28,7 +28,7 @@ def _agent_with_workspace(persistence: str, include_storage_account: bool = True
     return Agent(
         name="assistant",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="claude",
             model_name="claude-3",
             provider=Provider(name="anthropic", type="anthropic"),
@@ -139,7 +139,7 @@ def test_add_workspace_nodes_returns_none_when_no_workspace():
     agent = Agent(
         name="bare",
         framework="langchain-python",
-        model=Model(
+        default_model=Model(
             name="claude",
             model_name="claude-3",
             provider=Provider(name="anthropic", type="anthropic"),

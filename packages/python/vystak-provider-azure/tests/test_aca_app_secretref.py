@@ -465,7 +465,7 @@ def _make_test_agent_no_workspace() -> Agent:
     return Agent(
         name="assistant",
         framework="langchain-python",
-        model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
+        default_model=Model(name="m", provider=anthropic, model_name="claude-sonnet-4-6"),
         secrets=[Secret(name="ANTHROPIC_API_KEY")],
         workspace=None,
         platform=platform,

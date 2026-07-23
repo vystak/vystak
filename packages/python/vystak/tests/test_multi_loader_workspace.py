@@ -98,7 +98,7 @@ ACA_WORKSPACE_CONFIG = {
         {
             "name": "assistant",
             "framework": "langchain-python",
-            "model": "sonnet",
+            "default_model": "sonnet",
             "platform": "aca",
             "secrets": [{"name": "ANTHROPIC_API_KEY"}],
             "workspace": {
