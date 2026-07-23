@@ -85,7 +85,10 @@ jobs:
                      vystak-chat; do
             rm -rf dist
             uv build --package "$pkg"
-            uv publish
+            # --check-url makes reruns idempotent: files already on PyPI
+            # (e.g. after a partial release stopped by the new-project
+            # rate limit) are skipped instead of failing the upload.
+            uv publish --check-url "https://pypi.org/simple/"
           done
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
