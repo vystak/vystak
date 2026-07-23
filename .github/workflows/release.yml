@@ -89,6 +89,11 @@ jobs:
           done
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          # Earlier steps dirty the tree (bump_version.py rewrites npm
+          # package.json files), which makes hatch-vcs derive a
+          # "+local.dirty" dev version that PyPI rejects (400). Pin the
+          # version to the tag instead of letting hatch-vcs walk git.
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Publish TypeScript packages to npm
         run: |
