@@ -95,5 +95,28 @@ class Agent(NamedModel):
             seen.add(m.name)
         return self
 
+    @model_validator(mode="after")
+    def _validate_mcp_secret_refs(self) -> Self:
+        """Every ${secret.X} in mcp_servers must be declared in agent.secrets."""
+        from vystak.secrets.interpolate import SECRET_RE
+
+        declared = {s.name for s in self.secrets}
+        for mcp in self.mcp_servers:
+            fields = {
+                "args": mcp.args,
+                "env": mcp.env,
+                "headers": mcp.headers,
+            }
+            for path, container in fields.items():
+                values = container.values() if isinstance(container, dict) else container
+                for value in values:
+                    for name in SECRET_RE.findall(value):
+                        if name not in declared:
+                            raise ValueError(
+                                f"mcp_servers[{mcp.name}].{path} references "
+                                f"undeclared secret '{name}'; add to agent.secrets"
+                            )
+        return self
+
 
 Agent.model_rebuild()

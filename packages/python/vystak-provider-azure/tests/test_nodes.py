@@ -584,3 +584,28 @@ class TestAzureChannelAppNode:
         assert container_app.tags["vystak:channel"] == "chat"
         assert container_app.tags["vystak:channel-hash"] == "hash-abc"
         assert container_app.tags["vystak:channel-type"] == "chat"
+
+
+class TestMcpToolchainLayers:
+    def test_npx_installs_node_uvx_installs_uv(self):
+        from vystak.schema.mcp import McpServer
+        from vystak_provider_azure.nodes.aca_app import mcp_toolchain_layers
+
+        layers = mcp_toolchain_layers(
+            [
+                McpServer(name="a", command="npx"),
+                McpServer(name="b", command="uvx"),
+            ]
+        )
+        assert "apt-get install -y nodejs npm" in layers
+        assert "pip install --no-cache-dir uv" in layers
+
+    def test_plain_or_remote_servers_need_nothing(self):
+        from vystak.schema.mcp import McpServer
+        from vystak_provider_azure.nodes.aca_app import mcp_toolchain_layers
+
+        assert mcp_toolchain_layers([McpServer(name="x", command="my-mcp")]) == ""
+        assert (
+            mcp_toolchain_layers([McpServer(name="r", url="https://x.example.com")])
+            == ""
+        )

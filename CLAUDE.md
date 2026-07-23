@@ -264,6 +264,12 @@ Loading paths:
 (sessions). When modifying core behavior, update or run the matching example
 to verify end-to-end.
 
+**When implementing a specific feature, create (or update) an agents
+configuration under `examples/` that simulates real usage of that feature** —
+a `vystak.yaml`/`vystak.py` a user could actually deploy exercising the new
+surface. This is part of the feature's definition of done, not an optional
+extra.
+
 ## Secrets and sensitive data
 
 This is a **public** repo. Every commit is indexable by credential-harvesting bots within minutes.

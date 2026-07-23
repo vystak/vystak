@@ -26,6 +26,25 @@ def _kv_secret_name(raw: str) -> str:
     return raw.lower().replace("_", "-")
 
 
+def mcp_toolchain_layers(mcp_servers) -> str:
+    """Dockerfile RUN lines for toolchains the agent's MCP servers need.
+
+    Sniffs ``command`` only (it's the bare executable): ``npx`` → node,
+    ``uvx`` → uv. Anything else is assumed present in the base image.
+    """
+    needs_node = any(m.command == "npx" for m in mcp_servers)
+    needs_uv = any(m.command == "uvx" for m in mcp_servers)
+    layers = ""
+    if needs_node:
+        layers += (
+            "RUN apt-get update && apt-get install -y nodejs npm "
+            "&& rm -rf /var/lib/apt/lists/*\n"
+        )
+    if needs_uv:
+        layers += "RUN pip install --no-cache-dir uv\n"
+    return layers
+
+
 def build_revision_default_path(
     *,
     agent,
@@ -547,31 +566,10 @@ class ContainerAppNode(Provisionable):
                     _shutil.rmtree(_dst)
                 _shutil.copytree(_src, _dst)
 
-            mcp_installs = ""
-            needs_node = False
-            if self._agent.mcp_servers:
-                install_cmds = []
-                for mcp in self._agent.mcp_servers:
-                    if mcp.install:
-                        install_cmds.append(f"RUN {mcp.install}")
-                    for field in (mcp.install or "", mcp.command or ""):
-                        if "npm" in field or "npx" in field:
-                            needs_node = True
-                if install_cmds:
-                    mcp_installs = "\n".join(install_cmds) + "\n"
-
-            node_install = ""
-            if needs_node:
-                node_install = (
-                    "RUN apt-get update && apt-get install -y nodejs npm "
-                    "&& rm -rf /var/lib/apt/lists/*\n"
-                )
-
             dockerfile_content = (
                 "FROM --platform=linux/amd64 python:3.11-slim\n"
                 "WORKDIR /app\n"
-                f"{node_install}"
-                f"{mcp_installs}"
+                f"{mcp_toolchain_layers(self._agent.mcp_servers)}"
                 "COPY requirements.txt .\n"
                 "RUN pip install --no-cache-dir -r requirements.txt\n"
                 "COPY . .\n"

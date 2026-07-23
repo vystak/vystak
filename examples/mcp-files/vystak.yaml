@@ -20,13 +20,16 @@ platform:
     name: docker
     type: docker
 mcp_servers:
+  # Local stdio server: `command` is the bare executable, arguments go in
+  # `args`. Transport is inferred (command → stdio, url → streamable_http).
   - name: filesystem
-    transport: stdio
-    command: npx -y @modelcontextprotocol/server-filesystem /docs
-    install: npm install -g @modelcontextprotocol/server-filesystem
-channels:
-  - name: api
-    type: api
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/docs"]
+  # Remote variant (uncomment and add GITHUB_TOKEN to secrets below):
+  # - name: github
+  #   url: https://api.githubcopilot.com/mcp
+  #   headers:
+  #     Authorization: Bearer ${secret.GITHUB_TOKEN}
 secrets:
   - name: ANTHROPIC_API_KEY
 port: 8093

@@ -407,3 +407,58 @@ def test_agent_rejects_duplicate_with_default_model_name():
             name="bot", framework="langchain-python",
             default_model=default, models=[pool_dup], platform=platform,
         )
+
+
+class TestMcpSecretRefs:
+    def test_undeclared_secret_ref_rejected(self, sonnet):
+        with pytest.raises(ValidationError, match="undeclared secret 'GITHUB_TOKEN'"):
+            Agent(
+                name="bot",
+                framework="langchain-python",
+                default_model=sonnet,
+                mcp_servers=[
+                    McpServer(
+                        name="github",
+                        url="https://api.example.com/mcp",
+                        headers={"Authorization": "Bearer ${secret.GITHUB_TOKEN}"},
+                    )
+                ],
+            )
+
+    def test_declared_secret_ref_validates(self, sonnet):
+        agent = Agent(
+            name="bot",
+            framework="langchain-python",
+            default_model=sonnet,
+            secrets=[Secret(name="GITHUB_TOKEN")],
+            mcp_servers=[
+                McpServer(
+                    name="github",
+                    url="https://api.example.com/mcp",
+                    headers={"Authorization": "Bearer ${secret.GITHUB_TOKEN}"},
+                )
+            ],
+        )
+        assert agent.mcp_servers[0].name == "github"
+
+    def test_ref_in_args_checked(self, sonnet):
+        with pytest.raises(ValidationError, match="undeclared secret 'API_KEY'"):
+            Agent(
+                name="bot",
+                framework="langchain-python",
+                default_model=sonnet,
+                mcp_servers=[
+                    McpServer(name="fs", command="npx", args=["${secret.API_KEY}"])
+                ],
+            )
+
+    def test_ref_in_env_checked(self, sonnet):
+        with pytest.raises(ValidationError, match="undeclared secret 'API_KEY'"):
+            Agent(
+                name="bot",
+                framework="langchain-python",
+                default_model=sonnet,
+                mcp_servers=[
+                    McpServer(name="fs", command="npx", env={"K": "${secret.API_KEY}"})
+                ],
+            )

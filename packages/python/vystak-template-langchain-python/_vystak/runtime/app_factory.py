@@ -24,6 +24,7 @@ from _vystak.runtime.heartbeat_sessions import (
     InMemoryHeartbeatSessions,
     SqliteHeartbeatSessions,
 )
+from _vystak.runtime.mcp import attach_mcp_servers
 from _vystak.runtime.memory import MemoryManager
 from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
@@ -142,12 +143,22 @@ def build_agent_app(agent: Any) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
         async with AsyncExitStack() as stack:
-            if is_lazy:
-                resolved = await stack.enter_async_context(checkpointer.context_manager())
+            # MCP servers spawn/connect async, so tools attach at startup
+            # rather than in the (sync) factory. Any attached tools force a
+            # graph rebuild, same as the lazy-checkpointer path below.
+            mcp_tools = await attach_mcp_servers(agent)
+            app_.state.mcp_tools = mcp_tools
+
+            if is_lazy or mcp_tools:
+                resolved = (
+                    await stack.enter_async_context(checkpointer.context_manager())
+                    if is_lazy
+                    else checkpointer
+                )
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
-                    tools=user_tools + workspace_tools + subagent_tools,
+                    tools=user_tools + workspace_tools + subagent_tools + mcp_tools,
                     checkpointer=resolved,
                 )
                 a2a_executor._graph = new_graph

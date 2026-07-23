@@ -11,6 +11,26 @@ from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
 
 
+def mcp_toolchain_layers(mcp_servers) -> str:
+    """Dockerfile RUN lines for toolchains the agent's MCP servers need.
+
+    Sniffs ``command`` only (it's the bare executable): ``npx`` → node,
+    ``uvx`` → uv. Anything else is assumed present in the base image or
+    user-owned Dockerfile.
+    """
+    needs_node = any(m.command == "npx" for m in mcp_servers)
+    needs_uv = any(m.command == "uvx" for m in mcp_servers)
+    layers = ""
+    if needs_node:
+        layers += (
+            "RUN apt-get update && apt-get install -y nodejs npm "
+            "&& rm -rf /var/lib/apt/lists/*\n"
+        )
+    if needs_uv:
+        layers += "RUN pip install --no-cache-dir uv\n"
+    return layers
+
+
 class DockerAgentNode(Provisionable):
     """Builds a Docker image and runs an agent container."""
 
@@ -145,31 +165,10 @@ class DockerAgentNode(Provisionable):
             user_provided_dockerfile = user_dockerfile.exists()
 
             if not user_provided_dockerfile:
-                mcp_installs = ""
-                needs_node = False
-                if self._agent.mcp_servers:
-                    install_cmds = []
-                    for mcp in self._agent.mcp_servers:
-                        if mcp.install:
-                            install_cmds.append(f"RUN {mcp.install}")
-                        for field in (mcp.install or "", mcp.command or ""):
-                            if "npm" in field or "npx" in field:
-                                needs_node = True
-                    if install_cmds:
-                        mcp_installs = "\n".join(install_cmds) + "\n"
-
-                node_install = ""
-                if needs_node:
-                    node_install = (
-                        "RUN apt-get update && apt-get install -y nodejs npm "
-                        "&& rm -rf /var/lib/apt/lists/*\n"
-                    )
-
                 dockerfile_content = (
                     "FROM python:3.11-slim\n"
                     "WORKDIR /app\n"
-                    f"{node_install}"
-                    f"{mcp_installs}"
+                    f"{mcp_toolchain_layers(self._agent.mcp_servers)}"
                     "COPY requirements.txt .\n"
                     "RUN pip install --no-cache-dir -r requirements.txt\n"
                     "COPY . .\n"
