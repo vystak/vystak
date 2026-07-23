@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Dual-language monorepo coordinated by `just`:
 
 - **Python workspace** (`uv`) — root `pyproject.toml` declares `packages/python/*` as workspace members. Python 3.11+.
-- **TypeScript workspace** (`pnpm`) — `pnpm-workspace.yaml` declares `packages/typescript/*` and `website/`. Node 20+.
+- **TypeScript workspace** (`pnpm`) — `pnpm-workspace.yaml` declares `packages/typescript/*` and `website/`. Node 20+. All TS packages are 3-line stubs; the entire implementation is Python.
 
 The `Justfile` and lowercase `justfile` are duplicates — both work. Use `just <recipe>`.
 
@@ -18,7 +18,10 @@ The `Justfile` and lowercase `justfile` are duplicates — both work. Use `just 
 uv sync                 # install Python deps (all workspace packages editable)
 pnpm install            # install TS deps
 
-# Full CI parity (what GitHub Actions runs)
+# What GitHub Actions runs — the four currently-green gates
+just ci-live            # lint-python + typecheck-typescript + test-python + test-typescript
+
+# Full check incl. known-red gates (aspirational; see "Known pre-existing CI issues")
 just ci                 # lint + typecheck + test, both languages
 
 # Lint / format / typecheck
@@ -34,8 +37,8 @@ just test-typescript    # pnpm -r run test
 
 # Single test / single file
 uv run pytest packages/python/vystak/tests/test_agent.py -v
-uv run pytest packages/python/vystak/tests/test_agent.py::TestAgent::test_name
-uv run pytest packages/python/ -k "test_hasher"       # by name pattern
+uv run pytest packages/python/vystak/tests/test_agent.py::TestAgent::test_minimal
+uv run pytest packages/python/ -k "hash_tree"         # by name pattern
 
 # Opt-in Docker integration tests — spin up real containers
 uv run pytest -m docker -v           # runs only docker-marked tests
@@ -45,52 +48,60 @@ uv run pytest -m docker -v           # runs only docker-marked tests
 # deploy → verify → destroy lifecycle pytest. Gated cells auto-skip.
 uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
   -m "release_smoke or release_integration or release_live_chat"
-# ~42s cold locally; 7 PASS, 5 SKIP (Slack-gated and live-chat without
-# real keys). See "Release tests" section below.
 
 # Docs site (Docusaurus under website/)
 just docs-dev           # pnpm --filter vystak-docs start
 just docs-build
+just docs-serve
+
+# Cut a release: tags v<version>, release.yml publishes to PyPI + npm
+just release 0.2.0
 ```
 
 ## Known pre-existing CI issues
 
-As of main (`f82c342`), `just ci` does **not** fully green because of issues unrelated to any specific PR:
+As of main (`2edb7a0`), `just ci` does **not** fully green because of long-standing baseline issues:
 
-- **`lint-typescript`** fails — ESLint 9 requires `eslint.config.js`, missing in `packages/typescript/cli` and `packages/typescript/core`.
-- **`typecheck-python`** fails with ~300 pyright errors. Mostly two patterns: (1) Pydantic-style test fixtures missing required fields (`name=`, `provider=`, `type=`); (2) `Optional` member access in `templates.py` / `tree.py` / `compaction/` (e.g. `agent.compaction.mode` without narrowing the `Compaction | None`). Same pattern as the long-standing `session_store.engine` access that hasn't been gated on. Never ran in CI before 2026-04-16 because lint-python blocked it first.
+- **`lint-typescript`** fails — ESLint 9 requires `eslint.config.js`, missing in the TS packages.
+- **`typecheck-python`** fails — 370 pyright errors at last count (the number drifts; in-repo comments citing ~124 or ~300 are older snapshots). Mostly two patterns: (1) Pydantic-style test fixtures missing required fields; (2) `Optional` member access without narrowing (e.g. `agent.compaction.mode` on `Compaction | None`).
 
-`just lint-python`, `just test-python`, `just typecheck-typescript`, `just test-typescript` all pass. When adding work, assume these four gates are the live ones.
+`just lint-python`, `just test-python`, `just typecheck-typescript`, `just test-typescript` all pass — these four are `just ci-live`, which is exactly what `.github/workflows/ci.yml` runs (matrix: Python 3.11–3.13 × Node 20/22). When adding work, assume these four gates are the live ones. Release tests never run in GitHub Actions.
 
-## Release tests (16-cell matrix)
+## Release tests (matrix from test_plan.md)
 
-Test cells live under `tests/release/` in each provider package and
-exercise the full deploy → verify → destroy lifecycle. Each cell is
-one pytest file per combination from `test_plan.md` (repo root):
-**stack × secrets × channel × transport**. The canonical reference is
-`test_plan.md`; this section just documents how to run them.
+Test cells live under `tests/release/` in each provider package and exercise
+the full deploy → verify → destroy lifecycle. The canonical reference is
+`test_plan.md` (repo root): **stack × secrets × channel × transport**, cells
+D1–D8 (Docker) and A1–A8 (Azure), plus extra lifecycle cells beyond the grid:
 
-Markers (all gated — default `pytest` excludes them):
+- Docker (`vystak-provider-docker/tests/release/`, 14 files): `test_D1..D8_*`,
+  `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_live_chat.py`, and
+  three Postgres variants (`test_sessions_postgres.py`, `test_memory_postgres.py`,
+  `test_sessions_and_memory_postgres.py`).
+- Azure (`vystak-provider-azure/tests/release/`, 8 files): `test_A1..A8_*`.
+
+Markers (all gated — default `pytest` excludes them; registered in root `pyproject.toml`):
 
 | Marker | What | Prereqs |
 |---|---|---|
-| `release_smoke` | Must-pass release gate. Docker cells D1–D4 + Azure A1/A2. | Docker daemon (for D cells) |
-| `release_integration` | Compose two+ axes. D5–D7, A3–A5, Postgres variants (sessions / memory / both). | Docker daemon |
-| `release_smoke_azure` | Azure smoke A1/A2. | `AZURE_SUBSCRIPTION_ID` + `az login` |
-| `release_slack` | Cells with Slack channel (D3/D5/D7/D8, A3/A4/A7/A8). | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` |
+| `release_smoke` | Must-pass release gate (Docker cells + template smoke). | Docker daemon |
+| `release_integration` | Compose two+ axes: Postgres variants, heartbeat, NATS/stream. | Docker daemon |
+| `release_smoke_azure` | Azure smoke. | `AZURE_SUBSCRIPTION_ID` + `az login` |
+| `release_slack` | Slack-channel cells. | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` |
+| `release_discord` | Discord-channel cells. | `DISCORD_BOT_TOKEN` |
 | `release_live_chat` | Real LLM round-trip (single cell). | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
 
 Common invocations:
 
 ```bash
-# Full local Docker suite (~42s cold; auto-skips gated cells)
+# Full local Docker suite (auto-skips gated cells)
 uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
   -m "release_smoke or release_integration or release_live_chat"
 
 # Single cell
 uv run pytest .../test_D1_docker_default_chat_http.py -v -m release_smoke
 
-# With Slack tokens (unlocks D3/D5/D7/D8 locally)
+# With Slack tokens
 export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
 uv run pytest packages/python/vystak-provider-docker/tests/release/ -v \
   -m "release_integration or release_slack"
@@ -106,7 +117,9 @@ uv run pytest packages/python/vystak-provider-azure/tests/release/ -v \
   -m release_smoke_azure
 ```
 
-Shared fixtures (per-provider `tests/release/conftest.py`):
+Shared fixtures (per-provider `tests/release/conftest.py` — Docker conftest has
+`project` / `vault_clean` / `postgres_clean` / `docker_required`; Azure conftest
+has `azure_project` / `azure_required`):
 
 - `project` / `azure_project` — tmp project dir with sentinel `.env`,
   guaranteed `vystak destroy` teardown even on test failure.
@@ -121,79 +134,135 @@ Shared fixtures (per-provider `tests/release/conftest.py`):
   on that volume; subsequent runs with a fresh password in
   `.vystak/secrets.json` fail authentication.
 
-Verification dimensions V1–V9 (see `test_plan.md` for details): V1
-plan, V2 apply, V3 isolation (per-container secret scoping), V4 health,
-V5 agent card, V6 channel I/O, V7 transport, V8 rotation, V9 destroy.
+Verification dimensions V1–V15 (see `test_plan.md`): V1 plan, V2 apply,
+V3 isolation, V4 health, V5 agent card, V6 channel I/O, V7 transport,
+V8 rotation, V9 destroy, V10–V12 workspace (isolation / SSH RPC /
+persistence), V13–V15 multi-agent (subagent codegen / restrictive
+routing / session continuity).
 
-## Architecture — three orthogonal axes
+## Architecture — orthogonal axes
 
-The core design idea (see `docs/principles.md`): an Agent definition is compiled against three independent choices, none of which abstracts the others:
+The core design idea (see `docs/principles.md` — its "Seven Concepts" table is
+the conceptual map): an Agent definition is compiled against independent
+choices, none of which abstracts the others:
 
 ```
 Agent Schema (Pydantic)
-    ├── Framework Adapter  — HOW the agent thinks  (vystak-adapter-langchain)
-    ├── Platform Provider  — WHERE it runs         (vystak-provider-docker, vystak-provider-azure)
-    └── Channel Adapter    — HOW users reach it    (vystak-channel-api, vystak-gateway)
+    ├── Framework template  — HOW the agent thinks     (vystak-template-langchain-python)
+    ├── Platform provider   — WHERE it runs            (vystak-provider-docker, vystak-provider-azure)
+    ├── Channel plugin      — HOW users reach it       (vystak-channel-chat / -slack / -discord / -api)
+    └── Transport plugin    — HOW agents talk east-west (vystak-transport-http, vystak-transport-nats)
 ```
 
-Adapters generate **native framework code** as strings, not runtime abstractions. `vystak-adapter-langchain` emits idiomatic LangGraph + FastAPI source for each agent.
+Base ABCs live in `vystak/src/vystak/providers/base.py`: `FrameworkAdapter`,
+`PlatformProvider` (with `plan/apply/destroy` + channel variants),
+`ChannelPlugin`, `TransportPlugin`. Channels are **separately deployed
+containers** (one per declaration), registered via the `vystak.channels` entry
+point into `vystak.channels.registry.ChannelPluginRegistry`.
+
+**The codegen model changed** from the original design: agent code is no longer
+emitted as source strings by an adapter. `vystak-template-langchain-python` is a
+real, runnable project tree copied wholesale into the user's project at
+`vystak init` (and refreshed by `vystak update`). Its `_vystak/runtime/`
+machinery (`app_factory.build_agent_app`) composes the LangGraph react-agent +
+FastAPI + A2A + OpenAI-compatible endpoints at runtime. `vystak-cli`'s
+`templates.py` is a template *registry/resolver*, not an emitter.
 
 ## Core packages (Python)
 
-- **`vystak`** — schema models, hash engine, provisioning graph, provider ABCs, stores.
-  - `vystak.schema/` — Pydantic `Agent`, `Model`, `Provider`, `Platform`, `Channel`, `Service`, `Skill`, `Workspace`, `Secret`, `Mcp`. This is the contract.
-  - `vystak.hash/` — content-addressable hashing (`AgentHashTree`). Used for **hash-based change detection** — no state files. `vystak plan` compares hash of definition to hash stored as a platform label.
-  - `vystak.provisioning/` — `ProvisionGraph` is a DAG of `Provisionable` nodes with `depends_on`, `provision(context)`, `health_check()`, `destroy()`. Providers build a graph, topologically sort, run nodes, thread results through `context`.
-  - `vystak.providers/` — base classes: `PlatformProvider`, `FrameworkAdapter`, `ChannelAdapter`, `DeployPlan`, `DeployResult`, `GeneratedCode`.
-- **`vystak-cli`** — `vystak init | plan | apply | destroy | status | logs`. Loads agent definitions via `vystak_cli.loader` (YAML or Python file).
-- **`vystak-adapter-langchain`** — generates LangGraph react-agent + FastAPI server. Also emits A2A protocol endpoints.
-- **`vystak-provider-docker`** — `DockerProvider.apply()` builds a `ProvisionGraph` with ACR-free container/volume nodes for Postgres/SQLite.
-- **`vystak-provider-azure`** — same pattern for Azure Container Apps: `ResourceGroupNode → LogAnalyticsNode → ACRNode → ACAEnvironmentNode → ContainerAppNode`, plus `AzurePostgresNode`.
-- **`vystak-gateway`** — FastAPI service providing OpenAI-compatible `/v1/chat/completions` + `/v1/responses`, Slack Socket Mode runner, agent discovery, proxy routing.
-- **`vystak-chat`** — Rich/prompt-toolkit terminal REPL (`vystak-chat`), slash commands, streaming, session history.
-- **`vystak-adapter-mastra`**, **`vystak-channel-api`** — stubs.
+Core:
+- **`vystak`** — schema models, hash engine, provisioning graph, plugin ABCs, transport client, stores.
+  - `vystak.schema/` — Pydantic contract: `Agent` (with `default_model` + `models` pool, `Heartbeat`, `Compaction`), `Skill`, `Channel`, `Resource`, `Workspace`, `Provider`, `Platform`, `Transport`, `Vault`, `Telemetry`, `Secret`, `McpServer`, `Service`, plus the OpenAI-compatible API models.
+  - `vystak.hash/` — content-addressable hashing (`AgentHashTree`) for **hash-based change detection** — no state files. `vystak plan` compares definition hash to the hash stored as a platform label.
+  - `vystak.provisioning/` — `ProvisionGraph`: DAG of `Provisionable` nodes with `depends_on`, `provision(context)`, `health_check()`, `destroy()`. Providers build a graph, topologically sort, thread results through `context`.
+  - `vystak.providers/` — the four ABCs plus `DeployPlan`, `DeployResult`, `GeneratedCode`.
+  - `vystak.transport/` — east-west A2A abstraction: `Transport`, `AgentClient`/`ask_agent`, `A2AHandler`, typed `A2AMessage`/`A2AResult`/`AgentRef`.
+  - `vystak.ir/` — intermediate representation consumed by framework adapters.
+  - `vystak.state/` — local `.vystak/` deploy-side bookkeeping (pushed secrets, identities).
+  - `vystak.secrets/` — runtime SDK for reading secrets from container env.
+  - `vystak.channels/` — `ChannelPluginRegistry`.
+- **`vystak-cli`** — `vystak init | plan | apply | destroy | status | logs | secrets | update` (Click; commands under `vystak_cli/commands/`). Scaffolds projects from bundled framework templates.
+- **`vystak-chat`** — Rich/prompt-toolkit terminal REPL to talk to deployed agents (A2A client + agent picker).
 
-Python TS packages (`@vystak/core`, `@vystak/cli`, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are currently stubs — TS port is not yet implemented.
+Framework templates:
+- **`vystak-template-langchain-python`** — the LangChain/LangGraph agent template (see Architecture above). Layout: user-owned `server.py`/`vystak.yaml`/`Dockerfile`/`tools/` + `_vystak/runtime/` (app_factory, graph, mcp, memory, subagents, compaction, `a2a_native/`, `openai/`).
+- **`vystak-adapter-mastra`** — minimal secondary `FrameworkAdapter`.
 
-## A2A protocol (agent-to-agent)
+Channels (each a `ChannelPlugin`, deployed as its own container):
+- **`vystak-channel-runtime`** — shared `ChannelRuntime` base bundled into every channel image: agent client, delivery, heartbeat hooks, store, telemetry.
+- **`vystak-channel-chat`** — OpenAI-compatible unified endpoint (`/v1/chat/completions`), routes by `model="vystak/<agent-name>"`. This replaced the old `vystak-gateway` router.
+- **`vystak-channel-slack`** — Slack Socket Mode runner (slack-bolt).
+- **`vystak-channel-discord`** — Discord Gateway runner (discord.py).
+- **`vystak-channel-api`** — REST channel (minimal).
 
-Every agent deployed by the LangChain adapter exposes Google A2A endpoints on its HTTP port:
-- `GET /.well-known/agent.json` — Agent Card
-- `POST /a2a` with JSON-RPC methods `tasks/send`, `tasks/sendSubscribe` (SSE), `tasks/get`, `tasks/cancel`
+Transports: **`vystak-transport-http`** (no broker), **`vystak-transport-nats`** (JetStream; provisions broker + injects listener code into agent `server.py`).
 
-Multi-agent setups (`examples/multi-agent/`) call peers via `httpx` + A2A JSON-RPC inside tool functions. Gateway also aggregates multiple agents under one OpenAI-compatible endpoint.
+Providers: **`vystak-provider-docker`** (containers/volumes/network nodes under `nodes/` for agents, channels, heartbeat, vault, nats, otel, workspaces), **`vystak-provider-azure`** (ACA: `ResourceGroupNode → LogAnalyticsNode → ACRNode → ACAEnvironmentNode → ContainerAppNode`, plus Key Vault, managed identity, `AzurePostgresNode`).
+
+Infra services:
+- **`vystak-heartbeat`** — standalone scheduler container (cron via `croniter`): invokes agents over the configured Transport and delivers results through a channel. Auto-spawned once per platform when any agent declares `heartbeat` (`vystak-provider-docker/nodes/heartbeat.py`; ACA equivalent on Azure). See `docs/heartbeat.md`.
+- **`vystak-workspace-rpc`** — JSON-RPC 2.0 server spoken **over SSH** (sshd `subsystem vystak-rpc`) inside standalone workspace containers; services: exec, fs, git, tool. Agent containers SSH into the workspace and drive it via this RPC.
+
+## Agent endpoints (A2A + OpenAI-compatible)
+
+Every agent built from the langchain template serves, on its HTTP port
+(wired in `_vystak/runtime/app_factory.py`):
+- `GET /.well-known/agent.json` — Agent Card (`a2a_native/card.py`)
+- `POST /a2a` — JSON-RPC via a2a-sdk (`LangGraphExecutor`)
+- `POST /v1/chat/completions`, `/v1/responses`, `GET /v1/models`, `/healthz`
+
+Multi-agent setups call peers via the `vystak.transport` client (A2A over
+HTTP or NATS) inside tool functions; `vystak-channel-chat` aggregates multiple
+agents under one OpenAI-compatible endpoint.
 
 ## Codegen modules — load-bearing quirks
 
-Two modules emit literal Python source as strings, producing long lines by nature:
+Modules that emit literal source/config as strings have `per-file-ignores`
+for **E501** in root `pyproject.toml`:
 
-- `packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/a2a.py`
-- `packages/python/vystak-adapter-langchain/src/vystak_adapter_langchain/templates.py`
+- `vystak-channel-chat/src/vystak_channel_chat/server_template.py`
+- `vystak-channel-slack/src/vystak_channel_slack/server_template.py`
+- `vystak-provider-docker/src/vystak_provider_docker/templates.py`
 
-`pyproject.toml` has `per-file-ignores` for **E501** on these files. Do **not** remove the ignores or try to mechanically break lines inside the generated source — that's intentionally intact framework code.
+The channel `server_template.py` files emit build-time `REQUIREMENTS`/
+`DOCKERFILE` strings (the runnable code is the bundled package itself);
+provider-docker `templates.py` emits deterministic Vault HCL + entrypoint
+shims. Do **not** remove the ignores or mechanically break lines inside the
+emitted strings.
 
-## Test-mock import quirks
+## Side-effect / test-mock import quirks
 
-Several tests patch module attributes that are imported at module level but not otherwise used (`ruff` will want to F401-remove them):
+Imports that look unused but are load-bearing (all carry `# noqa: F401`
+comments — **do not remove** even if ruff flags them):
 
 - `vystak_provider_docker.network` — `import docker` (patched by `test_network.py`)
 - `vystak_provider_docker.resources` — `import docker` + `import docker.errors` (patched by `test_resources.py`)
-
-These have `# noqa: F401 — re-exported for test patching` comments. **Do not remove** these imports even if ruff flags them as unused.
+- `vystak_cli/cli.py` — `import vystak_channel_chat / _discord / _slack` registers each `ChannelType` plugin as an import side effect; removing them silently breaks channel resolution.
 
 ## Schema contract
 
-`vystak.schema.Agent` is the authoritative shape. Everything generates *from* this — codegen, provisioning, hashing, validation. Adding fields means:
+`vystak.schema.Agent` is the authoritative shape. Everything generates *from*
+this — template runtime, provisioning, hashing, validation. Adding fields means:
 1. Add to the Pydantic model under `vystak/schema/`.
-2. Update the hash contribution if the new field affects deploy identity (see `vystak/hash/tree.py`).
-3. Update relevant adapter codegen (`vystak-adapter-langchain/templates.py`) to consume the new field.
-4. Update test fixtures across packages.
+2. Update the hash contribution if the field affects deploy identity (`vystak/hash/tree.py`).
+3. Update the template runtime to consume it (`vystak-template-langchain-python/_vystak/runtime/`).
+4. Update `multi_loader` validation if cross-object references are involved.
+5. Update test fixtures across packages.
 
-YAML schema is loaded via `vystak.schema.loader.load_agent`; Python files are loaded as modules with an `agent = ...` module-level binding (see `vystak-cli/src/vystak_cli/loader.py`).
+Loading paths:
+- Single-agent YAML/JSON: `vystak.schema.loader.load_agent` (rejects `subagents` — use multi-doc layout).
+- Multi-agent/workspace YAML: `vystak.schema.multi_loader.load_multi_yaml` — top-level named `providers`, `platforms`, `models`, `agents`, `channels`, `vault`; resolves named references and validates channel↔agent and heartbeat `target_channel`.
+- CLI entry: `vystak_cli.loader.load_definitions` — convention files `vystak.yaml` / `vystak.yml` / `vystak.py`. Python files are exec'd and **all** module-level `Agent` instances are collected. Environment overlays via `vystak.<env>.py` with an `override` binding.
 
 ## Examples
 
-`examples/` contains real agent configurations exercising different features (multi-agent, MCP tools, Postgres sessions, Azure, memory). When modifying core behavior, update or run the matching example to verify end-to-end.
+`examples/` (28 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+(provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
+`heartbeat-*`, `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
+`docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
+`mcp-files`, `memory-agent`, `sessions-postgres` / `docker-compaction`
+(sessions). When modifying core behavior, update or run the matching example
+to verify end-to-end.
 
 ## Secrets and sensitive data
 
@@ -224,5 +293,5 @@ This is a **public** repo. Every commit is indexable by credential-harvesting bo
 
 - Renamed from **AgentStack → Vystak** (commit history still shows `AgentStack` in older messages).
 - Legacy `.agentstack/` output path is retained in `.gitignore` alongside new `.vystak/`.
-- Package names on PyPI: `vystak`, `vystak-cli`, `vystak-adapter-langchain`, `vystak-provider-docker`, `vystak-provider-azure`, `vystak-gateway`, `vystak-chat`.
-- TS package `vystak` (CLI) is published to npm; other TS packages are stubs.
+- Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. As of `2edb7a0` the list is stale: it still names removed `vystak-adapter-langchain` and omits `vystak-template-langchain-python`, `vystak-channel-discord`, `vystak-channel-runtime`, `vystak-heartbeat`, `vystak-workspace-rpc`.
+- TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented.
