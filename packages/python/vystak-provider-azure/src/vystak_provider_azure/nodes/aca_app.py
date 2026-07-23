@@ -37,6 +37,8 @@ def build_revision_default_path(
     agent_image: str,
     workspace_image: str | None,
     extra_env: list[dict] | None = None,
+    workspace_host: str | None = None,
+    workspace_ssh_secrets: dict[str, str] | None = None,
 ) -> dict:
     """Build the ACA revision body for the default (no-Vault) delivery path.
 
@@ -101,6 +103,19 @@ def build_revision_default_path(
         {"name": name, "secretRef": _kv_secret_name(name)}
         for name in model_secrets
     ]
+    # Workspace SSH context — inject FQDN + SSH inline secrets when provided.
+    # Additive: independent of the sidecar path (removed in Task 12).
+    if workspace_host is not None:
+        agent_env.append({"name": "VYSTAK_WORKSPACE_HOST", "value": workspace_host})
+    for s, v in (workspace_ssh_secrets or {}).items():
+        safe = _kv_secret_name(s)
+        if safe not in seen:
+            seen.add(safe)
+            inline_secrets.append({"name": safe, "value": v})
+        if s.endswith("-client-key"):
+            agent_env.append({"name": "VYSTAK_SSH_CLIENT_KEY", "secretRef": safe})
+        elif s.endswith("-host-key-pub"):
+            agent_env.append({"name": "VYSTAK_SSH_KNOWN_HOSTS_PUB", "secretRef": safe})
     if emit_workspace_sidecar:
         agent_env.append(
             {"name": "VYSTAK_WORKSPACE_RPC_URL", "value": "http://localhost:50051"}
@@ -175,6 +190,8 @@ def build_revision_for_vault(
     agent_image: str,
     workspace_image: str | None,
     extra_env: list[dict] | None = None,
+    workspace_host: str | None = None,
+    workspace_ssh_kv_secrets: list[str] | None = None,
 ) -> dict:
     """Build the ACA revision body for a vault-backed agent (optional workspace sidecar).
 
@@ -234,6 +251,29 @@ def build_revision_for_vault(
     agent_env: list[dict] = [
         {"name": s, "secretRef": _kv_secret_name(s)} for s in model_secrets
     ]
+    # Workspace SSH context — inject FQDN + SSH key refs when provided.
+    # Additive: independent of the sidecar path (removed in Task 12).
+    if workspace_host is not None:
+        agent_env.append({"name": "VYSTAK_WORKSPACE_HOST", "value": workspace_host})
+    for s in workspace_ssh_kv_secrets or []:
+        if s.endswith("-client-key"):
+            agent_env.append({"name": "VYSTAK_SSH_CLIENT_KEY", "secretRef": s})
+            kv_secrets_block.append(
+                {
+                    "name": s,
+                    "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                    "identity": agent_identity_resource_id,
+                }
+            )
+        elif s.endswith("-host-key-pub"):
+            agent_env.append({"name": "VYSTAK_SSH_KNOWN_HOSTS_PUB", "secretRef": s})
+            kv_secrets_block.append(
+                {
+                    "name": s,
+                    "keyVaultUrl": f"{vault_uri}secrets/{s}",
+                    "identity": agent_identity_resource_id,
+                }
+            )
     if emit_workspace_sidecar:
         # Match the default-path helper — only inject the RPC URL when a
         # sidecar will actually exist to respond on localhost:50051.
@@ -338,6 +378,12 @@ class ContainerAppNode(Provisionable):
         self._vault_workspace_secrets: list[str] = []
         self._workspace_image: str | None = None
 
+        # Workspace SSH context (set via set_workspace_context).
+        self._workspace_app_node_name: str | None = None
+        # _workspace_host resolved from context in _build_body
+        self._workspace_host: str | None = None
+        self._workspace_ssh_kv_secrets: list[str] = []
+
     def set_vault_context(
         self,
         *,
@@ -362,6 +408,22 @@ class ContainerAppNode(Provisionable):
         self._vault_workspace_secrets = list(workspace_secrets)
         self._workspace_image = workspace_image
 
+    def set_workspace_context(
+        self,
+        *,
+        workspace_app_node_name: str,
+        workspace_ssh_kv_secrets: list[str],
+    ) -> None:
+        """Wire workspace SSH client keys + known_hosts into the agent app.
+
+        ``workspace_app_node_name`` is the ``.name`` of the
+        ``ACAWorkspaceAppNode`` whose provision result info dict carries
+        ``"workspace_host"``. The actual FQDN is resolved from context at
+        ``_build_body`` time.
+        """
+        self._workspace_app_node_name = workspace_app_node_name
+        self._workspace_ssh_kv_secrets = workspace_ssh_kv_secrets
+
     def _build_body(self, context: dict, acr_info: dict) -> dict:
         """Build the ACA revision body when in vault-backed mode.
 
@@ -371,6 +433,10 @@ class ContainerAppNode(Provisionable):
         assert self._vault_key is not None, (
             "_build_body called without vault context; use legacy path"
         )
+        if self._workspace_app_node_name is not None:
+            ws_result = context.get(self._workspace_app_node_name)
+            if ws_result is not None:
+                self._workspace_host = ws_result.info.get("workspace_host")
         vault_info = context[self._vault_key].info
         agent_id_info = context[self._agent_identity_key].info
         ws_id_info: dict = {}
@@ -410,6 +476,8 @@ class ContainerAppNode(Provisionable):
             acr_password_value=acr_info["password"],
             agent_image=agent_image,
             workspace_image=workspace_image,
+            workspace_host=self._workspace_host,
+            workspace_ssh_kv_secrets=self._workspace_ssh_kv_secrets,
         )
 
     @property
@@ -432,6 +500,8 @@ class ContainerAppNode(Provisionable):
             and self._agent.memory.name not in deps
         ):
             deps.append(self._agent.memory.name)
+        if self._workspace_app_node_name:
+            deps.append(self._workspace_app_node_name)
         return deps
 
     def provision(self, context: dict) -> ProvisionResult:

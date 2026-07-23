@@ -453,6 +453,115 @@ class AzureProvider(PlatformProvider):
             workspace_secret_names,
         )
 
+    def _add_workspace_nodes(
+        self,
+        *,
+        graph,
+        agent,
+        rg_name: str,
+        env_name: str,
+        acr_name: str,
+        vault_node_name: str,
+        workspace_identity_key: str | None,
+        location: str,
+        cfg: dict,
+        aca_client,
+        docker_client,
+        secret_client,
+        storage_client,
+    ) -> tuple[str | None, list[str]]:
+        """Add workspace subgraph (ssh-keygen, files-share, env-storage, app).
+
+        Returns (workspace_app_node_name, workspace_ssh_kv_secrets). Both
+        are passed to ContainerAppNode.set_workspace_context. Returns
+        (None, []) when the agent has no workspace declared.
+        """
+        from vystak_provider_azure.nodes.aca_env_storage import ACAEnvStorageNode
+        from vystak_provider_azure.nodes.aca_workspace_app import ACAWorkspaceAppNode
+        from vystak_provider_azure.nodes.files_share import AzureFilesShareNode
+        from vystak_provider_azure.nodes.workspace_ssh_keygen import (
+            AzureWorkspaceSshKeygenNode,
+        )
+
+        if agent.workspace is None:
+            return None, []
+
+        ws = agent.workspace
+        workspace_ssh_kv_secrets = [
+            f"vystak-workspace-ssh-{agent.name}-client-key",
+            f"vystak-workspace-ssh-{agent.name}-host-key-pub",
+        ]
+
+        # Validate prereq for volume persistence.
+        storage_account: str | None = None
+        if ws.persistence == "volume":
+            storage_account = cfg.get("storage_account")
+            if not storage_account:
+                raise ValueError(
+                    f"Agent '{agent.name}': workspace.persistence='volume' "
+                    f"requires platform.config.storage_account "
+                    f"(name of an existing Azure Storage account). "
+                    f"Add it to platform.config in vystak.yaml, or set "
+                    f"persistence: ephemeral."
+                )
+
+        # Keygen — always added when workspace declared.
+        keygen_node = AzureWorkspaceSshKeygenNode(
+            agent_name=agent.name,
+            secret_client=secret_client,
+            docker_client=docker_client,
+        )
+        graph.add(keygen_node)
+
+        # Files share + env storage — only on volume mode.
+        files_share_node_name: str | None = None
+        env_storage_node_name: str | None = None
+        if ws.persistence == "volume":
+            share_name = f"vystak-{agent.name}-workspace-data"
+            share_node = AzureFilesShareNode(
+                client=storage_client,
+                rg_name=rg_name,
+                storage_account=storage_account,
+                share_name=share_name,
+            )
+            graph.add(share_node)
+            files_share_node_name = share_node.name
+
+            storage_logical_name = f"vystak-{agent.name}-workspace"
+            env_storage_node = ACAEnvStorageNode(
+                aca_client=aca_client,
+                storage_client=storage_client,
+                rg_name=rg_name,
+                env_name=env_name,
+                storage_name=storage_logical_name,
+                storage_account=storage_account,
+                share_name=share_name,
+            )
+            graph.add(env_storage_node)
+            env_storage_node_name = env_storage_node.name
+
+        # Workspace app.
+        workspace_app = ACAWorkspaceAppNode(
+            aca_client=aca_client,
+            docker_client=docker_client,
+            rg_name=rg_name,
+            env_name=env_name,
+            agent=agent,
+            platform_config=cfg,
+            location=location,
+            ssh_keygen_node_name=keygen_node.name,
+            files_share_node_name=files_share_node_name,
+            env_storage_node_name=env_storage_node_name,
+            acr_node_name=f"acr-{acr_name}",
+            vault_node_name=vault_node_name,
+            workspace_identity_node_name=(
+                f"uami-{workspace_identity_key}" if workspace_identity_key else ""
+            ),
+        )
+        graph.add(workspace_app)
+
+        return workspace_app.name, workspace_ssh_kv_secrets
+
     # ------------------------------------------------------------------
     # PlatformProvider interface
     # ------------------------------------------------------------------
@@ -645,6 +754,38 @@ class AzureProvider(PlatformProvider):
                 vault_ctx
             )
 
+            # Workspace subgraph — keygen, files share, env storage, workspace app.
+            from azure.keyvault.secrets import SecretClient as _SecretClient
+            from azure.mgmt.storage import StorageManagementClient
+
+            storage_client = StorageManagementClient(credential, subscription_id)
+            vault_name = (
+                self._vault.config.get("vault_name") or self._vault.name
+                if self._vault
+                else ""
+            )
+            _secret_client = _SecretClient(
+                vault_url=f"https://{vault_name}.vault.azure.net/",
+                credential=credential,
+            ) if vault_name else None
+            workspace_app_node_name, workspace_ssh_kv_secrets = (
+                self._add_workspace_nodes(
+                    graph=graph,
+                    agent=self._agent,
+                    rg_name=rg_name,
+                    env_name=env_name,
+                    acr_name=acr_name,
+                    vault_node_name=vault_node.name if vault_node else "",
+                    workspace_identity_key=workspace_identity_key,
+                    location=location,
+                    cfg=cfg,
+                    aca_client=aca_client,
+                    docker_client=docker_client,
+                    secret_client=_secret_client,
+                    storage_client=storage_client,
+                )
+            )
+
             container_app_node = ContainerAppNode(
                 aca_client=aca_client,
                 docker_client=docker_client,
@@ -663,6 +804,11 @@ class AzureProvider(PlatformProvider):
                     workspace_identity_key=workspace_identity_key,
                     model_secrets=model_secrets,
                     workspace_secrets=ws_secrets,
+                )
+            if workspace_app_node_name is not None:
+                container_app_node.set_workspace_context(
+                    workspace_app_node_name=workspace_app_node_name,
+                    workspace_ssh_kv_secrets=workspace_ssh_kv_secrets,
                 )
             graph.add(container_app_node)
 

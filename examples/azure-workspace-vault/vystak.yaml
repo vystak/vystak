@@ -4,6 +4,7 @@ providers:
     config:
       location: eastus2
       resource_group: vystak-ws-example-rg
+      storage_account: ${AZURE_STORAGE_ACCOUNT}   # required for workspace.persistence: volume
   anthropic:
     type: anthropic
 
@@ -34,8 +35,10 @@ agents:
         framework: langchain-python
     workspace:
       name: tools
-      type: persistent
-      filesystem: true
+      image: python:3.11-slim
+      persistence: volume
+      provision:
+        - pip install requests stripe
       secrets:
         - name: STRIPE_API_KEY
           framework: langchain-python
