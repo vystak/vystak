@@ -59,11 +59,11 @@ class ChannelHashTree:
     routes: str
     runtime: str
     secrets: str
-    # Codegen output digest. Captures the channel plugin's emitted
-    # ``server.py`` / ``channel_config.json`` so changes to the plugin's
-    # generator (or to ``server_template.SERVER_PY``) trigger redeploy
-    # even when the channel schema hasn't moved. (Channels still use string
-    # codegen — Phase 9's template-scaffold pivot was scoped to agents.)
+    # Build-artifact digest. Captures the channel plugin's emitted
+    # ``Dockerfile`` / ``requirements.txt`` / ``channel_config.json`` so
+    # changes to those build artifacts trigger redeploy even when the
+    # channel schema hasn't moved. (Runnable channel code is the bundled
+    # package itself, not emitted source.)
     codegen: str
     root: str
 
@@ -138,7 +138,7 @@ def _hash_subagents(agent: Agent) -> str:
 
 
 def hash_generated_code(generated_code) -> str:
-    """Hash the file contents of a GeneratedCode bundle.
+    """Hash the file contents of a FileBundle bundle.
 
     Order-stable across runs because we sort filenames before hashing.
     Empty / None bundles return the canonical "null" hash so the schema-
@@ -290,8 +290,8 @@ def hash_channel(
     """Compute the full hash tree for a channel definition.
 
     When ``codegen_hash`` is provided, it contributes to the root so changes
-    to the channel plugin's emitted source (``server_template.SERVER_PY``,
-    Dockerfile, requirements) bump the deploy hash even when the channel
+    to the channel plugin's emitted build artifacts (Dockerfile,
+    requirements, config json) bump the deploy hash even when the channel
     schema hasn't moved.
     """
     config = hashlib.sha256(repr(sorted(channel.config.items())).encode()).hexdigest()

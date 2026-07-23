@@ -297,11 +297,9 @@ class ACAWorkspaceAppNode(Provisionable):
         if rpc_dst.exists():
             shutil.rmtree(rpc_dst)
         shutil.copytree(rpc_src, rpc_dst)
-        (build_dir / "setup.py").write_text(
-            "from setuptools import setup, find_packages\n"
-            "setup(name='vystak-workspace-rpc', version='0.1.0',\n"
-            "      packages=find_packages())\n"
-        )
+        from vystak_workspace_rpc.build_files import setup_py_path
+
+        shutil.copy(setup_py_path(), build_dir / "setup.py")
 
         image_tag = (
             f"{acr_login_server}/vystak-{self._agent.name}-workspace:latest"

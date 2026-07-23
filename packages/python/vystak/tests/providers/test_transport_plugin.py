@@ -17,10 +17,6 @@ class FakeTransportPlugin(TransportPlugin):
     def generate_env_contract(self, transport, context):
         return {"VYSTAK_TRANSPORT_TYPE": "fake"}
 
-    def generate_listener_code(self, transport):
-        return None
-
-
 def test_cannot_instantiate_abstract():
     with pytest.raises(TypeError):
         TransportPlugin()
@@ -38,4 +34,3 @@ def test_concrete_plugin():
     )
     assert p.build_provision_nodes(t, pl) == []
     assert p.generate_env_contract(t, {}) == {"VYSTAK_TRANSPORT_TYPE": "fake"}
-    assert p.generate_listener_code(t) is None

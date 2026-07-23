@@ -434,7 +434,7 @@ class TestContainerAppNode:
 
 class TestAzureChannelAppNode:
     def _make_node(self, generated_code=None, platform_config=None):
-        from vystak.providers.base import DeployPlan, GeneratedCode
+        from vystak.providers.base import DeployPlan, FileBundle
         from vystak.schema.channel import Channel
         from vystak.schema.common import ChannelType
         from vystak.schema.platform import Platform
@@ -457,7 +457,7 @@ class TestAzureChannelAppNode:
             target_hash="hash-abc",
             changes={},
         )
-        code = generated_code or GeneratedCode(
+        code = generated_code or FileBundle(
             files={
                 "server.py": "# stub\n",
                 "Dockerfile": "FROM python:3.11-slim\nWORKDIR /app\n",

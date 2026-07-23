@@ -154,9 +154,11 @@ Agent Schema (Pydantic)
     └── Transport plugin    — HOW agents talk east-west (vystak-transport-http, vystak-transport-nats)
 ```
 
-Base ABCs live in `vystak/src/vystak/providers/base.py`: `FrameworkAdapter`,
-`PlatformProvider` (with `plan/apply/destroy` + channel variants),
-`ChannelPlugin`, `TransportPlugin`. Channels are **separately deployed
+Base ABCs live in `vystak/src/vystak/providers/base.py`: `PlatformProvider`
+(with `plan/apply/destroy` + channel variants), `ChannelPlugin`,
+`TransportPlugin`. **No source codegen anywhere** — components are real
+importable modules; only build artifacts (Dockerfile, requirements, HCL,
+config json) are emitted as strings. Channels are **separately deployed
 containers** (one per declaration), registered via the `vystak.channels` entry
 point into `vystak.channels.registry.ChannelPluginRegistry`.
 
@@ -175,9 +177,9 @@ Core:
   - `vystak.schema/` — Pydantic contract: `Agent` (with `default_model` + `models` pool, `Heartbeat`, `Compaction`), `Skill`, `Channel`, `Resource`, `Workspace`, `Provider`, `Platform`, `Transport`, `Vault`, `Telemetry`, `Secret`, `McpServer`, `Service`, plus the OpenAI-compatible API models.
   - `vystak.hash/` — content-addressable hashing (`AgentHashTree`) for **hash-based change detection** — no state files. `vystak plan` compares definition hash to the hash stored as a platform label.
   - `vystak.provisioning/` — `ProvisionGraph`: DAG of `Provisionable` nodes with `depends_on`, `provision(context)`, `health_check()`, `destroy()`. Providers build a graph, topologically sort, thread results through `context`.
-  - `vystak.providers/` — the four ABCs plus `DeployPlan`, `DeployResult`, `GeneratedCode`.
+  - `vystak.providers/` — the three ABCs plus `DeployPlan`, `DeployResult`, `GeneratedCode` (despite the name, a file-transport bundle of real files + build artifacts, not emitted source).
+  - `vystak.mcp/` — framework-agnostic MCP normalization (`normalize()` → `McpConnectionSpec`; transport inference + secret interpolation).
   - `vystak.transport/` — east-west A2A abstraction: `Transport`, `AgentClient`/`ask_agent`, `A2AHandler`, typed `A2AMessage`/`A2AResult`/`AgentRef`.
-  - `vystak.ir/` — intermediate representation consumed by framework adapters.
   - `vystak.state/` — local `.vystak/` deploy-side bookkeeping (pushed secrets, identities).
   - `vystak.secrets/` — runtime SDK for reading secrets from container env.
   - `vystak.channels/` — `ChannelPluginRegistry`.
@@ -186,14 +188,12 @@ Core:
 
 Framework templates:
 - **`vystak-template-langchain-python`** — the LangChain/LangGraph agent template (see Architecture above). Layout: user-owned `server.py`/`vystak.yaml`/`Dockerfile`/`tools/` + `_vystak/runtime/` (app_factory, graph, mcp, memory, subagents, compaction, `a2a_native/`, `openai/`).
-- **`vystak-adapter-mastra`** — minimal secondary `FrameworkAdapter`.
 
 Channels (each a `ChannelPlugin`, deployed as its own container):
 - **`vystak-channel-runtime`** — shared `ChannelRuntime` base bundled into every channel image: agent client, delivery, heartbeat hooks, store, telemetry.
 - **`vystak-channel-chat`** — OpenAI-compatible unified endpoint (`/v1/chat/completions`), routes by `model="vystak/<agent-name>"`. This replaced the old `vystak-gateway` router.
 - **`vystak-channel-slack`** — Slack Socket Mode runner (slack-bolt).
 - **`vystak-channel-discord`** — Discord Gateway runner (discord.py).
-- **`vystak-channel-api`** — REST channel (minimal).
 
 Transports: **`vystak-transport-http`** (no broker), **`vystak-transport-nats`** (JetStream; provisions broker + injects listener code into agent `server.py`).
 
@@ -299,5 +299,5 @@ This is a **public** repo. Every commit is indexable by credential-harvesting bo
 
 - Renamed from **AgentStack → Vystak** (commit history still shows `AgentStack` in older messages).
 - Legacy `.agentstack/` output path is retained in `.gitignore` alongside new `.vystak/`.
-- Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. Deliberately unpublished: `vystak-adapter-mastra` (stub) and `vystak-template-langchain-python` (bundled into the `vystak-cli` wheel by its build hook).
+- Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. Deliberately unpublished: `vystak-template-langchain-python` (bundled into the `vystak-cli` wheel by its build hook).
 - TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented.

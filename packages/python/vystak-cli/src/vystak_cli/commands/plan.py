@@ -5,14 +5,14 @@ from pathlib import Path
 
 import click
 from vystak.hash import hash_agent, hash_channel
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 
 from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
-def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
-    """Bundle the user's project tree into a GeneratedCode for the provider.
+def _bundle_project_dir(project_dir: Path) -> FileBundle:
+    """Bundle the user's project tree into a FileBundle for the provider.
 
     Mirrors :func:`vystak_cli.commands.apply._bundle_project_dir` — kept as a
     duplicate (not a shared import) because the helper is small and the two
@@ -30,7 +30,7 @@ def _bundle_project_dir(project_dir: Path) -> GeneratedCode:
         rel = path.relative_to(project_dir).as_posix()
         with contextlib.suppress(UnicodeDecodeError):
             files[rel] = path.read_text()
-    return GeneratedCode(files=files, entrypoint="server.py")
+    return FileBundle(files=files, entrypoint="server.py")
 
 
 @click.command()

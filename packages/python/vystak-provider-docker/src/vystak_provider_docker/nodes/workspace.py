@@ -111,12 +111,10 @@ class DockerWorkspaceNode(Provisionable):
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
-        # Also ship a minimal setup.py so pip install works
-        (build_dir / "setup.py").write_text(
-            "from setuptools import setup, find_packages\n"
-            "setup(name='vystak-workspace-rpc', version='0.1.0',\n"
-            "      packages=find_packages())\n"
-        )
+        # Also ship the packaged setup.py shim so pip install works
+        from vystak_workspace_rpc.build_files import setup_py_path
+
+        shutil.copy(setup_py_path(), build_dir / "setup.py")
 
         # Tools dir
         tools_dst = build_dir / "tools"

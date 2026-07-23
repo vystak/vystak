@@ -29,12 +29,6 @@ def test_env_contract():
     assert env["VYSTAK_TRANSPORT_TYPE"] == "http"
 
 
-def test_no_listener_code():
-    p = HttpTransportPlugin()
-    t = Transport(name="default-http", type="http")
-    assert p.generate_listener_code(t) is None
-
-
 def test_resolve_address_for_docker_dns():
     """resolve_address_for returns the Docker container name-matched URL."""
     p = HttpTransportPlugin()

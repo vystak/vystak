@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
-from vystak.providers.base import ChannelPlugin, GeneratedCode
+from vystak.providers.base import ChannelPlugin, FileBundle
 from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
@@ -31,9 +31,9 @@ class ChatChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = ChatChannelConfig
 
-    def generate_code(
+    def build_bundle(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
-    ) -> GeneratedCode:
+    ) -> FileBundle:
         from vystak_channel_runtime import channel_package_version, runtime_version
 
         from vystak_channel_chat.server_template import DOCKERFILE, REQUIREMENTS
@@ -61,7 +61,7 @@ class ChatChannelPlugin(ChannelPlugin):
                 else "http"
             ),
         }
-        return GeneratedCode(
+        return FileBundle(
             files={
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,
@@ -72,7 +72,7 @@ class ChatChannelPlugin(ChannelPlugin):
         )
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list["Provisionable"]:
-        # Platform provider builds the actual DockerChannelNode from GeneratedCode.
+        # Platform provider builds the actual DockerChannelNode from FileBundle.
         # Returning empty here keeps the plugin platform-agnostic; the Docker
         # provider's apply_channel wires things up.
         return []

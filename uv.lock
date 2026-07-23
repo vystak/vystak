@@ -10,8 +10,6 @@ resolution-markers = [
 [manifest]
 members = [
     "vystak",
-    "vystak-adapter-mastra",
-    "vystak-channel-api",
     "vystak-channel-chat",
     "vystak-channel-discord",
     "vystak-channel-runtime",
@@ -561,6 +559,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d7/7e/b3f9d544a94782be9c5ab8123d2fa7fb20cbdf3f5a16b883f308865e1406/azure_mgmt_resource-25.0.0.tar.gz", hash = "sha256:dc123a9f6509c37299d7716c9090cff0a9d73309b228cc094ea950ce3cca3603", size = 92837, upload-time = "2026-02-06T06:00:39.699Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/92/41/ce12546aa2a20c4f37d061bfa7df3bf8fa72ff01e7557ec330929c72ec7d/azure_mgmt_resource-25.0.0-py3-none-any.whl", hash = "sha256:f6f17b2305abe9bf6ec6c92a9410af21a2b0d805cc98e94d80c07220924a045b", size = 83670, upload-time = "2026-02-06T06:00:41.317Z" },
+]
+
+[[package]]
+name = "azure-mgmt-storage"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/6c/b7a06a0e128bd1587ad48a0cd80a1d619ec63d34523f5cdd43950f2fa8d0/azure_mgmt_storage-25.1.0.tar.gz", hash = "sha256:cc4bd2158fd0dd80639142af06dc70c119bbfd6f79d53da4482e0b2c849af7ca", size = 234508, upload-time = "2026-07-20T06:13:18.8Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/c6/efd6ad6216ec63cf606032c3fb62f2d52f852906a68a32251e1127026949/azure_mgmt_storage-25.1.0-py3-none-any.whl", hash = "sha256:46b51cb0491f9aac303436c28bd18954d0c3aca39d4882e7d332e6ad0605b25e", size = 220873, upload-time = "2026-07-20T06:13:20.22Z" },
 ]
 
 [[package]]
@@ -3034,26 +3046,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "vystak-adapter-mastra"
-source = { editable = "packages/python/vystak-adapter-mastra" }
-dependencies = [
-    { name = "vystak" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
-
-[[package]]
-name = "vystak-channel-api"
-source = { editable = "packages/python/vystak-channel-api" }
-dependencies = [
-    { name = "vystak" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "vystak", editable = "packages/python/vystak" }]
-
-[[package]]
 name = "vystak-channel-chat"
 source = { editable = "packages/python/vystak-channel-chat" }
 dependencies = [
@@ -3233,8 +3225,10 @@ dependencies = [
     { name = "azure-mgmt-msi" },
     { name = "azure-mgmt-rdbms" },
     { name = "azure-mgmt-resource" },
+    { name = "azure-mgmt-storage" },
     { name = "docker" },
     { name = "vystak" },
+    { name = "vystak-provider-docker" },
 ]
 
 [package.metadata]
@@ -3250,8 +3244,10 @@ requires-dist = [
     { name = "azure-mgmt-msi", specifier = ">=7.0.0" },
     { name = "azure-mgmt-rdbms", specifier = ">=10.1.1" },
     { name = "azure-mgmt-resource", specifier = ">=23.0" },
+    { name = "azure-mgmt-storage", specifier = ">=21.0" },
     { name = "docker", specifier = ">=7.0" },
     { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
 ]
 
 [[package]]
@@ -3398,8 +3394,6 @@ dev = [
     { name = "ruff" },
     { name = "uvicorn" },
     { name = "vystak" },
-    { name = "vystak-adapter-mastra" },
-    { name = "vystak-channel-api" },
     { name = "vystak-channel-chat" },
     { name = "vystak-channel-discord" },
     { name = "vystak-channel-runtime" },
@@ -3429,8 +3423,6 @@ dev = [
     { name = "ruff", specifier = ">=0.8" },
     { name = "uvicorn", specifier = ">=0.34" },
     { name = "vystak", editable = "packages/python/vystak" },
-    { name = "vystak-adapter-mastra", editable = "packages/python/vystak-adapter-mastra" },
-    { name = "vystak-channel-api", editable = "packages/python/vystak-channel-api" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },
     { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },

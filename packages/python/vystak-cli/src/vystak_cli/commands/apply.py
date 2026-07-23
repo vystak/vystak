@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import click
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 from vystak.secrets.env_loader import load_env_file
 from vystak_provider_docker.transport_wiring import (
     build_routes_json,
@@ -16,8 +16,8 @@ from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
-def _bundle_project_dir(project_dir: Path, agent=None) -> GeneratedCode:
-    """Bundle the user's project tree into a GeneratedCode for the provider.
+def _bundle_project_dir(project_dir: Path, agent=None) -> FileBundle:
+    """Bundle the user's project tree into a FileBundle for the provider.
 
     Skips dot-dirs (.git, .venv, .vystak), __pycache__, and *.pyc. The user's
     Dockerfile, server.py, _vystak/ runtime, requirements.txt, vystak.yaml,
@@ -43,7 +43,7 @@ def _bundle_project_dir(project_dir: Path, agent=None) -> GeneratedCode:
             files[rel] = path.read_text()
     if agent is not None:
         files["agent.json"] = agent.model_dump_json(indent=2)
-    return GeneratedCode(files=files, entrypoint="server.py")
+    return FileBundle(files=files, entrypoint="server.py")
 
 
 def _validate_template_for_apply(project_dir: Path) -> None:

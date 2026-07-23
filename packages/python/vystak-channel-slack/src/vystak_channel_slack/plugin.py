@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
-from vystak.providers.base import ChannelPlugin, GeneratedCode
+from vystak.providers.base import ChannelPlugin, FileBundle
 from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
@@ -32,9 +32,9 @@ class SlackChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = SlackChannelConfig
 
-    def generate_code(
+    def build_bundle(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
-    ) -> GeneratedCode:
+    ) -> FileBundle:
         from vystak_channel_runtime import channel_package_version, runtime_version
 
         channel.channel_package_version = channel_package_version("vystak-channel-slack")
@@ -42,7 +42,7 @@ class SlackChannelPlugin(ChannelPlugin):
 
         channel_config = self._build_channel_config(channel)
 
-        return GeneratedCode(
+        return FileBundle(
             files={
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,
@@ -124,7 +124,7 @@ class SlackChannelPlugin(ChannelPlugin):
         }
 
     def provision_nodes(self, channel: Channel, platform: Platform) -> list[Provisionable]:
-        # Platform provider wraps GeneratedCode in its native container node.
+        # Platform provider wraps FileBundle in its native container node.
         return []
 
     def thread_name(self, event: dict) -> str:

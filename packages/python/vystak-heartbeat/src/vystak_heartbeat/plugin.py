@@ -5,19 +5,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 
 from vystak_heartbeat.server_template import DOCKERFILE, REQUIREMENTS
 
 
-def generate_code(
+def build_bundle(
     *,
     agents_with_heartbeat: list[Any],            # list of Agent
     agent_addresses: dict[str, str],              # canonical_name → /a2a URL
     channel_addresses: dict[str, str],            # canonical_name → http://host:port
     transport_cfg: dict,                          # {"type": "http"|"nats", ...}
     session_store_cfg: dict,                      # {"type": "memory"|"sqlite", ...}
-) -> GeneratedCode:
+) -> FileBundle:
     routes: dict[str, dict] = {}
     for agent in agents_with_heartbeat:
         if agent.heartbeat is None:
@@ -39,7 +39,7 @@ def generate_code(
         "agent_addresses": agent_addresses,
     }
 
-    return GeneratedCode(
+    return FileBundle(
         files={
             "Dockerfile": DOCKERFILE,
             "requirements.txt": REQUIREMENTS,

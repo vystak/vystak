@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vystak.providers.base import GeneratedCode, TransportPlugin
+from vystak.providers.base import TransportPlugin
 from vystak.schema import Platform, Transport
 from vystak.schema.agent import Agent
 from vystak.transport.naming import slug
@@ -20,8 +20,6 @@ class HttpTransportPlugin(TransportPlugin):
     def generate_env_contract(self, transport: Transport, context: dict) -> dict[str, str]:
         return {"VYSTAK_TRANSPORT_TYPE": "http"}
 
-    def generate_listener_code(self, transport: Transport) -> GeneratedCode | None:
-        return None
 
     def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
         """Return the Docker-style DNS URL for an agent.

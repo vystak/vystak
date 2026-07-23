@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 import docker.errors
-from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.providers.base import DeployPlan, FileBundle
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.agent import Agent
@@ -38,7 +38,7 @@ class DockerAgentNode(Provisionable):
         self,
         client,
         agent: Agent,
-        generated_code: GeneratedCode,
+        generated_code: FileBundle,
         plan: DeployPlan,
         *,
         peer_routes_json: str = "{}",

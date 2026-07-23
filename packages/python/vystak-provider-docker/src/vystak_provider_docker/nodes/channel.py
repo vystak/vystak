@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 import docker.errors
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.channel import Channel
@@ -18,7 +18,7 @@ class DockerChannelNode(Provisionable):
         self,
         client,
         channel: Channel,
-        generated_code: GeneratedCode,
+        generated_code: FileBundle,
         target_hash: str,
         host_port: int = 8080,
         container_port: int = 8080,

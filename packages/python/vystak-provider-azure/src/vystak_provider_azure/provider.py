@@ -24,7 +24,7 @@ from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
     DeployResult,
-    GeneratedCode,
+    FileBundle,
     PlatformProvider,
 )
 from vystak.provisioning import ProvisionGraph
@@ -53,7 +53,7 @@ class AzureProvider(PlatformProvider):
     """Deploys and manages agents on Azure Container Apps."""
 
     def __init__(self):
-        self._generated_code: GeneratedCode | None = None
+        self._generated_code: FileBundle | None = None
         self._agent: Agent | None = None
         self._listener = None
         self._vault: Vault | None = None
@@ -64,7 +64,7 @@ class AzureProvider(PlatformProvider):
     def set_listener(self, listener) -> None:
         self._listener = listener
 
-    def set_generated_code(self, code: GeneratedCode) -> None:
+    def set_generated_code(self, code: FileBundle) -> None:
         self._generated_code = code
 
     def set_agent(self, agent: Agent) -> None:
@@ -1067,13 +1067,13 @@ class AzureProvider(PlatformProvider):
         return None
 
     def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
-        # Generate codegen output with empty routes — routes are deploy-time
-        # state, not part of the codegen identity. SERVER_PY + channel_config.json
-        # changes still bump the hash via this path.
+        # Generate build artifacts with empty routes — routes are deploy-time
+        # state, not part of the artifact identity. Dockerfile/requirements +
+        # channel_config.json changes still bump the hash via this path.
         codegen_hash: str | None = None
         try:
             plugin = get_plugin(channel.type)
-            code = plugin.generate_code(channel, {})
+            code = plugin.build_bundle(channel, {})
             codegen_hash = hash_generated_code(code)
         except Exception:
             codegen_hash = None
@@ -1123,7 +1123,7 @@ class AzureProvider(PlatformProvider):
             )
 
         try:
-            code = plugin.generate_code(channel, resolved_routes)
+            code = plugin.build_bundle(channel, resolved_routes)
 
             cfg = self._channel_platform_config(channel)
             credential = get_credential()

@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.providers.base import DeployPlan, FileBundle
 from vystak.provisioning.node import ProvisionResult
 from vystak.schema.agent import Agent
 from vystak.schema.model import Model
@@ -45,7 +45,7 @@ def sample_agent():
 
 @pytest.fixture()
 def sample_code():
-    return GeneratedCode(
+    return FileBundle(
         files={
             "agent.py": "# agent code",
             "server.py": "# server code",

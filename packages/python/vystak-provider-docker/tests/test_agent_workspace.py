@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.providers.base import DeployPlan, FileBundle
 from vystak.schema.agent import Agent
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
@@ -40,7 +40,7 @@ def test_set_workspace_context_populates_env(tmp_path, monkeypatch):
         fake_container,
     ]
 
-    gc = GeneratedCode(
+    gc = FileBundle(
         files={"server.py": "print('hi')", "requirements.txt": ""},
         entrypoint="server.py",
     )
@@ -94,7 +94,7 @@ def test_set_workspace_context_adds_dockerfile_symlink(tmp_path, monkeypatch):
         fake_container,
     ]
 
-    gc = GeneratedCode(
+    gc = FileBundle(
         files={"server.py": "print('hi')", "requirements.txt": ""},
         entrypoint="server.py",
     )

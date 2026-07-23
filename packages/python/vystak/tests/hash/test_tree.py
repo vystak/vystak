@@ -7,7 +7,7 @@ from vystak.hash.tree import (
     hash_generated_code,
     hash_template_ref,
 )
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 from vystak.schema import (
     Agent,
     Model,
@@ -168,7 +168,7 @@ class TestTemplateHashing:
             "schema_version": 1,
             "template": {"name": "langchain-python", "version": "0.1.0"},
         }
-        bundle = GeneratedCode(
+        bundle = FileBundle(
             files={"_vystak/manifest.json": _json.dumps(manifest)},
             entrypoint="server.py",
         )
@@ -176,17 +176,17 @@ class TestTemplateHashing:
         assert ref == {"name": "langchain-python", "version": "0.1.0"}
 
     def test_extract_template_ref_returns_none_when_manifest_missing(self):
-        bundle = GeneratedCode(
+        bundle = FileBundle(
             files={"server.py": "..."}, entrypoint="server.py",
         )
         assert extract_template_ref(bundle) is None
 
     def test_extract_template_ref_returns_none_for_empty_bundle(self):
         assert extract_template_ref(None) is None
-        assert extract_template_ref(GeneratedCode(files={}, entrypoint="server.py")) is None
+        assert extract_template_ref(FileBundle(files={}, entrypoint="server.py")) is None
 
     def test_extract_template_ref_handles_malformed_manifest(self):
-        bundle = GeneratedCode(
+        bundle = FileBundle(
             files={"_vystak/manifest.json": "not-json"}, entrypoint="server.py",
         )
         assert extract_template_ref(bundle) is None
@@ -196,21 +196,21 @@ class TestChannelCodegenHashing:
     """Channels still use string codegen — Phase 9's template-scaffold pivot
     was scoped to agents."""
 
-    def _code(self, **files: str) -> GeneratedCode:
-        return GeneratedCode(files=dict(files), entrypoint="server.py")
+    def _code(self, **files: str) -> FileBundle:
+        return FileBundle(files=dict(files), entrypoint="server.py")
 
     def test_hash_generated_code_handles_none(self):
         # Schema-only callers pass None; helper returns null hash.
         assert len(hash_generated_code(None)) == 64
 
     def test_hash_generated_code_handles_empty_files(self):
-        empty = GeneratedCode(files={}, entrypoint="server.py")
+        empty = FileBundle(files={}, entrypoint="server.py")
         assert hash_generated_code(empty) == hash_generated_code(None)
 
     def test_hash_generated_code_filename_order_independent(self):
         d1 = hash_generated_code(self._code(**{"a.py": "1", "b.py": "2"}))
         # Different insertion order — must produce same digest.
-        d2 = hash_generated_code(GeneratedCode(
+        d2 = hash_generated_code(FileBundle(
             files={"b.py": "2", "a.py": "1"}, entrypoint="server.py",
         ))
         assert d1 == d2

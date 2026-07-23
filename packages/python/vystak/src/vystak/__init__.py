@@ -26,8 +26,7 @@ from vystak.providers import (
     ChannelPlugin,
     DeployPlan,
     DeployResult,
-    FrameworkAdapter,
-    GeneratedCode,
+    FileBundle,
     PlatformProvider,
     ValidationError,
 )
@@ -153,7 +152,7 @@ __all__ = [
     "ChannelPlugin",
     "DeployPlan",
     "DeployResult",
-    "FrameworkAdapter",
+    "FileBundle",
     "GeneratedCode",
     "PlatformProvider",
     "ValidationError",

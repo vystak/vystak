@@ -126,7 +126,7 @@ def test_build_revision_agent_plus_workspace_sidecar():
 def test_container_app_node_uses_vault_path_when_vault_result_in_context():
     """When context contains a KeyVaultNode result, ContainerAppNode uses
     build_revision_for_vault for revision creation."""
-    from vystak.providers.base import DeployPlan, GeneratedCode
+    from vystak.providers.base import DeployPlan, FileBundle
     from vystak_provider_azure.nodes.aca_app import ContainerAppNode
 
     # Fixture: vault result in context
@@ -160,7 +160,7 @@ def test_container_app_node_uses_vault_path_when_vault_result_in_context():
         target_hash="t-hash",
         changes={},
     )
-    code = GeneratedCode(files={"main.py": "pass", "requirements.txt": ""}, entrypoint="main.py")
+    code = FileBundle(files={"main.py": "pass", "requirements.txt": ""}, entrypoint="main.py")
     node = ContainerAppNode(
         aca_client=aca_client,
         docker_client=docker_client,
@@ -189,7 +189,7 @@ def test_container_app_node_uses_vault_path_when_vault_result_in_context():
 
 
 def test_channel_app_with_vault_uses_per_container_secretref():
-    from vystak.providers.base import DeployPlan, GeneratedCode
+    from vystak.providers.base import DeployPlan, FileBundle
     from vystak.schema.channel import Channel
     from vystak.schema.common import ChannelType
     from vystak_provider_azure.nodes.aca_channel_app import AzureChannelAppNode
@@ -209,7 +209,7 @@ def test_channel_app_with_vault_uses_per_container_secretref():
         target_hash="t-hash",
         changes={},
     )
-    code = GeneratedCode(
+    code = FileBundle(
         files={"Dockerfile": "FROM python:3.11-slim\n", "requirements.txt": ""},
         entrypoint="server.py",
     )

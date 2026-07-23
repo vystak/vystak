@@ -16,7 +16,7 @@ from vystak.providers.base import (
     AgentStatus,
     DeployPlan,
     DeployResult,
-    GeneratedCode,
+    FileBundle,
     PlatformProvider,
 )
 from vystak.provisioning.node import Provisionable, ProvisionResult
@@ -128,7 +128,7 @@ class DockerProvider(PlatformProvider):
 
     def __init__(self):
         self._client = self._create_client()
-        self._generated_code: GeneratedCode | None = None
+        self._generated_code: FileBundle | None = None
         self._agent: Agent | None = None
         self._channels: list[Channel] = []
         self._vault = None
@@ -146,7 +146,7 @@ class DockerProvider(PlatformProvider):
                 return docker.DockerClient(base_url=f"unix://{desktop_socket}")
             raise
 
-    def set_generated_code(self, code: GeneratedCode) -> None:
+    def set_generated_code(self, code: FileBundle) -> None:
         self._generated_code = code
 
     def set_agent(self, agent: Agent) -> None:
@@ -1019,7 +1019,7 @@ class DockerProvider(PlatformProvider):
         codegen_hash: str | None = None
         try:
             plugin = get_plugin(channel.type)
-            code = plugin.generate_code(channel, {})
+            code = plugin.build_bundle(channel, {})
             codegen_hash = hash_generated_code(code)
         except Exception:
             codegen_hash = None
@@ -1073,7 +1073,7 @@ class DockerProvider(PlatformProvider):
         try:
             import json
 
-            code = plugin.generate_code(channel, resolved_routes)
+            code = plugin.build_bundle(channel, resolved_routes)
 
             from vystak.provisioning import ProvisionGraph
 
@@ -1214,7 +1214,7 @@ class DockerProvider(PlatformProvider):
             return
 
         from vystak.provisioning import ProvisionGraph
-        from vystak_heartbeat.plugin import generate_code as hb_generate
+        from vystak_heartbeat.plugin import build_bundle as hb_generate
 
         from vystak_provider_docker.nodes import (
             DockerHeartbeatNode,

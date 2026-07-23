@@ -35,9 +35,9 @@ def test_no_vault_context_no_shim(tmp_path, monkeypatch):
         docker.errors.NotFound("nope"),
         fake_container,
     ]
-    from vystak.providers.base import DeployPlan, GeneratedCode
+    from vystak.providers.base import DeployPlan, FileBundle
 
-    gc = GeneratedCode(
+    gc = FileBundle(
         files={"server.py": "print('hi')", "requirements.txt": ""},
         entrypoint="server.py",
     )
@@ -86,9 +86,9 @@ def test_vault_context_injects_shim_and_entrypoint(tmp_path, monkeypatch):
         docker.errors.NotFound("nope"),
         fake_container,
     ]
-    from vystak.providers.base import DeployPlan, GeneratedCode
+    from vystak.providers.base import DeployPlan, FileBundle
 
-    gc = GeneratedCode(
+    gc = FileBundle(
         files={"server.py": "print('hi')", "requirements.txt": ""},
         entrypoint="server.py",
     )
@@ -127,7 +127,7 @@ def test_vault_context_injects_shim_and_entrypoint(tmp_path, monkeypatch):
 
 def test_channel_node_injects_shim(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    from vystak.providers.base import GeneratedCode
+    from vystak.providers.base import FileBundle
     from vystak.schema.channel import Channel
     from vystak.schema.common import ChannelType
     from vystak_provider_docker.nodes.channel import DockerChannelNode
@@ -159,7 +159,7 @@ def test_channel_node_injects_shim(tmp_path, monkeypatch):
         "COPY . .\n"
         'CMD ["python", "server.py"]\n'
     )
-    gc = GeneratedCode(
+    gc = FileBundle(
         files={
             "server.py": "print('hi')",
             "requirements.txt": "",

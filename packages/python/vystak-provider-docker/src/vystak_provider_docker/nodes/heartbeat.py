@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 import docker.errors
-from vystak.providers.base import GeneratedCode
+from vystak.providers.base import FileBundle
 from vystak.provisioning.health import HealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 
@@ -23,7 +23,7 @@ class DockerHeartbeatNode(Provisionable):
     def __init__(
         self,
         client,
-        generated_code: GeneratedCode,
+        generated_code: FileBundle,
         *,
         extra_env: dict[str, str] | None = None,
     ):

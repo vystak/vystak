@@ -5,8 +5,7 @@ from vystak.providers.base import (
     ChannelPlugin,
     DeployPlan,
     DeployResult,
-    FrameworkAdapter,
-    GeneratedCode,
+    FileBundle,
     PlatformProvider,
     ValidationError,
 )
@@ -15,7 +14,7 @@ from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 
 class TestSupportingTypes:
     def test_generated_code(self):
-        code = GeneratedCode(files={"main.py": "print('hello')"}, entrypoint="main.py")
+        code = FileBundle(files={"main.py": "print('hello')"}, entrypoint="main.py")
         assert code.entrypoint == "main.py"
 
     def test_deploy_plan(self):
@@ -40,22 +39,6 @@ class TestSupportingTypes:
         err = ValidationError(field="model", message="model is required")
         assert err.field == "model"
 
-
-class TestFrameworkAdapterABC:
-    def test_cannot_instantiate(self):
-        with pytest.raises(TypeError):
-            FrameworkAdapter()
-
-    def test_valid_subclass(self):
-        class GoodAdapter(FrameworkAdapter):
-            def generate(self, agent):
-                return GeneratedCode(files={}, entrypoint="main.py")
-
-            def validate(self, agent):
-                return []
-
-        adapter = GoodAdapter()
-        assert adapter is not None
 
 
 class TestPlatformProviderABC:
@@ -107,8 +90,8 @@ class TestChannelPluginABC:
             agent_protocol = AgentProtocol.A2A_TURN
             config_schema = NoopConfig
 
-            def generate_code(self, channel, resolved_routes):
-                return GeneratedCode(files={}, entrypoint="main.py")
+            def build_bundle(self, channel, resolved_routes):
+                return FileBundle(files={}, entrypoint="main.py")
 
             def provision_nodes(self, channel, platform):
                 return []

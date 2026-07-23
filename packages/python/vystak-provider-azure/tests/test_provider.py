@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.providers.base import DeployPlan, FileBundle
 from vystak.schema.agent import Agent
 from vystak.schema.common import VaultMode, WorkspaceType
 from vystak.schema.model import Model
@@ -109,7 +109,7 @@ class TestAzureProviderApply:
         agent = _make_agent()
         provider.set_agent(agent)
         provider.set_generated_code(
-            GeneratedCode(
+            FileBundle(
                 files={"main.py": "print('hi')", "requirements.txt": "fastapi"},
                 entrypoint="main.py",
             )
@@ -175,7 +175,7 @@ class TestAzureProviderApply:
         }
         provider.set_agent(agent)
         provider.set_generated_code(
-            GeneratedCode(
+            FileBundle(
                 files={"main.py": "pass", "requirements.txt": ""},
                 entrypoint="main.py",
             )
@@ -282,7 +282,7 @@ class TestAzureChannelPlan:
         # Mirror what plan_channel does internally so the expected hash
         # accounts for the codegen-output digest contribution.
         plugin = get_plugin(channel.type)
-        codegen_hash = hash_generated_code(plugin.generate_code(channel, {}))
+        codegen_hash = hash_generated_code(plugin.build_bundle(channel, {}))
         current = hash_channel(channel, codegen_hash=codegen_hash).root
         plan = provider.plan_channel(channel, current_hash=current)
         assert plan.actions == []

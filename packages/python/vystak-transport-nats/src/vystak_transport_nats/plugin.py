@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vystak.providers.base import GeneratedCode, TransportPlugin
+from vystak.providers.base import TransportPlugin
 from vystak.schema import Platform, Transport
 from vystak.schema.agent import Agent
 from vystak.transport.naming import slug
@@ -28,10 +28,6 @@ class NatsTransportPlugin(TransportPlugin):
             env["VYSTAK_NATS_SUBJECT_PREFIX"] = transport.config.subject_prefix
         return env
 
-    def generate_listener_code(self, transport: Transport) -> GeneratedCode | None:
-        # The generated server template's _build_transport_from_env already
-        # handles the "nats" branch (see Task 5). Nothing extra to inject.
-        return None
 
     def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
         # Matches NatsTransport.resolve_address.

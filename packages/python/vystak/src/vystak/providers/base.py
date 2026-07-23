@@ -17,9 +17,13 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class GeneratedCode:
+class FileBundle:
     files: dict[str, str]
     entrypoint: str
+
+
+# Deprecated alias — pre-pivot name, kept for published-API compat.
+GeneratedCode = FileBundle
 
 
 @dataclass
@@ -56,14 +60,6 @@ class AgentStatus:
 class ValidationError:
     field: str
     message: str
-
-
-class FrameworkAdapter(ABC):
-    @abstractmethod
-    def generate(self, agent: Agent) -> GeneratedCode: ...
-
-    @abstractmethod
-    def validate(self, agent: Agent) -> list[ValidationError]: ...
 
 
 class PlatformProvider(ABC):
@@ -135,7 +131,7 @@ class ChannelPlugin(ABC):
     config_schema: type[BaseModel]
 
     @abstractmethod
-    def generate_code(self, channel: Channel, resolved_routes: dict[str, str]) -> GeneratedCode:
+    def build_bundle(self, channel: Channel, resolved_routes: dict[str, str]) -> FileBundle:
         """Emit channel-pod source code.
 
         `resolved_routes` maps agent name → URL reachable from the channel
@@ -178,9 +174,3 @@ class TransportPlugin(ABC):
         Keys follow the `VYSTAK_TRANSPORT_*` convention. `context` carries
         provisioner-specific values (resolved broker URL, secret ARNs, etc.).
         """
-
-    @abstractmethod
-    def generate_listener_code(self, transport: "Transport") -> "GeneratedCode | None":
-        """Return a Python source snippet to append to the generated agent
-        server.py that starts the transport listener. Return None if the
-        transport does not need a listener (HTTP — FastAPI already serves)."""

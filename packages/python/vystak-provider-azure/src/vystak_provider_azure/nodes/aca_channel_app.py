@@ -16,7 +16,7 @@ from azure.mgmt.appcontainers.models import (
     Secret,
     Template,
 )
-from vystak.providers.base import DeployPlan, GeneratedCode
+from vystak.providers.base import DeployPlan, FileBundle
 from vystak.provisioning.health import HealthCheck, HttpHealthCheck, NoopHealthCheck
 from vystak.provisioning.node import Provisionable, ProvisionResult
 from vystak.schema.channel import Channel
@@ -36,7 +36,7 @@ class AzureChannelAppNode(Provisionable):
         docker_client,
         rg_name: str,
         channel: Channel,
-        generated_code: GeneratedCode,
+        generated_code: FileBundle,
         plan: DeployPlan,
         platform_config: dict,
         env_values: dict[str, str] | None = None,

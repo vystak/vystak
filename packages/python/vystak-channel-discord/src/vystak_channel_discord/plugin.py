@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
-from vystak.providers.base import ChannelPlugin, GeneratedCode
+from vystak.providers.base import ChannelPlugin, FileBundle
 from vystak.schema.channel import Channel
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 from vystak.schema.platform import Platform
@@ -33,9 +33,9 @@ class DiscordChannelPlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = DiscordChannelConfig
 
-    def generate_code(
+    def build_bundle(
         self, channel: Channel, resolved_routes: dict[str, dict[str, str]]
-    ) -> GeneratedCode:
+    ) -> FileBundle:
         from vystak_channel_runtime import channel_package_version, runtime_version
 
         channel.channel_package_version = channel_package_version("vystak-channel-discord")
@@ -106,7 +106,7 @@ class DiscordChannelPlugin(ChannelPlugin):
             ),
         }
 
-        return GeneratedCode(
+        return FileBundle(
             files={
                 "Dockerfile": DOCKERFILE,
                 "requirements.txt": REQUIREMENTS,

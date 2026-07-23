@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from vystak.schema.heartbeat import Heartbeat
-from vystak_heartbeat.plugin import generate_code
+from vystak_heartbeat.plugin import build_bundle
 
 
 def _agent(name: str, canonical: str, heartbeat: Heartbeat | None = None):
@@ -18,7 +18,7 @@ def test_routes_json_includes_heartbeat_and_delivery():
         "bot", "bot.agents.dev",
         Heartbeat(schedule="*/30 * * * *", target_channel="x.channels.dev"),
     )
-    out = generate_code(
+    out = build_bundle(
         agents_with_heartbeat=[a],
         agent_addresses={"bot.agents.dev": "http://vystak-bot:8000/a2a"},
         channel_addresses={"x.channels.dev": "http://vystak-channel-x:9999"},
@@ -32,7 +32,7 @@ def test_routes_json_includes_heartbeat_and_delivery():
 
 
 def test_dockerfile_uses_python_module():
-    out = generate_code(
+    out = build_bundle(
         agents_with_heartbeat=[],
         agent_addresses={},
         channel_addresses={},
@@ -43,7 +43,7 @@ def test_dockerfile_uses_python_module():
 
 
 def test_service_config_includes_transport_and_session_store():
-    out = generate_code(
+    out = build_bundle(
         agents_with_heartbeat=[],
         agent_addresses={},
         channel_addresses={},

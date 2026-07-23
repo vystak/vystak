@@ -57,7 +57,7 @@ class TestSlackChannelPlugin:
         assert plugin.default_runtime_mode == RuntimeMode.SHARED
         assert plugin.agent_protocol == AgentProtocol.A2A_TURN
 
-    def test_generate_code_emits_expected_files(self):
+    def test_build_bundle_emits_expected_files(self):
         plugin = SlackChannelPlugin()
         resolved = {
             "weather-agent": {
@@ -65,7 +65,7 @@ class TestSlackChannelPlugin:
                 "address": "http://vystak-weather-agent:8000",
             },
         }
-        code = plugin.generate_code(_channel(), resolved)
+        code = plugin.build_bundle(_channel(), resolved)
 
         assert code.entrypoint == "python -m vystak_channel_slack"
         assert set(code.files.keys()) == {
@@ -83,25 +83,25 @@ class TestSlackChannelPlugin:
                 "address": "http://vystak-weather-agent:8000",
             },
         }
-        code = plugin.generate_code(_channel(), resolved)
+        code = plugin.build_bundle(_channel(), resolved)
         routes = json.loads(code.files["routes.json"])
         assert routes == resolved
 
     def test_channel_config_agents(self):
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         cfg = json.loads(code.files["channel_config.json"])
         assert cfg["agents"] == ["weather-agent", "support-agent"]
 
     def test_channel_config_default_agent(self):
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         cfg = json.loads(code.files["channel_config.json"])
         assert cfg["default_agent"] == "weather-agent"
 
     def test_channel_config_state_sqlite(self):
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         cfg = json.loads(code.files["channel_config.json"])
         assert cfg["state"] is not None
         assert cfg["state"]["type"] == "sqlite"
@@ -110,7 +110,7 @@ class TestSlackChannelPlugin:
         plugin = SlackChannelPlugin()
         ov = SlackChannelOverride(name="ov1", agent=_agent("support-agent"), system_prompt="Help!")
         ch = _channel(channel_overrides={"C12345678": ov})
-        code = plugin.generate_code(ch, {})
+        code = plugin.build_bundle(ch, {})
         cfg = json.loads(code.files["channel_config.json"])
         assert "C12345678" in cfg["channel_overrides"]
         assert cfg["channel_overrides"]["C12345678"]["agent"] == "support-agent"
@@ -119,14 +119,14 @@ class TestSlackChannelPlugin:
     def test_channel_config_no_rules_json(self):
         """rules.json must be absent — replaced by channel_config.json."""
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         assert "rules.json" not in code.files
 
     def test_requirements_lists_third_party_deps(self):
         """Channel package source is bundled by DockerChannelNode; the
         emitted requirements.txt only carries third-party deps."""
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         assert "slack-bolt" in code.files["requirements.txt"]
         assert "vystak-channel-slack" not in code.files["requirements.txt"]
 
@@ -146,7 +146,7 @@ class TestNoCodegenShape:
 
     def test_plugin_emits_no_python_source(self):
         plugin = SlackChannelPlugin()
-        out = plugin.generate_code(_channel(), resolved_routes={})
+        out = plugin.build_bundle(_channel(), resolved_routes={})
         for path in out.files:
             assert not path.endswith(".py"), f"unexpected python source emitted: {path}"
         assert "Dockerfile" in out.files
@@ -156,14 +156,14 @@ class TestNoCodegenShape:
 
     def test_plugin_entrypoint_is_module_form(self):
         plugin = SlackChannelPlugin()
-        out = plugin.generate_code(_channel(), resolved_routes={})
+        out = plugin.build_bundle(_channel(), resolved_routes={})
         assert out.entrypoint == "python -m vystak_channel_slack"
 
     def test_dockerfile_uses_bundled_source(self):
         """Dockerfile bundles source via COPY . . and runs `python -m`,
         not `pip install vystak-channel-slack==X.Y.Z` from PyPI."""
         plugin = SlackChannelPlugin()
-        out = plugin.generate_code(_channel(), resolved_routes={})
+        out = plugin.build_bundle(_channel(), resolved_routes={})
         df = out.files["Dockerfile"]
         assert "COPY . ." in df
         assert "python" in df and "vystak_channel_slack" in df
@@ -171,7 +171,7 @@ class TestNoCodegenShape:
 
     def test_channel_config_includes_channel_type_and_protocol(self):
         plugin = SlackChannelPlugin()
-        out = plugin.generate_code(_channel(), resolved_routes={})
+        out = plugin.build_bundle(_channel(), resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["channel_type"] == "slack"
         # Slack defaults to streaming so tool-call statuses surface in-thread.
@@ -186,14 +186,14 @@ class TestAutoRegistration:
         assert isinstance(plugin, SlackChannelPlugin)
 
     def test_plugin_writes_version_fields(self):
-        out = SlackChannelPlugin().generate_code(_channel(), resolved_routes={})
+        out = SlackChannelPlugin().build_bundle(_channel(), resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert "channel_package_version" in cfg
         assert "channel_runtime_version" in cfg
 
     def test_plugin_injects_canonical_name(self):
         ch = _channel()
-        out = SlackChannelPlugin().generate_code(ch, resolved_routes={})
+        out = SlackChannelPlugin().build_bundle(ch, resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["canonical_name"] == ch.canonical_name
         # canonical_name is "<channel-name>.channels.<platform-namespace>"
@@ -204,14 +204,14 @@ class TestDeliveryFields:
     """channel_config.json includes delivery_port + transport_type (heartbeat v2)."""
 
     def test_channel_config_includes_delivery_port_and_transport_type(self):
-        out = SlackChannelPlugin().generate_code(_channel(), resolved_routes={})
+        out = SlackChannelPlugin().build_bundle(_channel(), resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["delivery_port"] == 9999
         assert cfg["transport_type"] == "http"
 
     def test_delivery_port_from_channel_config(self):
         ch = _channel(config={"delivery_port": 10000})
-        out = SlackChannelPlugin().generate_code(ch, resolved_routes={})
+        out = SlackChannelPlugin().build_bundle(ch, resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["delivery_port"] == 10000
 
@@ -219,7 +219,7 @@ class TestDeliveryFields:
         """Platform has no transport declared → transport_type is 'http'."""
         ch = _channel()
         # Default _platform() has no transport.
-        out = SlackChannelPlugin().generate_code(ch, resolved_routes={})
+        out = SlackChannelPlugin().build_bundle(ch, resolved_routes={})
         cfg = json.loads(out.files["channel_config.json"])
         assert cfg["transport_type"] == "http"
 
@@ -229,14 +229,14 @@ class TestSlackChannelStreamToolCalls:
 
     def test_default_value_false(self):
         plugin = SlackChannelPlugin()
-        code = plugin.generate_code(_channel(), {})
+        code = plugin.build_bundle(_channel(), {})
         cfg = json.loads(code.files["channel_config.json"])
         assert cfg.get("stream_tool_calls") is False
 
     def test_true_when_set_in_channel_config(self):
         plugin = SlackChannelPlugin()
         ch = _channel(config={"stream_tool_calls": True})
-        code = plugin.generate_code(ch, {})
+        code = plugin.build_bundle(ch, {})
         cfg = json.loads(code.files["channel_config.json"])
         assert cfg["stream_tool_calls"] is True
 

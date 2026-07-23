@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
 from vystak.channels import ChannelPluginRegistry
-from vystak.providers.base import ChannelPlugin, GeneratedCode
+from vystak.providers.base import ChannelPlugin, FileBundle
 from vystak.schema.common import AgentProtocol, ChannelType, RuntimeMode
 
 
@@ -15,8 +15,8 @@ class _FakePlugin(ChannelPlugin):
     agent_protocol = AgentProtocol.A2A_TURN
     config_schema = _NoopConfig
 
-    def generate_code(self, channel, resolved_routes):
-        return GeneratedCode(files={}, entrypoint="main.py")
+    def build_bundle(self, channel, resolved_routes):
+        return FileBundle(files={}, entrypoint="main.py")
 
     def provision_nodes(self, channel, platform):
         return []
