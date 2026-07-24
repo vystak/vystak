@@ -38,8 +38,10 @@ actionable error if either is missing:
 
 ## Configure
 
-Edit `vystak.yaml` (or export the referenced env vars — see `${...}`
-placeholders):
+`vystak.yaml`'s `${AZURE_STORAGE_ACCOUNT}` / `${AZURE_ACA_ENVIRONMENT}`
+are documentation placeholders, not shell interpolation — the loader does
+not expand them. **Edit `vystak.yaml` directly** and replace them with real
+values:
 
 - `providers.azure.config.storage_account` — name of the `FileStorage`
   account from step 1
@@ -53,8 +55,7 @@ placeholders):
 ```bash
 az login   # or export AZURE_SUBSCRIPTION_ID
 export ANTHROPIC_API_KEY=sk-ant-...
-export AZURE_STORAGE_ACCOUNT=<your-filestorage-account-name>
-export AZURE_ACA_ENVIRONMENT=<your-vnet-injected-environment-name>
+# vystak.yaml must already have storage_account / environment filled in — see Configure above
 
 vystak plan     # preview — fails here with the actionable errors above if
                 # the storage account isn't FileStorage/Premium_LRS or the
