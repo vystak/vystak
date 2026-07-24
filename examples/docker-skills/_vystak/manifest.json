@@ -9,8 +9,8 @@
     "min_compat": "0.4",
     "max_compat": "0.5"
   },
-  "scaffolded_at": "2026-07-24T14:29:21.950880+00:00",
-  "scaffolded_by_cli": "0.2.1.dev16+gfbd608870",
+  "scaffolded_at": "2026-07-24T15:10:56.525351+00:00",
+  "scaffolded_by_cli": "0.2.1.dev19+g69969ec76.d20260724",
   "files": {
     "_vystak/manifest.template.json": "sha256:0c6118737bd55bde115f2acc646937b978512aa0f0ef12db6e026f0b63f5e5b4",
     "_vystak/requirements.txt": "sha256:e8afdb437f533746946174b7f14cbcea135b3ddbf051b2be3fabaeec3b2ea8f0",
@@ -19,7 +19,7 @@
     "_vystak/runtime/store.py": "sha256:f4714ad138e9a9dffb277c8fca980c04c95fd3b8846a2dec0bf7962cc56629a8",
     "_vystak/runtime/subagents.py": "sha256:5e9745aa30804f1d1a319b11054aae1dba4a5e1c37f60729a8fe096d8912f1f0",
     "_vystak/runtime/config.py": "sha256:790b700ecbaa6c472212649071535c0782a2d72bb75f364932666f738b335a0f",
-    "_vystak/runtime/skills.py": "sha256:96c0a8a9ee47f785d7a56ac8a62e00f161a843eebf9b932a2f55375a2e43684d",
+    "_vystak/runtime/skills.py": "sha256:abda15d7d1591ed4395483cbff01fab0c338b386a6c7f7a268a1959bdef7541d",
     "_vystak/runtime/memory.py": "sha256:9b9d1b6ebbc46d574b2a6cbb06b14b6c43198bf5a83f72ea333bf9fc20fd08e4",
     "_vystak/runtime/prompt_callable.py": "sha256:caf3a3fcb53f33fa127bdc9b783ff132fa0f6ed6ebf8537bb1376b9bceb2439c",
     "_vystak/runtime/tools.py": "sha256:20a393b33a3a70f111668e34c5b46bc2b1ce7032f8513d2372be78a2990fb7eb",

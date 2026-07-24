@@ -87,6 +87,23 @@ class TestComputeSkillDigest:
         (folder / "a.md").rename(folder / "b.md")
         assert compute_skill_digest(folder) != d1
 
+    def test_dotfile_does_not_change_digest(self, tmp_path):
+        """Dotfiles never reach the bundle (_bundle_project_dir skips them) —
+        the digest domain must match, or a dotfile edit triggers a spurious
+        redeploy for content that never ships."""
+        folder = write_skill(tmp_path)
+        d1 = compute_skill_digest(folder)
+        (folder / ".hidden").write_text("secret local note\n")
+        assert compute_skill_digest(folder) == d1
+
+    def test_binary_file_does_not_change_digest(self, tmp_path):
+        """Non-UTF8 files are silently dropped by _bundle_project_dir — same
+        reasoning as the dotfile case above."""
+        folder = write_skill(tmp_path)
+        d1 = compute_skill_digest(folder)
+        (folder / "img.png").write_bytes(bytes([0xC3, 0x28, 0x00, 0xFF]))
+        assert compute_skill_digest(folder) == d1
+
 
 class TestResolveFolderSkills:
     def test_shorthand_resolves_folder(self, tmp_path):
@@ -129,6 +146,24 @@ class TestResolveFolderSkills:
         agent = make_agent(skills=[Skill(name="research", path="nope/research")])
         with pytest.raises(ValueError, match="nope/research"):
             resolve_folder_skills([agent], tmp_path)
+
+    def test_absolute_path_rejected(self, tmp_path):
+        agent = make_agent(skills=[Skill(name="research", path="/tmp/abs")])
+        with pytest.raises(ValueError, match="must be project-relative"):
+            resolve_folder_skills([agent], tmp_path)
+
+    def test_escaping_path_rejected(self, tmp_path):
+        # Create the project dir as a subdirectory so "../outside" is a real,
+        # existing folder with a valid SKILL.md — proving rejection is about
+        # the escape, not a missing-folder fallthrough.
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "SKILL.md").write_text(SKILL_MD)
+        agent = make_agent(skills=[Skill(name="research", path="../outside")])
+        with pytest.raises(ValueError, match="escapes the project directory"):
+            resolve_folder_skills([agent], project_dir)
 
     def test_inline_skill_untouched_even_with_matching_folder(self, tmp_path):
         write_skill(tmp_path)

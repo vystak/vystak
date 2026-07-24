@@ -37,11 +37,30 @@ def parse_skill_md(text: str) -> tuple[dict, str]:
     return meta, parts[2].lstrip("\n")
 
 
+def _bundled_file(folder: Path, f: Path) -> bool:
+    """Mirror _bundle_project_dir's rules: what actually ships in the bundle."""
+    rel_parts = f.relative_to(folder).parts
+    if any(p.startswith(".") for p in rel_parts) or "__pycache__" in rel_parts:
+        return False
+    if f.suffix == ".pyc":
+        return False
+    try:
+        f.read_text()
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def compute_skill_digest(folder: Path) -> str:
-    """sha256 over sorted relative paths + file bytes. Any edit changes it."""
+    """sha256 over sorted relative paths + file bytes. Any edit changes it.
+
+    Only hashes files that `_bundle_project_dir` would actually ship —
+    dotfiles, `__pycache__`, `*.pyc`, and non-UTF8 (binary) files are skipped
+    the same way there, so this digest can't drift from what's deployed.
+    """
     h = hashlib.sha256()
     for f in sorted(folder.rglob("*")):
-        if not f.is_file():
+        if not f.is_file() or not _bundled_file(folder, f):
             continue
         h.update(f.relative_to(folder).as_posix().encode())
         h.update(b"\0")
@@ -64,7 +83,17 @@ def _resolve_one(agent: Agent, skill: Skill, project_dir: Path) -> None:
     if skill.path is None and (skill.tools or skill.prompt):
         return  # inline skill — declaration wins over a same-named folder
     rel = skill.path or f"skills/{skill.name}"
+    if Path(rel).is_absolute():
+        raise ValueError(
+            f"Skill '{skill.name}' on agent '{agent.name}': path '{rel}' "
+            f"must be project-relative, not absolute."
+        )
     folder = project_dir / rel
+    if project_dir.resolve() not in folder.resolve().parents:
+        raise ValueError(
+            f"Skill '{skill.name}' on agent '{agent.name}': path '{rel}' "
+            f"escapes the project directory."
+        )
     skill_md = folder / "SKILL.md"
     if not skill_md.exists():
         if skill.path is not None:

@@ -88,7 +88,10 @@ def build_skill_tools(agent: Any, project_root: Path) -> list[Any]:
         if not target.is_file():
             available = ", ".join(_resource_files(folder)) or "none"
             return f"File '{path}' not found in skill '{skill}'. Available: {available}"
-        return target.read_text()
+        try:
+            return target.read_text()
+        except UnicodeDecodeError:
+            return f"File '{path}' in skill '{skill}' is not readable text."
 
     return [load_skill, read_skill_file]
 
@@ -101,9 +104,26 @@ def _strip_frontmatter(text: str) -> str:
     return text
 
 
+def _bundled_file(folder: Path, f: Path) -> bool:
+    """Mirror vystak_cli's _bundle_project_dir rules: what actually ships in
+    the deploy bundle. Kept as a small local copy (not imported from vystak)
+    because the template runtime must not grow new deps on vystak internals.
+    """
+    rel_parts = f.relative_to(folder).parts
+    if any(p.startswith(".") for p in rel_parts) or "__pycache__" in rel_parts:
+        return False
+    if f.suffix == ".pyc":
+        return False
+    try:
+        f.read_text()
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def _resource_files(folder: Path) -> list[str]:
     return sorted(
         f.relative_to(folder).as_posix()
         for f in folder.rglob("*")
-        if f.is_file() and f.name != "SKILL.md"
+        if f.is_file() and f.name != "SKILL.md" and _bundled_file(folder, f)
     )

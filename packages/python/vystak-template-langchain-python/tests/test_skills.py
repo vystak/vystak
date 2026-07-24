@@ -114,6 +114,24 @@ class TestBuildSkillTools:
             {"skill": "research", "path": str(tmp_path / "secret.txt")}
         )
 
+    def test_dotfile_not_listed_as_resource(self, tmp_path):
+        """Dotfiles never reach the bundle (mirrors _bundle_project_dir's
+        rules) so they must not be advertised as loadable resources."""
+        folder = _write_skill_folder(tmp_path)
+        (folder / ".hidden").write_text("local note\n")
+        tools = build_skill_tools(_agent([_folder_skill()]), tmp_path)
+        load_skill = next(t for t in tools if t.name == "load_skill")
+        out = load_skill.invoke({"name": "research"})
+        assert ".hidden" not in out
+
+    def test_read_skill_file_binary_does_not_raise(self, tmp_path):
+        folder = _write_skill_folder(tmp_path)
+        (folder / "img.png").write_bytes(bytes([0xC3, 0x28, 0x00, 0xFF]))
+        tools = build_skill_tools(_agent([_folder_skill()]), tmp_path)
+        read = next(t for t in tools if t.name == "read_skill_file")
+        out = read.invoke({"skill": "research", "path": "img.png"})
+        assert "not readable text" in out
+
     def test_read_skill_file_rejects_symlink_escape(self, tmp_path):
         folder = _write_skill_folder(tmp_path)
         (tmp_path / "secret.txt").write_text("secret\n")
@@ -176,6 +194,44 @@ class TestAppFactoryWiring:
 
         app = build_agent_app(agent)
         assert len(app.routes) >= 7
+
+    def test_skill_tools_reach_build_graph(self, tmp_path, monkeypatch):
+        """Guard: build_agent_app must pass skill_tools into build_graph's
+        `tools=` kwarg. Without this assertion, deleting `+ skill_tools`
+        from the wiring in app_factory.py stays green."""
+        from _vystak.runtime.config import load_agent
+
+        _write_skill_folder(tmp_path)
+        (tmp_path / "vystak.yaml").write_text(
+            "name: support\n"
+            "framework: langchain-python\n"
+            "default_model:\n"
+            "  name: claude\n"
+            "  provider: {name: anthropic, type: anthropic}\n"
+            "  model_name: claude-sonnet-4-20250514\n"
+            "skills: [research]\n"
+        )
+        agent = load_agent(str(tmp_path / "vystak.yaml"))
+        assert agent.skills[0].content_digest
+
+        monkeypatch.chdir(tmp_path)
+        import _vystak.runtime.app_factory as app_factory
+
+        real_build_graph = app_factory.build_graph
+        captured: dict[str, list] = {}
+
+        def wrapper(*args, **kwargs):
+            captured["tools"] = kwargs.get("tools")
+            return real_build_graph(*args, **kwargs)
+
+        monkeypatch.setattr(app_factory, "build_graph", wrapper)
+
+        app = app_factory.build_agent_app(agent)
+        assert len(app.routes) >= 7
+
+        assert captured["tools"] is not None
+        tool_names = {t.name for t in captured["tools"]}
+        assert {"load_skill", "read_skill_file"} <= tool_names
 
 
 class TestAgentCard:
