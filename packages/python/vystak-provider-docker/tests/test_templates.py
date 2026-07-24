@@ -83,6 +83,11 @@ def test_entrypoint_shim_has_wait_loop():
     assert "sleep 1" in shim
 
 
+def test_shim_known_hosts_entry_is_host_prefixed():
+    shim = generate_entrypoint_shim()
+    assert '"$VYSTAK_WORKSPACE_HOST" "$VYSTAK_SSH_KNOWN_HOSTS_PUB"' in shim
+
+
 def test_agent_hcl_includes_workspace_ssh_templates():
     from vystak_provider_docker.templates import generate_agent_hcl_with_workspace_ssh
 

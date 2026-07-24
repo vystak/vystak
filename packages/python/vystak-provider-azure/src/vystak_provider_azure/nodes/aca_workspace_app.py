@@ -308,6 +308,34 @@ class ACAWorkspaceAppNode(Provisionable):
 
         shutil.copy(setup_py_path(), build_dir / "setup.py")
 
+        # Tools + seed + workspace entrypoint — parity with the Docker
+        # workspace node's build context (the generated Dockerfile COPYs
+        # all three unconditionally).
+        from vystak_provider_docker.templates import (
+            generate_workspace_entrypoint,
+        )
+
+        tools_src = Path("tools")
+        tools_dst = build_dir / "tools"
+        if tools_dst.exists():
+            shutil.rmtree(tools_dst)
+        if tools_src.exists():
+            shutil.copytree(tools_src, tools_dst)
+        else:
+            tools_dst.mkdir()
+
+        seed_dst = build_dir / "seed"
+        if seed_dst.exists():
+            shutil.rmtree(seed_dst)
+        seed_src = Path("workspaces") / ws.name
+        if seed_src.exists():
+            shutil.copytree(seed_src, seed_dst)
+        else:
+            seed_dst.mkdir()
+        (build_dir / "workspace-entrypoint.sh").write_text(
+            generate_workspace_entrypoint()
+        )
+
         image_tag = (
             f"{acr_login_server}/vystak-{self._agent.name}-workspace:latest"
         )

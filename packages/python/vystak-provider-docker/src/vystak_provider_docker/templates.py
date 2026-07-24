@@ -220,7 +220,11 @@ fi
 
 if [ -n "${VYSTAK_SSH_KNOWN_HOSTS_PUB:-}" ]; then
   mkdir -p /vystak/ssh
-  printf '%s\\n' "$VYSTAK_SSH_KNOWN_HOSTS_PUB" > /vystak/ssh/known_hosts
+  if [ -n "${VYSTAK_WORKSPACE_HOST:-}" ]; then
+    printf '%s %s\\n' "$VYSTAK_WORKSPACE_HOST" "$VYSTAK_SSH_KNOWN_HOSTS_PUB" > /vystak/ssh/known_hosts
+  else
+    printf '%s\\n' "$VYSTAK_SSH_KNOWN_HOSTS_PUB" > /vystak/ssh/known_hosts
+  fi
   chmod 444 /vystak/ssh/known_hosts
   unset VYSTAK_SSH_KNOWN_HOSTS_PUB
 fi

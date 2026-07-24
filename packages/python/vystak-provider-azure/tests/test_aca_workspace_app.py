@@ -1,6 +1,56 @@
+from unittest.mock import MagicMock
+
 from vystak_provider_azure.nodes.aca_workspace_app import (
+    ACAWorkspaceAppNode,
     build_workspace_revision,
 )
+
+
+def _make_node(workspace_name: str = "dev", agent_name: str = "assistant"):
+    """Construct a bare ACAWorkspaceAppNode with mocked Azure/Docker clients.
+
+    Mirrors the Agent/Workspace construction pattern used in
+    test_provider_workspace_graph.py, but builds the node directly rather
+    than routing through AzureProvider._add_workspace_nodes — the tests
+    here exercise _build_and_push_image in isolation.
+    """
+    from vystak.schema import Agent, Model, Platform, Provider, Workspace
+
+    agent = Agent(
+        name=agent_name,
+        framework="langchain-python",
+        default_model=Model(
+            name="claude",
+            model_name="claude-3",
+            provider=Provider(name="anthropic", type="anthropic"),
+        ),
+        platform=Platform(
+            name="aca",
+            type="container-apps",
+            provider=Provider(name="azure", type="azure"),
+            config={
+                "subscription_id": "sub-test",
+                "resource_group": "rg-test",
+                "location": "eastus",
+            },
+        ),
+        workspace=Workspace(name=workspace_name, image="python:3.11-slim"),
+    )
+    return ACAWorkspaceAppNode(
+        aca_client=MagicMock(),
+        docker_client=MagicMock(),
+        rg_name="rg-test",
+        env_name="env-test",
+        agent=agent,
+        platform_config=agent.platform.config,
+        location="eastus",
+        ssh_keygen_node_name="keygen",
+        files_share_node_name=None,
+        env_storage_node_name=None,
+        acr_node_name="acr-test",
+        vault_node_name="vault-test",
+        workspace_identity_node_name="uami-test",
+    )
 
 
 def test_build_workspace_revision_internal_tcp_ingress_port_22():
@@ -155,3 +205,24 @@ def test_nfs_volume_uses_nfs_storage_type():
     vol = body["properties"]["template"]["volumes"][0]
     assert vol["storageType"] == "NfsAzureFile"
     assert vol["storageName"] == "vystak-volume-team-code"
+
+
+def test_build_context_stages_tools_seed_and_entrypoint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "t.py").write_text("def t(): pass\n")
+    seed = tmp_path / "workspaces" / "dev"
+    seed.mkdir(parents=True)
+    (seed / "hello.txt").write_text("seeded\n")
+
+    node = _make_node()  # workspace name "dev", agent name "assistant"
+    node._docker.images.push.return_value = [{}]
+    node._build_and_push_image(
+        acr_login_server="acr.azurecr.io",
+        acr_username="acr",
+        acr_password="pw",
+    )
+    build_dir = tmp_path / ".vystak" / "assistant-workspace-azure"
+    assert (build_dir / "tools" / "t.py").exists()
+    assert (build_dir / "seed" / "hello.txt").read_text() == "seeded\n"
+    assert (build_dir / "workspace-entrypoint.sh").exists()
