@@ -1,7 +1,7 @@
 # Workspace Tools + Seed Folders — finishing the workspace implementation
 
 **Date:** 2026-07-24
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented (see plan 2026-07-24-workspace-tools-and-seed.md)
 **Related:** `2026-04-22-workspace-compute-design.md` (Docker workspaces),
 `2026-04-23-aca-workspace-compute-design.md` (Azure two-app workspaces),
 `2026-07-23-workspace-volume-design.md` (named volumes, Phase 1 shipped)
@@ -66,14 +66,31 @@ Four coordinated changes:
 
 ### SSH material resolution (cross-provider)
 
-A factory in `workspace.py` picks the delivery shape:
+`workspace.py`'s `_make_client` factory resolves the client key and
+`known_hosts` as **file paths only** — there is no branch that passes
+key material inline to asyncssh. Resolution is canonical-first with a
+`/shared/ssh/*` fallback:
+`_first_existing(["/vystak/ssh/id_ed25519", "/shared/ssh/id_ed25519"])`
+for the client key, the equivalent pair for `known_hosts`. Both
+providers land material at one of those two paths before the agent
+process starts; `workspace.py` itself never branches on provider.
 
-- **Docker (file paths):** `client_keys=["/vystak/ssh/id_ed25519"]`,
-  `known_hosts="/vystak/ssh/known_hosts"` — used when those files exist.
-- **Azure (inline env material):** `VYSTAK_SSH_CLIENT_KEY` (private key
-  PEM) and `VYSTAK_SSH_KNOWN_HOSTS_PUB` (host public key) secretRef env
-  vars — used when set; the factory builds the known-hosts entry
-  `f"{host} {pubkey}"` and passes material inline to asyncssh.
+- **Docker:** the provider's own generated Dockerfile symlinks
+  `/vystak/ssh → /shared/ssh` (`ln -sf`, `nodes/agent.py`) so the
+  canonical path resolves directly — but that Dockerfile is only
+  generated when the agent supplies none of its own. Framework-template
+  agents (the default — `vystak-template-langchain-python` ships its own
+  Dockerfile) skip that generation, so no symlink exists and resolution
+  falls through to `/shared/ssh/*`, where the default (no-Vault) path
+  bind-mounts the key files directly and the Vault path renders them via
+  the vault-agent sidecar.
+- **Azure:** ACA delivers key material as `VYSTAK_SSH_CLIENT_KEY`
+  (private key PEM) and `VYSTAK_SSH_KNOWN_HOSTS_PUB` (host public key)
+  secretRef env vars. The shared entrypoint shim
+  (`generate_entrypoint_shim`, `templates.py` — the same shim used on
+  Docker's Vault path) materializes both into the canonical
+  `/vystak/ssh/id_ed25519` / `/vystak/ssh/known_hosts` paths before
+  `exec`ing the main process, then unsets the env vars.
 
 ### Tool set (matches the validated prototype `builtin_tools.py`)
 

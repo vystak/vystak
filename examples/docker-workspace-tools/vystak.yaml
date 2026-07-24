@@ -1,0 +1,30 @@
+# One agent with a workspace, seeded from workspaces/dev/, driven through
+# the built-in workspace tools (read_file, write_file, run, git_*, ...).
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-5
+
+agents:
+  - name: analyst
+    framework: langchain-python
+    instructions: |
+      You are a data analyst. Your workspace (/workspace) is seeded with
+      data.csv and analyze.sh. Use the built-in workspace tools:
+      list_dir to see files, read_file to inspect them, and
+      run ("sh analyze.sh") to compute results. Write findings to
+      /workspace/report.md with write_file.
+    default_model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    workspace:
+      name: dev
+      image: python:3.12-slim
