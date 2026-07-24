@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from vystak.hash.hasher import hash_dict, hash_model
 from vystak.schema.agent import Agent
@@ -88,10 +89,28 @@ def _hash_str(value: str | None) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _hash_seed_folder(ws_name: str) -> str | None:
+    """Digest of workspaces/<ws_name>/ (cwd-relative, like the provider's
+    staging). None when absent so seed-less workspaces keep their
+    pre-seed-feature hashes."""
+    seed_dir = Path("workspaces") / ws_name
+    if not seed_dir.is_dir():
+        return None
+    parts: list[str] = []
+    for p in sorted(seed_dir.rglob("*")):
+        if p.is_file():
+            digest = hashlib.sha256(p.read_bytes()).hexdigest()
+            parts.append(f"{p.relative_to(seed_dir).as_posix()}:{digest}")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
 def _hash_workspace_deploy(ws) -> str:
     """Hash the workspace minus fields that don't affect deploy identity.
 
-    Volume.retention only governs destroy-time behavior.
+    Volume.retention only governs destroy-time behavior. Seed-folder
+    content (workspaces/<name>/ on the host) joins the hash when present,
+    so editing/adding seed files triggers redeploy via `vystak apply`'s
+    hash-based change detection.
     """
     if ws is None:
         return hashlib.sha256(b"null").hexdigest()
@@ -99,6 +118,9 @@ def _hash_workspace_deploy(ws) -> str:
     vol = data.get("volume")
     if isinstance(vol, dict):
         vol.pop("retention", None)
+    seed = _hash_seed_folder(data.get("name", ""))
+    if seed is not None:
+        data["__seed__"] = seed
     return hash_dict(data)
 
 

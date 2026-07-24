@@ -151,9 +151,14 @@ schema change.
   propagation is Docker-only and first-mount-only. Entrypoint-time copy
   is the only mechanism that behaves identically for Docker volumes,
   bind mounts, tmpfs, and Azure Files.
-- **Hash:** seed content does not contribute to the deploy hash —
-  same precedent as `tools/`. The image rebuild on apply is what carries
-  changes.
+- **Hash:** seed-folder content **joins the workspace deploy hash**
+  (file paths + content digests), scoped so workspaces without a seed
+  folder keep byte-identical hashes. *Amended during implementation:*
+  the original "no hash contribution, the rebuild carries changes"
+  wording was self-contradictory — with hash-based change detection, a
+  hash-exempt seed means `apply` reports "No changes" and never
+  re-provisions, so pushed files would never arrive. (The `tools/`
+  folder has this same latent gap — pre-existing, out of scope here.)
 - **Azure `tools/` staging parity:** while touching the Azure image
   build, verify (and fix if broken) that it stages `tools/` the way the
   Docker node does — the generated Dockerfile references it

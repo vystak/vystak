@@ -211,6 +211,28 @@ def vault_clean():
 
 
 @pytest.fixture
+def workspace_clean():
+    """Ensure no stale workspace data volume pollutes this test.
+
+    Pre-test: remove any `vystak-wstools-workspace` container and
+    `vystak-wstools-workspace-data` volume left by an aborted prior run.
+    Workspace data volumes are deliberately retained across `vystak
+    destroy` (persistence-by-design, mirroring session/memory volumes),
+    so a failed prior run of this same cell leaves mutated seed content
+    on the volume — the next run's "seed landed" assertion then fails
+    against stale data instead of a fresh copy. Mirrors `vault_clean`'s
+    pattern for the same class of problem.
+
+    Post-test: no-op — individual tests handle their own teardown.
+    """
+    for container in ("vystak-wstools-workspace",):
+        run(["docker", "rm", "-f", container], check=False)
+    for volume in ("vystak-wstools-workspace-data",):
+        run(["docker", "volume", "rm", volume], check=False)
+    yield
+
+
+@pytest.fixture
 def project(tmp_path, monkeypatch, docker_required):
     """Yield a tmp project dir. Writes `.env` with test-safe sentinels.
 

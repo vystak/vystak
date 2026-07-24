@@ -41,3 +41,28 @@ def test_volume_retention_does_not_change_hash():
     a1 = _agent(Volume(name="team-code", retention="retain"))
     a2 = _agent(Volume(name="team-code", retention="delete"))
     assert hash_agent(a1).root == hash_agent(a2).root
+
+
+def test_seed_folder_content_changes_workspace_hash(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent = _agent(Volume(name="team-code"))
+    h_no_seed = hash_agent(agent).workspace
+
+    seed = tmp_path / "workspaces" / "dev"
+    seed.mkdir(parents=True)
+    (seed / "a.txt").write_text("v1")
+    h_v1 = hash_agent(agent).workspace
+    assert h_v1 != h_no_seed
+
+    (seed / "a.txt").write_text("v2")
+    h_v2 = hash_agent(agent).workspace
+    assert h_v2 != h_v1
+
+    (seed / "b.txt").write_text("new")
+    assert hash_agent(agent).workspace != h_v2
+
+
+def test_no_seed_folder_keeps_hash_stable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent = _agent(Volume(name="team-code"))
+    assert hash_agent(agent).workspace == hash_agent(agent).workspace
