@@ -150,16 +150,22 @@ models:
     model_name: claude-haiku-4-5-20251001
 ```
 
-## Adding skills (tools)
+## Adding skills
 
-A **skill** is a named bundle of tools (Python functions the agent can call):
+A **skill** is a named capability. It comes in two forms:
+
+- a **folder skill** — packaged instructions in `skills/<name>/SKILL.md`
+  next to your `vystak.yaml`, loaded by the agent on demand
+- an **inline skill** — a named bundle of tools (Python functions the
+  agent can call), optionally with a short prompt
 
 <Tabs groupId="config-format">
 <TabItem value="yaml" label="YAML" default>
 
 ```yaml
 skills:
-  - name: ops
+  - research                 # folder skill: skills/research/SKILL.md
+  - name: ops                # inline skill: tool bundle
     tools:
       - lookup_order
       - process_refund
@@ -171,6 +177,7 @@ skills:
 
 ```python
 skills = [
+    "research",              # folder skill: skills/research/SKILL.md
     vystak.Skill(
         name="ops",
         tools=["lookup_order", "process_refund"],
@@ -182,17 +189,49 @@ skills = [
 </TabItem>
 </Tabs>
 
-Tools are Python functions that live in a `tools/` directory next to your `vystak.yaml`. The first time you run `vystak apply`, Vystak scaffolds stub files for any tool referenced in `skills` that doesn't exist.
+### Folder skills
+
+A folder skill lives at `skills/<name>/SKILL.md` with YAML frontmatter:
+
+```markdown
+---
+name: research
+description: Product-research workflow — how to compare and cite sources.
+tools: [web_search]        # optional, resolved from tools/
+---
+When asked to research a topic, follow this process...
+```
+
+`description` is required — it is the only thing the agent sees before
+deciding to use the skill. The folder can hold extra resource files
+(reference docs, templates) alongside SKILL.md.
+
+At runtime the agent gets **progressive disclosure**: its system prompt
+lists each skill's name and description, and two auto-provided tools —
+`load_skill(name)` and `read_skill_file(skill, path)` — fetch the full
+instructions and resource files only when needed. Editing any file in the
+skill folder changes the agent's content hash, so `vystak plan` shows a
+redeploy.
+
+### Inline skills and tools
+
+Tools are Python functions that live in a `tools/` directory next to your
+`vystak.yaml`; each tool name maps to `tools/<name>.py` exporting a
+function of the same name.
 
 ```python
 # tools/lookup_order.py
-def lookup_order(order_id: str) -> dict:
+from langchain_core.tools import tool
+
+@tool
+def lookup_order(order_id: str) -> str:
     """Look up an order by ID."""
-    # Your implementation here
-    return {"id": order_id, "status": "shipped"}
+    return f"Order {order_id}: shipped"
 ```
 
-The `prompt` field is appended to the agent's instructions when this skill's tools are in use.
+An inline skill's `prompt` field is appended to the agent's system prompt.
+
+See `examples/docker-skills/` for a working project using both forms.
 
 ## Adding sessions (conversation memory)
 

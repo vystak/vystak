@@ -98,6 +98,11 @@ agent = ast.Agent(
 )
 ```
 
+Skills can also be **folders of packaged instructions** — put a
+`skills/<name>/SKILL.md` (with a `description` in its frontmatter) next to
+your `vystak.yaml` and declare `skills: [<name>]`; the agent loads the full
+instructions on demand. See `examples/docker-skills/`.
+
 ## What `vystak apply` Does
 
 ```
