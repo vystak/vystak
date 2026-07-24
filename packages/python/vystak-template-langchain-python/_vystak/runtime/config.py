@@ -10,6 +10,7 @@ from pathlib import Path
 
 from vystak.schema.agent import Agent
 from vystak.schema.loader import load_agent as _load_yaml
+from vystak.schema.skill_resolver import resolve_folder_skills
 
 
 def load_agent(path: str | Path) -> Agent:
@@ -34,4 +35,5 @@ def _load_py(path: Path) -> Agent:
     agent = getattr(module, "agent", None)
     if agent is None:
         raise ValueError(f"{path} does not define a module-level `agent` binding")
+    resolve_folder_skills([agent], path.parent)
     return agent

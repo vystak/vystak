@@ -252,3 +252,62 @@ class TestLoadDefinitions:
         defs = load_definitions([subdir], base_dir=tmp_path)
         assert len(defs.agents) == 1
         assert defs.agents[0].platform.provider.config["location"] == "eastus2"
+
+
+class TestFolderSkillResolution:
+    SKILL_MD = (
+        "---\n"
+        "name: research\n"
+        "description: Deep-research workflow.\n"
+        "---\n"
+        "When asked to research, follow this process.\n"
+    )
+
+    def _write_skill(self, root):
+        folder = root / "skills" / "research"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(self.SKILL_MD)
+
+    def test_python_definitions_resolve_folder_skills(self, tmp_path):
+        from vystak_cli.loader import load_definitions
+
+        self._write_skill(tmp_path)
+        (tmp_path / "vystak.py").write_text(
+            "import vystak as ast\n"
+            "anthropic = ast.Provider(name='anthropic', type='anthropic')\n"
+            "model = ast.Model(name='m', provider=anthropic,"
+            " model_name='claude-sonnet-4-20250514')\n"
+            "agent = ast.Agent(name='support', framework='langchain-python',"
+            " default_model=model, skills=['research'])\n"
+        )
+        defs = load_definitions([tmp_path / "vystak.py"])
+        assert defs.agents[0].skills[0].description == "Deep-research workflow."
+        assert defs.agents[0].skills[0].content_digest
+
+    def test_multi_yaml_resolves_folder_skills(self, tmp_path):
+        from vystak_cli.loader import load_definitions
+
+        self._write_skill(tmp_path)
+        (tmp_path / "vystak.yaml").write_text(
+            "providers:\n"
+            "  anthropic: {type: anthropic}\n"
+            "models:\n"
+            "  m:\n"
+            "    provider: anthropic\n"
+            "    model_name: claude-sonnet-4-20250514\n"
+            "agents:\n"
+            "  - name: support\n"
+            "    framework: langchain-python\n"
+            "    default_model: m\n"
+            "    skills: [research]\n"
+        )
+        defs = load_definitions([tmp_path / "vystak.yaml"])
+        assert defs.agents[0].skills[0].content_digest
+
+    def test_bundle_includes_skills_dir(self, tmp_path):
+        from vystak_cli.commands.apply import _bundle_project_dir
+
+        self._write_skill(tmp_path)
+        (tmp_path / "server.py").write_text("app = None\n")
+        bundle = _bundle_project_dir(tmp_path)
+        assert "skills/research/SKILL.md" in bundle.files

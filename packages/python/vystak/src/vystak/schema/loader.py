@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from vystak.schema.agent import Agent
+from vystak.schema.skill_resolver import resolve_folder_skills
 
 
 def load_agent(path: str | Path) -> Agent:
@@ -31,7 +32,9 @@ def load_agent(path: str | Path) -> Agent:
             "See docs/concepts/multi-agent.md."
         )
 
-    return Agent.model_validate(data)
+    agent = Agent.model_validate(data)
+    resolve_folder_skills([agent], path.parent)
+    return agent
 
 
 def dump_agent(agent: Agent, path: str | Path, format: str = "yaml") -> None:

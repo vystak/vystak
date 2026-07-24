@@ -22,6 +22,7 @@ try:
     from vystak.schema.config_loader import load_base_config, merge_configs
     from vystak.schema.loader import load_agent
     from vystak.schema.multi_loader import load_multi_yaml
+    from vystak.schema.skill_resolver import resolve_folder_skills
     from vystak.schema.vault import Vault
 finally:
     sys.path = _cwd_entries + sys.path
@@ -113,6 +114,8 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
                 raise FileNotFoundError(f"No agent definition found in {path}")
             path = found
 
+        before = len(defs.agents)
+
         if path.suffix in (".yaml", ".yml"):
             data = yaml.safe_load(path.read_text()) or {}
 
@@ -143,6 +146,8 @@ def load_definitions(paths: list[Path], base_dir: Path | None = None) -> Definit
             defs.extend(_load_definitions_from_python(path))
         else:
             raise ValueError(f"Unsupported file type: {path.suffix}")
+
+        resolve_folder_skills(defs.agents[before:], path.parent)
 
     return defs
 

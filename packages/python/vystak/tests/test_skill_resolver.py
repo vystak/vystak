@@ -159,3 +159,22 @@ class TestResolveFolderSkills:
         agent = make_agent(subagents=[sub])
         resolve_folder_skills([agent], tmp_path)
         assert agent.subagents[0].skills[0].content_digest
+
+
+class TestLoaderIntegration:
+    def test_load_agent_resolves_folder_skills(self, tmp_path):
+        from vystak.schema.loader import load_agent
+
+        write_skill(tmp_path)
+        (tmp_path / "agent.yaml").write_text(
+            "name: support\n"
+            "framework: langchain-python\n"
+            "default_model:\n"
+            "  name: claude\n"
+            "  provider: {name: anthropic, type: anthropic}\n"
+            "  model_name: claude-sonnet-4-20250514\n"
+            "skills: [research]\n"
+        )
+        agent = load_agent(tmp_path / "agent.yaml")
+        assert agent.skills[0].description == "Deep-research workflow."
+        assert agent.skills[0].content_digest
