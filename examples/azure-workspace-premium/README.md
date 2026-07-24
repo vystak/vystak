@@ -54,7 +54,7 @@ values:
 
 ```bash
 az login   # or export AZURE_SUBSCRIPTION_ID
-export ANTHROPIC_API_KEY=sk-ant-...
+cp .env.example .env     # then edit and fill in ANTHROPIC_API_KEY, storage account, and ACA environment
 # vystak.yaml must already have storage_account / environment filled in — see Configure above
 
 vystak plan     # preview — fails here with the actionable errors above if
