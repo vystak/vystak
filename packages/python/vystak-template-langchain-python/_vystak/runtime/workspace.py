@@ -12,14 +12,24 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_SSH_KEY_CANDIDATES = ["/vystak/ssh/id_ed25519", "/shared/ssh/id_ed25519"]
+_KNOWN_HOSTS_CANDIDATES = ["/vystak/ssh/known_hosts", "/shared/ssh/known_hosts"]
+
+
+def _first_existing(candidates: list[str]) -> str:
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
+
 
 def _make_client(host: str):
     from _vystak.runtime.workspace_client import WorkspaceRpcClient
 
     return WorkspaceRpcClient(
         host=host,
-        client_keys=["/vystak/ssh/id_ed25519"],
-        known_hosts="/vystak/ssh/known_hosts",
+        client_keys=[_first_existing(_SSH_KEY_CANDIDATES)],
+        known_hosts=_first_existing(_KNOWN_HOSTS_CANDIDATES),
     )
 
 

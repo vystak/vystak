@@ -87,3 +87,32 @@ async def test_git_commit_stages_then_commits(monkeypatch):
     assert fake.invoke.await_args_list[0].args == ("git.add",)
     assert fake.invoke.await_args_list[0].kwargs == {"paths": ["a.py"]}
     assert fake.invoke.await_args_list[1].args == ("git.commit",)
+
+
+def test_make_client_falls_back_to_shared_ssh(monkeypatch, tmp_path):
+    shared = tmp_path / "shared-ssh"
+    shared.mkdir()
+    key = shared / "id_ed25519"
+    key.write_text("KEY")
+    kh = shared / "known_hosts"
+    kh.write_text("host ssh-ed25519 AAAA")
+    monkeypatch.setattr(
+        ws_mod, "_SSH_KEY_CANDIDATES", ["/nonexistent/id_ed25519", str(key)]
+    )
+    monkeypatch.setattr(
+        ws_mod, "_KNOWN_HOSTS_CANDIDATES", ["/nonexistent/known_hosts", str(kh)]
+    )
+    client = ws_mod._make_client("ws-host")
+    assert client._client_keys == [str(key)]
+    assert client._known_hosts == str(kh)
+
+
+def test_make_client_prefers_canonical_path(monkeypatch, tmp_path):
+    canonical = tmp_path / "vystak-ssh" / "id_ed25519"
+    canonical.parent.mkdir()
+    canonical.write_text("KEY")
+    monkeypatch.setattr(
+        ws_mod, "_SSH_KEY_CANDIDATES", [str(canonical), "/other/id_ed25519"]
+    )
+    client = ws_mod._make_client("ws-host")
+    assert client._client_keys == [str(canonical)]
