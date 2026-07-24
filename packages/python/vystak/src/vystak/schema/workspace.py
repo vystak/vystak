@@ -122,7 +122,7 @@ class Workspace(NamedModel):
     @model_validator(mode="after")
     def _validate_volume_exclusivity(self) -> Self:
         if self.volume is not None and (
-            "persistence" in self.model_fields_set or "path" in self.model_fields_set
+            self.persistence != "volume" or self.path is not None
         ):
             raise ValueError(
                 f"Workspace '{self.name}': volume= is mutually exclusive with "

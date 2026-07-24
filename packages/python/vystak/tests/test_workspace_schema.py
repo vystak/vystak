@@ -133,3 +133,13 @@ def test_effective_volume_unresolved_string_reference_raises():
     ws = Workspace(name="dev", image="python:3.12-slim", volume="team-code")
     with pytest.raises(ValueError, match="never resolved"):
         _ = ws.effective_volume
+
+
+def test_workspace_with_volume_round_trips_through_model_dump():
+    from vystak.schema.volume import Volume
+
+    ws = Workspace(
+        name="dev", image="python:3.12-slim", volume=Volume(name="team-code")
+    )
+    revalidated = Workspace.model_validate(ws.model_dump())
+    assert revalidated.effective_volume.name == "team-code"

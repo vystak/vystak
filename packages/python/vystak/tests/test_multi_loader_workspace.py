@@ -244,3 +244,18 @@ def test_legacy_bind_persistence_still_rejected_on_container_apps():
     }
     with pytest.raises(ValueError, match="mode='bind'.*Container Apps"):
         load_multi_yaml(data)
+
+
+def test_agent_with_volume_round_trips_through_model_dump():
+    from vystak.schema import Agent
+
+    data = copy.deepcopy(BASE_CONFIG)
+    data["volumes"] = {"team-code": {}}
+    data["agents"][0]["workspace"] = {
+        "name": "dev",
+        "image": "python:3.12-slim",
+        "volume": "team-code",
+    }
+    agents, _channels, _vault = load_multi_yaml(data)
+    revalidated = Agent.model_validate(agents[0].model_dump())
+    assert revalidated.workspace.effective_volume.name == "team-code"
