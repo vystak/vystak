@@ -173,6 +173,39 @@ def apply(files, file_path, force, env, env_file, allow_missing):
     )
 
 
+def _order_agents_for_deploy(agents: list) -> list:
+    """Order agents so subagents deploy before the agents that call them.
+
+    A parent's startup fetches each subagent's agent card; deploying in
+    declaration order made that fetch fail (DNS not resolvable yet) when
+    the parent was declared first. Stable Kahn's toposort: declaration
+    order is preserved among independent agents; dependencies on agents
+    outside this batch are ignored; a cycle (invalid config, but the
+    schema only rejects self-reference) falls back to appending the
+    remaining agents in declaration order rather than hanging or dropping.
+    """
+    by_name = {a.name: a for a in agents}
+    deps = {
+        a.name: [s.name for s in a.subagents if s.name in by_name]
+        for a in agents
+    }
+    ordered: list = []
+    placed: set[str] = set()
+    remaining = [a.name for a in agents]
+    while remaining:
+        progressed = False
+        for name in list(remaining):
+            if all(d in placed for d in deps[name]):
+                ordered.append(by_name[name])
+                placed.add(name)
+                remaining.remove(name)
+                progressed = True
+        if not progressed:  # cycle — keep declaration order for the rest
+            ordered.extend(by_name[n] for n in remaining)
+            break
+    return ordered
+
+
 def _run_provider_apply(
     *,
     agents,
@@ -192,7 +225,7 @@ def _run_provider_apply(
     """
     deployed_agents: list[dict] = []
 
-    for agent in agents:
+    for agent in _order_agents_for_deploy(agents):
         click.echo(f"\nAgent: {agent.name}")
 
         click.echo("  Bundling project... ", nl=False)
