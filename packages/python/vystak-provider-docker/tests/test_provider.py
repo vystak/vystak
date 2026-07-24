@@ -16,6 +16,7 @@ def mock_docker_client():
         mock_docker.from_env.return_value = client
         mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
         mock_docker.errors.DockerException = type("DockerException", (Exception,), {})
+        mock_docker.errors.APIError = type("APIError", (Exception,), {})
         yield client, mock_docker.errors
 
 
@@ -847,3 +848,74 @@ class TestStatus:
         status = provider.status("test-bot")
         assert status.running is False
         assert status.hash is None
+
+
+class TestDestroyWorkspaceVolume:
+    def _ws_container(self, client, not_found_error, labels):
+        ws_container = MagicMock()
+        ws_container.labels = labels
+
+        def _get(name):
+            if name == "vystak-assistant-workspace":
+                return ws_container
+            raise not_found_error("not found")
+
+        client.containers.get.side_effect = _get
+        return ws_container
+
+    def test_retention_delete_label_removes_volume_without_flag(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        client, _ = mock_docker_client
+        self._ws_container(client, not_found_error, {
+            "vystak.volume.name": "vystak-volume-team-code",
+            "vystak.volume.retention": "delete",
+        })
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=False
+        )
+        client.volumes.get.assert_called_once_with("vystak-volume-team-code")
+        client.volumes.get.return_value.remove.assert_called_once()
+
+    def test_default_retains_volume(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        client, _ = mock_docker_client
+        self._ws_container(client, not_found_error, {
+            "vystak.volume.name": "vystak-volume-team-code",
+            "vystak.volume.retention": "retain",
+        })
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=False
+        )
+        client.volumes.get.return_value.remove.assert_not_called()
+
+    def test_volume_still_in_use_is_skipped(
+        self, provider, mock_docker_client, not_found_error, capsys
+    ):
+        client, errors = mock_docker_client
+        self._ws_container(client, not_found_error, {
+            "vystak.volume.name": "vystak-volume-team-code",
+            "vystak.volume.retention": "retain",
+        })
+        client.volumes.get.return_value.remove.side_effect = errors.APIError(
+            "volume is in use"
+        )
+        # must not raise
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=True
+        )
+        assert "still in use" in capsys.readouterr().out
+
+    def test_legacy_container_without_volume_labels(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        """Pre-Phase-1 containers have no vystak.volume.* labels."""
+        client, _ = mock_docker_client
+        self._ws_container(client, not_found_error, {"vystak.workspace": "assistant"})
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=True
+        )
+        client.volumes.get.assert_called_once_with(
+            "vystak-assistant-workspace-data"
+        )

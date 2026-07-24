@@ -903,26 +903,34 @@ class DockerProvider(PlatformProvider):
     ) -> None:
         """Stop and remove the per-agent workspace container.
 
-        Default: stops + removes the ``vystak-<agent>-workspace`` container
-        but preserves ``vystak-<agent>-workspace-data`` so the workspace
-        can be recreated without losing artifacts. Pass
-        ``delete_workspace_data=True`` to wipe the volume too.
+        The data volume is deleted when ``delete_workspace_data=True`` or
+        the container's ``vystak.volume.retention`` label is ``delete``.
+        A volume still mounted by another agent's workspace is skipped —
+        a named volume is only removable once its last referent is gone.
         """
+        volume_name = f"vystak-{agent_name}-workspace-data"
+        retention = "retain"
         try:
             ws = self._client.containers.get(f"vystak-{agent_name}-workspace")
+            labels = ws.labels or {}
+            volume_name = labels.get("vystak.volume.name") or volume_name
+            retention = labels.get("vystak.volume.retention", "retain")
             ws.stop()
             ws.remove()
         except docker.errors.NotFound:
             pass
 
-        if delete_workspace_data:
+        if delete_workspace_data or retention == "delete":
             try:
-                vol = self._client.volumes.get(
-                    f"vystak-{agent_name}-workspace-data"
-                )
+                vol = self._client.volumes.get(volume_name)
                 vol.remove()
             except docker.errors.NotFound:
                 pass
+            except docker.errors.APIError:
+                print(
+                    f"Volume '{volume_name}' is still in use by another "
+                    f"agent's workspace; skipping delete."
+                )
 
     def _destroy_vault_resources(
         self, *, agent_name: str, delete_vault: bool, keep_sidecars: bool
