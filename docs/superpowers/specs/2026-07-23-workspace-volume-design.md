@@ -1,7 +1,7 @@
 # Workspace Volumes — first-class persistence for Docker and Azure
 
 **Date:** 2026-07-23
-**Status:** Approved design, pending implementation plan
+**Status:** Phase 1 implemented (this plan); Phase 2 pending
 **Supersedes:** the `Workspace.persistence` string field (kept as a back-compat alias)
 **Related:** `2026-04-22-workspace-compute-design.md` (Docker workspaces),
 `2026-04-23-aca-workspace-compute-design.md` (Azure two-app workspaces)

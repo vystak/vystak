@@ -1,0 +1,48 @@
+# Two agents sharing one named workspace volume.
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker}
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+volumes:
+  team-code:
+    mode: persistent
+    retention: retain
+
+agents:
+  - name: coder
+    framework: langchain-python
+    instructions: |
+      You are a coding assistant. Write and edit files under /workspace —
+      the reviewer agent shares this same volume and reads what you leave
+      there.
+    default_model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    workspace:
+      name: coder-ws
+      image: python:3.12-slim
+      volume: team-code
+
+  - name: reviewer
+    framework: langchain-python
+    instructions: |
+      You are a code reviewer. Read files under /workspace — the coder
+      agent, sharing this same volume, writes there — and give feedback.
+      Do not modify files; only comment.
+    default_model: sonnet
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    workspace:
+      name: reviewer-ws
+      image: python:3.12-slim
+      volume: team-code

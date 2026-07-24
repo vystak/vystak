@@ -1,0 +1,54 @@
+# Workspace volume backed by Azure Files NFS (premium performance).
+# Prereqs (see README): a `--kind FileStorage --sku Premium_LRS` storage
+# account, and a VNet-injected ACA environment referenced via
+# providers.azure.config.environment.
+providers:
+  azure:
+    type: azure
+    config:
+      location: eastus2
+      resource_group: vystak-ws-premium-rg
+      storage_account: ${AZURE_STORAGE_ACCOUNT}   # must be kind=FileStorage, sku=Premium_LRS
+      environment: ${AZURE_ACA_ENVIRONMENT}        # existing VNet-injected ACA environment
+  anthropic:
+    type: anthropic
+
+platforms:
+  aca:
+    type: container-apps
+    provider: azure
+
+vault:
+  name: vystak-vault
+  provider: azure
+  mode: deploy
+  config:
+    vault_name: vystak-ws-premium-vault
+
+models:
+  sonnet:
+    provider: anthropic
+    model_name: claude-sonnet-4-20250514
+
+volumes:
+  fast-scratch:
+    mode: persistent
+    performance: premium   # Azure Files NFS — requires FileStorage account + VNet-injected ACA env
+
+agents:
+  - name: assistant
+    framework: langchain-python
+    instructions: |
+      You are a coding assistant. Use the workspace's /workspace directory
+      for scratch state — checkouts, build caches, intermediate files —
+      backed by low-latency Azure Files NFS.
+    default_model: sonnet
+    secrets:
+      - name: ANTHROPIC_API_KEY
+    workspace:
+      name: scratch
+      image: python:3.11-slim
+      provision:
+        - pip install ruff pytest
+      volume: fast-scratch
+    platform: aca
