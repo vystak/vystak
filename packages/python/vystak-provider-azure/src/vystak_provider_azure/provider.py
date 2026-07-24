@@ -517,7 +517,38 @@ class AzureProvider(PlatformProvider):
         # Files share + env storage — only on volume mode.
         files_share_node_name: str | None = None
         env_storage_node_name: str | None = None
+        nfs = False
         if vol.mode == "persistent":
+            nfs = vol.performance == "premium"
+            if nfs:
+                props = storage_client.storage_accounts.get_properties(
+                    rg_name, storage_account
+                )
+                if getattr(props, "kind", None) != "FileStorage":
+                    raise ValueError(
+                        f"Agent '{agent.name}': volume '{vol.name}' has "
+                        f"performance='premium', which uses Azure Files NFS "
+                        f"and requires a premium storage account with "
+                        f"kind='FileStorage'. Account '{storage_account}' "
+                        f"has kind='{getattr(props, 'kind', None)}'. Create "
+                        f"one with:\n  az storage account create -n <name> "
+                        f"-g {rg_name} --kind FileStorage --sku Premium_LRS"
+                    )
+                env = aca_client.managed_environments.get(rg_name, env_name)
+                vnet = getattr(env, "vnet_configuration", None)
+                if vnet is None or not getattr(
+                    vnet, "infrastructure_subnet_id", None
+                ):
+                    raise ValueError(
+                        f"Agent '{agent.name}': volume '{vol.name}' with "
+                        f"performance='premium' mounts over NFS, which "
+                        f"requires a VNet-injected Container Apps "
+                        f"environment. Environment '{env_name}' has no "
+                        f"vnetConfiguration. Recreate it with "
+                        f"--infrastructure-subnet-resource-id, or use "
+                        f"performance='standard' (SMB)."
+                    )
+
             if ws.volume is not None:
                 share_name = f"vystak-volume-{vol.name}"
             else:
@@ -527,7 +558,7 @@ class AzureProvider(PlatformProvider):
                 rg_name=rg_name,
                 storage_account=storage_account,
                 share_name=share_name,
-                enabled_protocols="SMB",
+                enabled_protocols="NFS" if nfs else "SMB",
             )
             graph.add(share_node)
             files_share_node_name = share_node.name
@@ -545,6 +576,7 @@ class AzureProvider(PlatformProvider):
                 storage_name=storage_logical_name,
                 storage_account=storage_account,
                 share_name=share_name,
+                protocol="NFS" if nfs else "SMB",
             )
             graph.add(env_storage_node)
             env_storage_node_name = env_storage_node.name
@@ -566,6 +598,7 @@ class AzureProvider(PlatformProvider):
             workspace_identity_node_name=(
                 f"uami-{workspace_identity_key}" if workspace_identity_key else ""
             ),
+            nfs=nfs,
         )
         graph.add(workspace_app)
 

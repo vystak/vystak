@@ -21,6 +21,7 @@ class ACAEnvStorageNode(Provisionable):
         storage_name: str,
         storage_account: str,
         share_name: str,
+        protocol: str = "SMB",
     ) -> None:
         self._aca = aca_client
         self._storage = storage_client
@@ -29,6 +30,7 @@ class ACAEnvStorageNode(Provisionable):
         self._storage_name = storage_name
         self._storage_account = storage_account
         self._share_name = share_name
+        self._protocol = protocol
 
     @property
     def name(self) -> str:
@@ -45,20 +47,35 @@ class ACAEnvStorageNode(Provisionable):
                 info={"storage_name": self._storage_name, "created": False},
             )
         except ResourceNotFoundError:
-            keys = self._storage.storage_accounts.list_keys(
-                self._rg_name, self._storage_account
-            )
-            account_key = keys.keys[0].value
-            envelope = {
-                "properties": {
-                    "azureFile": {
-                        "accountName": self._storage_account,
-                        "accountKey": account_key,
-                        "shareName": self._share_name,
-                        "accessMode": "ReadWrite",
+            if self._protocol == "NFS":
+                envelope = {
+                    "properties": {
+                        "nfsAzureFile": {
+                            "server": (
+                                f"{self._storage_account}.file.core.windows.net"
+                            ),
+                            "shareName": (
+                                f"/{self._storage_account}/{self._share_name}"
+                            ),
+                            "accessMode": "ReadWrite",
+                        }
                     }
                 }
-            }
+            else:
+                keys = self._storage.storage_accounts.list_keys(
+                    self._rg_name, self._storage_account
+                )
+                account_key = keys.keys[0].value
+                envelope = {
+                    "properties": {
+                        "azureFile": {
+                            "accountName": self._storage_account,
+                            "accountKey": account_key,
+                            "shareName": self._share_name,
+                            "accessMode": "ReadWrite",
+                        }
+                    }
+                }
             self._aca.managed_environments_storages.create_or_update(
                 resource_group_name=self._rg_name,
                 environment_name=self._env_name,

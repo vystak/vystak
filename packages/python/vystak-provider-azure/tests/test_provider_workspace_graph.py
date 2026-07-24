@@ -246,3 +246,66 @@ def test_implicit_volume_keeps_legacy_share_name():
     graph = MagicMock()
     _run_add_workspace_nodes(provider, graph)
     assert "files-share-vystak-assistant-workspace-data" in _added_node_names(graph)
+
+
+def _premium_clients(kind="FileStorage", subnet="subnet-id"):
+    storage_client = MagicMock()
+    storage_client.storage_accounts.get_properties.return_value = MagicMock(
+        kind=kind
+    )
+    aca_client = MagicMock()
+    aca_client.managed_environments.get.return_value = MagicMock(
+        vnet_configuration=(
+            MagicMock(infrastructure_subnet_id=subnet) if subnet else None
+        )
+    )
+    return storage_client, aca_client
+
+
+def test_premium_volume_requires_filestorage_account():
+    from vystak.schema.volume import Volume
+
+    provider = _make_provider_for(
+        _agent_with_volume(Volume(name="fast", performance="premium"))
+    )
+    storage_client, aca_client = _premium_clients(kind="StorageV2")
+    with pytest.raises(ValueError, match="kind='FileStorage'"):
+        _run_add_workspace_nodes(
+            provider, MagicMock(),
+            storage_client=storage_client, aca_client=aca_client,
+        )
+
+
+def test_premium_volume_requires_vnet_injected_environment():
+    from vystak.schema.volume import Volume
+
+    provider = _make_provider_for(
+        _agent_with_volume(Volume(name="fast", performance="premium"))
+    )
+    storage_client, aca_client = _premium_clients(subnet=None)
+    with pytest.raises(ValueError, match="VNet"):
+        _run_add_workspace_nodes(
+            provider, MagicMock(),
+            storage_client=storage_client, aca_client=aca_client,
+        )
+
+
+def test_premium_volume_wires_nfs_protocol():
+    from vystak.schema.volume import Volume
+    from vystak_provider_azure.nodes.aca_env_storage import ACAEnvStorageNode
+    from vystak_provider_azure.nodes.files_share import AzureFilesShareNode
+
+    provider = _make_provider_for(
+        _agent_with_volume(Volume(name="fast", performance="premium"))
+    )
+    storage_client, aca_client = _premium_clients()
+    graph = MagicMock()
+    _run_add_workspace_nodes(
+        provider, graph,
+        storage_client=storage_client, aca_client=aca_client,
+    )
+    added = [call.args[0] for call in graph.add.call_args_list]
+    share = next(n for n in added if isinstance(n, AzureFilesShareNode))
+    env_storage = next(n for n in added if isinstance(n, ACAEnvStorageNode))
+    assert share._enabled_protocols == "NFS"
+    assert env_storage._protocol == "NFS"

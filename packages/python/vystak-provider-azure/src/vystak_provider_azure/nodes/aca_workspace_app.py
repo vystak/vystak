@@ -39,11 +39,14 @@ def build_workspace_revision(
     storage_name: str | None,
     share_subpath: str | None,
     persistence_mode: str,
+    nfs: bool = False,
 ) -> dict:
     """Construct the ACA revision body for a workspace app.
 
     persistence_mode: "volume" requires storage_name; "ephemeral" omits volumes.
-    "bind" is rejected upstream by schema validator.
+    "bind" is rejected upstream by schema validator. ``nfs`` selects the
+    ACA volume storageType — "NfsAzureFile" for premium volumes,
+    "AzureFile" (SMB) otherwise.
     """
     secrets_block: list[dict] = [
         {
@@ -93,7 +96,7 @@ def build_workspace_revision(
         template["volumes"] = [
             {
                 "name": "workspace-data",
-                "storageType": "AzureFile",
+                "storageType": "NfsAzureFile" if nfs else "AzureFile",
                 "storageName": storage_name,
             }
         ]
@@ -159,6 +162,7 @@ class ACAWorkspaceAppNode(Provisionable):
         acr_node_name: str,
         vault_node_name: str,
         workspace_identity_node_name: str,
+        nfs: bool = False,
     ) -> None:
         self._aca = aca_client
         self._docker = docker_client
@@ -173,6 +177,7 @@ class ACAWorkspaceAppNode(Provisionable):
         self._acr = acr_node_name
         self._vault = vault_node_name
         self._ws_identity = workspace_identity_node_name
+        self._nfs = nfs
 
     @property
     def name(self) -> str:
@@ -226,6 +231,7 @@ class ACAWorkspaceAppNode(Provisionable):
             storage_name=storage_name,
             share_subpath=share_subpath,
             persistence_mode=mode,
+            nfs=self._nfs,
         )
 
         poller = self._aca.container_apps.begin_create_or_update(

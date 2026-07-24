@@ -39,6 +39,38 @@ def test_provision_creates_env_storage_when_missing():
     assert result.info["created"] is True
 
 
+def test_provision_creates_nfs_env_storage_without_account_keys():
+    aca_client = MagicMock()
+    aca_client.managed_environments_storages.get.side_effect = (
+        ResourceNotFoundError("not found")
+    )
+    storage_client = MagicMock()
+
+    node = ACAEnvStorageNode(
+        aca_client=aca_client,
+        storage_client=storage_client,
+        rg_name="vystak-test",
+        env_name="vystak-env",
+        storage_name="vystak-volume-team-code",
+        storage_account="mystorage",
+        share_name="vystak-volume-team-code",
+        protocol="NFS",
+    )
+    result = node.provision({})
+
+    assert result.success is True
+    storage_client.storage_accounts.list_keys.assert_not_called()
+    body = aca_client.managed_environments_storages.create_or_update.call_args.kwargs[
+        "managed_environment_storage_envelope"
+    ]
+    nfs = body["properties"]["nfsAzureFile"]
+    assert nfs["server"] == "mystorage.file.core.windows.net"
+    assert nfs["shareName"] == "/mystorage/vystak-volume-team-code"
+    assert nfs["accessMode"] == "ReadWrite"
+    assert "accountKey" not in nfs
+    assert result.info["created"] is True
+
+
 def test_provision_idempotent_when_env_storage_exists():
     aca_client = MagicMock()
     aca_client.managed_environments_storages.get.return_value = MagicMock()

@@ -133,3 +133,25 @@ def test_build_workspace_revision_scale_locked_to_one():
     scale = body["properties"]["template"]["scale"]
     assert scale["minReplicas"] == 1
     assert scale["maxReplicas"] == 1
+
+
+def test_nfs_volume_uses_nfs_storage_type():
+    body = build_workspace_revision(
+        agent_name="assistant",
+        location="eastus",
+        workspace_image="acr/img:tag",
+        workspace_identity_resource_id="x",
+        vault_uri="https://kv.vault.azure.net/",
+        ssh_kv_secrets=[],
+        user_secrets=[],
+        acr_login_server="acr.azurecr.io",
+        acr_password_secret_ref="acr-pwd",
+        acr_password_value="REDACTED",
+        storage_name="vystak-volume-team-code",
+        share_subpath="/workspace",
+        persistence_mode="volume",
+        nfs=True,
+    )
+    vol = body["properties"]["template"]["volumes"][0]
+    assert vol["storageType"] == "NfsAzureFile"
+    assert vol["storageName"] == "vystak-volume-team-code"
