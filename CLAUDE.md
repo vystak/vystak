@@ -42,7 +42,8 @@ uv run pytest packages/python/ -k "hash_tree"         # by name pattern
 
 # Opt-in Docker integration tests — spin up real containers
 uv run pytest -m docker -v           # runs only docker-marked tests
-# (Default `just test-python` excludes them via `-m 'not docker'`.)
+# (Default `just test-python` excludes them — root addopts excludes the
+#  `docker` marker and every `release_*` marker.)
 
 # Release-tier matrix from test_plan.md — each cell is a full
 # deploy → verify → destroy lifecycle pytest. Gated cells auto-skip.
@@ -74,10 +75,10 @@ the full deploy → verify → destroy lifecycle. The canonical reference is
 `test_plan.md` (repo root): **stack × secrets × channel × transport**, cells
 D1–D8 (Docker) and A1–A8 (Azure), plus extra lifecycle cells beyond the grid:
 
-- Docker (`vystak-provider-docker/tests/release/`, 14 files): `test_D1..D8_*`,
-  `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_live_chat.py`, and
-  three Postgres variants (`test_sessions_postgres.py`, `test_memory_postgres.py`,
-  `test_sessions_and_memory_postgres.py`).
+- Docker (`vystak-provider-docker/tests/release/`, 15 files): `test_D1..D8_*`,
+  `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_skills_folder.py`,
+  `test_live_chat.py`, and three Postgres variants (`test_sessions_postgres.py`,
+  `test_memory_postgres.py`, `test_sessions_and_memory_postgres.py`).
 - Azure (`vystak-provider-azure/tests/release/`, 8 files): `test_A1..A8_*`.
 
 Markers (all gated — default `pytest` excludes them; registered in root `pyproject.toml`):
@@ -187,7 +188,7 @@ Core:
 - **`vystak-chat`** — Rich/prompt-toolkit terminal REPL to talk to deployed agents (A2A client + agent picker).
 
 Framework templates:
-- **`vystak-template-langchain-python`** — the LangChain/LangGraph agent template (see Architecture above). Layout: user-owned `server.py`/`vystak.yaml`/`Dockerfile`/`tools/` + `_vystak/runtime/` (app_factory, graph, mcp, memory, subagents, compaction, `a2a_native/`, `openai/`).
+- **`vystak-template-langchain-python`** — the LangChain/LangGraph agent template (see Architecture above). Layout: user-owned `server.py`/`vystak.yaml`/`Dockerfile`/`tools/` + `_vystak/runtime/` (app_factory, graph, mcp, memory, subagents, skills, compaction, `a2a_native/`, `openai/`).
 
 Channels (each a `ChannelPlugin`, deployed as its own container):
 - **`vystak-channel-runtime`** — shared `ChannelRuntime` base bundled into every channel image: agent client, delivery, heartbeat hooks, store, telemetry.
@@ -253,15 +254,16 @@ Loading paths:
 - Single-agent YAML/JSON: `vystak.schema.loader.load_agent` (rejects `subagents` — use multi-doc layout).
 - Multi-agent/workspace YAML: `vystak.schema.multi_loader.load_multi_yaml` — top-level named `providers`, `platforms`, `models`, `agents`, `channels`, `vault`; resolves named references and validates channel↔agent and heartbeat `target_channel`.
 - CLI entry: `vystak_cli.loader.load_definitions` — convention files `vystak.yaml` / `vystak.yml` / `vystak.py`. Python files are exec'd and **all** module-level `Agent` instances are collected. Environment overlays via `vystak.<env>.py` with an `override` binding.
+- Folder skills: `vystak.schema.skill_resolver.resolve_folder_skills` runs at load time (schema loader + CLI loader + template `.py` dev path), filling `Skill.description/path/content_digest` from `skills/<name>/SKILL.md`. Idempotent (skips skills with a digest); a skill with no tools, no prompt, and no folder is a load-time error. Digest rules mirror `_bundle_project_dir`'s exclusions — keep them in sync.
 
 ## Examples
 
-`examples/` (28 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+`examples/` (30 dirs) maps onto the feature axes: `docker-*` / `azure-*`
 (provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
 `heartbeat-*`, `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
 `docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
-`mcp-files`, `memory-agent`, `sessions-postgres` / `docker-compaction`
-(sessions). When modifying core behavior, update or run the matching example
+`docker-skills` / `docker-skills-slack` (folder skills), `mcp-files`,
+`memory-agent`, `sessions-postgres` / `docker-compaction` (sessions). When modifying core behavior, update or run the matching example
 to verify end-to-end.
 
 **When implementing a specific feature, create (or update) an agents

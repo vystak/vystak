@@ -67,7 +67,7 @@ Everything in Vystak maps to one of seven concepts:
 | Concept | What it is | Example |
 |---------|-----------|---------|
 | **Agent** | What it does — model, skills, guardrails | A support bot powered by Claude with refund handling |
-| **Skill** | What it can do — tools + prompts + config | A reusable "refund handling" capability bundle |
+| **Skill** | What it can do — tools, prompts, or a folder of packaged instructions (`skills/<name>/SKILL.md`) loaded on demand | A reusable "refund handling" capability bundle |
 | **Channel** | How users reach it — I/O adapter | Slack, REST API, voice, widget, webhook |
 | **Resource** | What backs it — infrastructure | Session store, vector store, database, queue |
 | **Workspace** | Where it operates — execution environment | Sandbox, filesystem, mounted drive |

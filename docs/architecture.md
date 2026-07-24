@@ -80,8 +80,10 @@ it: template runtime configuration, provisioning, hashing, validation.
 Key models (all Pydantic, under `vystak/src/vystak/schema/`):
 
 - **`Agent`** — `framework`, `instructions`, `default_model` + `models` pool,
-  `skills`, `mcp_servers`, `workspace`, `secrets`, `platform`, `sessions`,
-  `memory`, `services`, `subagents` (nested `Agent`s), `compaction`, `heartbeat`.
+  `skills` (inline tool bundles or `skills/<name>/SKILL.md` folder skills,
+  resolved at load time by `schema/skill_resolver.py`), `mcp_servers`,
+  `workspace`, `secrets`, `platform`, `sessions`, `memory`, `services`,
+  `subagents` (nested `Agent`s), `compaction`, `heartbeat`.
 - **`Channel`** — `type` (chat/slack/discord), `platform`, `config`, `secrets`,
   `agents` (which agents are routable through it), policies and thread config.
 - **`Platform`** — `type` + `provider` + optional `transport` (defaults to HTTP)

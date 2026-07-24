@@ -6,6 +6,18 @@ All notable changes to Vystak are documented here.
 
 ### Added
 
+- **Folder skills** — a skill can now be a folder of packaged instructions
+  (`skills/<name>/SKILL.md` with `name`/`description`/`tools` frontmatter,
+  plus resource files) declared with string shorthand (`skills: [research]`)
+  or an explicit project-relative `path:`. Resolved at load time
+  (`vystak.schema.skill_resolver`); the folder's content digest feeds the
+  agent hash, so editing any bundled skill file surfaces as a redeploy in
+  `vystak plan`. At runtime agents get progressive disclosure: the system
+  prompt lists each skill's name + description, and auto-provided
+  `load_skill` / `read_skill_file` tools fetch instructions and resources
+  on demand. New examples: `docker-skills` (chat) and `docker-skills-slack`
+  (Slack channel + tools + folder skill).
+
 - New package `vystak-channel-runtime` — shared template-method runtime for
   all channel containers (`ChannelRuntime`, `AgentClient`, `ChannelStore`).
 - New package `vystak-channel-discord` — Discord channel built on the
@@ -14,6 +26,14 @@ All notable changes to Vystak are documented here.
 
 ### Changed
 
+- Inline skill `prompt` fields are now actually appended to the agent's
+  system prompt (previously documented but unimplemented). `Skill` gained a
+  `description` field, surfaced in the prompt listing and the A2A agent card.
+- Default `pytest` runs now exclude **all** release-tier markers
+  (`release_smoke`, `release_integration`, etc.) via root `addopts`,
+  matching the documented "gated by default" contract; previously only
+  `-m 'not docker'` was excluded, so some release cells ran in
+  `just test-python`.
 - `vystak-channel-slack` and `vystak-channel-chat` retrofitted onto
   `vystak-channel-runtime`. User-visible behavior preserved.
 - Channel containers no longer have generated `server.py` files. Each channel
@@ -24,6 +44,13 @@ All notable changes to Vystak are documented here.
 
 ### Breaking
 
+- **Empty placeholder skills are now a load-time error.** A skill with no
+  `tools`, no `prompt`, and no matching `skills/<name>/SKILL.md` folder
+  fails `vystak plan`/`apply` with an actionable message (previously it
+  loaded silently and did nothing). Fix: delete the placeholder, declare
+  tools, or create the skill folder. All in-repo examples are migrated.
+- **One-time redeploy on upgrade**: the new `Skill` fields enter the
+  content hash, so every agent's hash changes once.
 - **Slack thread bindings + route prefs reset on upgrade.** The runtime store
   uses a new generic schema keyed by `(channel_type, scope_id, thread_id)`.
   Existing `routes.db` (SQLite) and `routes` table (Postgres) are ignored.
