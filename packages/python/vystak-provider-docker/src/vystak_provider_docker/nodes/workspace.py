@@ -34,6 +34,8 @@ class DockerWorkspaceNode(Provisionable):
 
     @property
     def data_volume_name(self) -> str:
+        if self._workspace.volume is not None:
+            return f"vystak-volume-{self._workspace.effective_volume.name}"
         return f"vystak-{self._agent_name}-workspace-data"
 
     @property
@@ -164,18 +166,19 @@ class DockerWorkspaceNode(Provisionable):
             # Vault path: /shared is populated by the workspace-principal
             # Vault Agent sidecar volume.
             volumes[self.secrets_volume_name] = {"bind": "/shared", "mode": "ro"}
+        vol = ws.effective_volume
         tmpfs: dict = {}
-        if ws.persistence == "volume":
+        if vol.mode == "persistent":
             # Ensure data volume exists
             try:
                 self._client.volumes.get(self.data_volume_name)
             except docker.errors.NotFound:
                 self._client.volumes.create(name=self.data_volume_name)
             volumes[self.data_volume_name] = {"bind": "/workspace", "mode": "rw"}
-        elif ws.persistence == "bind":
-            host_path = str(Path(ws.path).expanduser().resolve())
+        elif vol.mode == "bind":
+            host_path = str(Path(vol.path).expanduser().resolve())
             volumes[host_path] = {"bind": "/workspace", "mode": "rw"}
-        elif ws.persistence == "ephemeral":
+        elif vol.mode == "ephemeral":
             tmpfs["/workspace"] = "rw,size=512m"
 
         ports: dict = {}
@@ -194,7 +197,13 @@ class DockerWorkspaceNode(Provisionable):
             ports=ports,
             labels={
                 "vystak.workspace": self._agent_name,
-                "vystak.workspace.persistence": ws.persistence,
+                "vystak.workspace.persistence": {
+                    "persistent": "volume"
+                }.get(vol.mode, vol.mode),
+                "vystak.volume.name": (
+                    self.data_volume_name if vol.mode == "persistent" else ""
+                ),
+                "vystak.volume.retention": vol.retention,
             },
         )
         if self._default_path_env is not None:
@@ -206,7 +215,7 @@ class DockerWorkspaceNode(Provisionable):
             "container_name": self.container_name,
             "workspace_host": self.container_name,  # internal DNS
             "data_volume_name": (
-                self.data_volume_name if ws.persistence == "volume" else None
+                self.data_volume_name if vol.mode == "persistent" else None
             ),
         }
         if ws.ssh:
