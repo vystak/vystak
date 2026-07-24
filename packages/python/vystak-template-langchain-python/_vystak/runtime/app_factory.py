@@ -40,6 +40,7 @@ from _vystak.runtime.store import (
 from _vystak.runtime.subagents import build_subagent_tools
 from _vystak.runtime.telemetry import instrument_app
 from _vystak.runtime.tools import load_user_tools
+from _vystak.runtime.workspace import build_workspace_tools
 
 
 async def pick_model_for_turn(
@@ -93,9 +94,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     user_tools = load_user_tools(agent, Path("tools"))
     subagent_tools = build_subagent_tools(agent)
     skill_tools = build_skill_tools(agent, Path("."))
-    # TODO(later-phase): wire build_workspace_tools(agent) once builtin
-    # workspace tools land. For now agents only see user-defined tools.
-    workspace_tools: list[Any] = []
+    workspace_tools = build_workspace_tools(agent)
     # If memory_store is a _LazyStore, the lifespan resolves it before any
     # request runs. Until then, MemoryManager is wired with `None` and its
     # recall/handle_tool_output are safe no-ops.
