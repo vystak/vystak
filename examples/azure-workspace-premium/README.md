@@ -54,13 +54,13 @@ values:
 
 ```bash
 az login   # or export AZURE_SUBSCRIPTION_ID
-cp .env.example .env     # then edit and fill in ANTHROPIC_API_KEY, storage account, and ACA environment
+cp .env.example .env     # then edit and fill in ANTHROPIC_API_KEY
 # vystak.yaml must already have storage_account / environment filled in — see Configure above
 
-vystak plan     # preview — fails here with the actionable errors above if
-                # the storage account isn't FileStorage/Premium_LRS or the
-                # environment isn't VNet-injected
-vystak apply    # create vault + UAMI + NFS share + ACA app
+vystak plan     # preview the deploy
+vystak apply    # create vault + UAMI + NFS share + ACA app; fails fast with
+                # the actionable errors above if the storage account isn't
+                # FileStorage/Premium_LRS or the environment isn't VNet-injected
 vystak destroy  # tear down the resource group (the Files share itself is
                 # never deleted automatically — see "Cleanup" below)
 ```
