@@ -206,6 +206,10 @@ def test_two_agents_share_one_volume():
     agents, _channels, _vault = load_multi_yaml(data)
     assert agents[0].workspace.effective_volume.name == "team-code"
     assert agents[1].workspace.effective_volume.name == "team-code"
+    assert (
+        agents[0].workspace.effective_volume
+        is agents[1].workspace.effective_volume
+    )
 
 
 def test_bind_volume_rejected_on_container_apps():
