@@ -49,3 +49,21 @@ class TestSkill:
         data = skill.model_dump()
         restored = Skill.model_validate(data)
         assert restored == skill
+
+
+class TestFolderSkillFields:
+    def test_new_fields_default_none(self):
+        skill = Skill(name="research")
+        assert skill.description is None
+        assert skill.path is None
+        assert skill.content_digest is None
+
+    def test_folder_fields_roundtrip(self):
+        skill = Skill(
+            name="research",
+            description="Deep-research workflow.",
+            path="skills/research",
+            content_digest="abc123",
+        )
+        restored = Skill.model_validate(skill.model_dump())
+        assert restored == skill

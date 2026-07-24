@@ -386,8 +386,11 @@ def test_agent_rejects_duplicate_model_name_in_pool():
 
     with pytest.raises(ValidationError, match="duplicate model name"):
         Agent(
-            name="bot", framework="langchain-python",
-            default_model=same_name_a, models=[same_name_b], platform=platform,
+            name="bot",
+            framework="langchain-python",
+            default_model=same_name_a,
+            models=[same_name_b],
+            platform=platform,
         )
 
 
@@ -404,8 +407,11 @@ def test_agent_rejects_duplicate_with_default_model_name():
 
     with pytest.raises(ValidationError, match="duplicate model name"):
         Agent(
-            name="bot", framework="langchain-python",
-            default_model=default, models=[pool_dup], platform=platform,
+            name="bot",
+            framework="langchain-python",
+            default_model=default,
+            models=[pool_dup],
+            platform=platform,
         )
 
 
@@ -447,9 +453,7 @@ class TestMcpSecretRefs:
                 name="bot",
                 framework="langchain-python",
                 default_model=sonnet,
-                mcp_servers=[
-                    McpServer(name="fs", command="npx", args=["${secret.API_KEY}"])
-                ],
+                mcp_servers=[McpServer(name="fs", command="npx", args=["${secret.API_KEY}"])],
             )
 
     def test_ref_in_env_checked(self, sonnet):
@@ -458,7 +462,45 @@ class TestMcpSecretRefs:
                 name="bot",
                 framework="langchain-python",
                 default_model=sonnet,
-                mcp_servers=[
-                    McpServer(name="fs", command="npx", env={"K": "${secret.API_KEY}"})
-                ],
+                mcp_servers=[McpServer(name="fs", command="npx", env={"K": "${secret.API_KEY}"})],
             )
+
+
+class TestSkillShorthand:
+    def _make_agent(self, **overrides):
+        from vystak.schema.model import Model
+        from vystak.schema.provider import Provider
+
+        anthropic = Provider(name="anthropic", type="anthropic")
+        model = Model(name="claude", provider=anthropic, model_name="claude-sonnet-4-20250514")
+        defaults = {
+            "name": "support",
+            "framework": "langchain-python",
+            "default_model": model,
+        }
+        defaults.update(overrides)
+        from vystak.schema.agent import Agent
+
+        return Agent(**defaults)
+
+    def test_string_shorthand_normalizes_to_skill(self):
+        from vystak.schema.skill import Skill
+
+        agent = self._make_agent(skills=["research"])
+        assert isinstance(agent.skills[0], Skill)
+        assert agent.skills[0].name == "research"
+        assert agent.skills[0].tools == []
+
+    def test_mixed_shorthand_and_objects(self):
+        from vystak.schema.skill import Skill
+
+        agent = self._make_agent(skills=["research", Skill(name="orders", tools=["lookup_order"])])
+        assert [s.name for s in agent.skills] == ["research", "orders"]
+        assert agent.skills[1].tools == ["lookup_order"]
+
+    def test_duplicate_skill_names_rejected(self):
+        import pytest
+        from vystak.schema.skill import Skill
+
+        with pytest.raises(Exception, match="duplicate skill name"):
+            self._make_agent(skills=[Skill(name="research"), Skill(name="research", tools=["t"])])
