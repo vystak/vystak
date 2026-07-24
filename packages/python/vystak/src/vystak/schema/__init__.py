@@ -61,6 +61,7 @@ from vystak.schema.transport import (
     TransportType,
 )
 from vystak.schema.vault import Vault
+from vystak.schema.volume import Volume
 from vystak.schema.workspace import Workspace
 
 __all__ = [
@@ -107,6 +108,7 @@ __all__ = [
     "VaultMode",
     "VaultType",
     "VectorStore",
+    "Volume",
     "Workspace",
     "WorkspaceType",
     # OpenAI-compatible API models
