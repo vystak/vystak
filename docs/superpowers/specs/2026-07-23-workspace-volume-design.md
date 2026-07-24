@@ -50,12 +50,15 @@ New model `Volume(NamedModel)` in `vystak/schema/volume.py`; new top-level
 
 ```yaml
 volumes:
-  - name: team-code
+  team-code:
     mode: persistent        # persistent | ephemeral | bind   (default: persistent)
     performance: standard   # standard | premium              (default: standard)
     retention: retain       # retain | delete                 (default: retain)
     path: ~/code            # bind mode only; required for bind, rejected otherwise
 ```
+
+(`volumes:` is a mapping keyed by name, matching the other named-reference
+sections `providers` / `platforms` / `models`.)
 
 `Workspace` gains an optional reference:
 
