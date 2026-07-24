@@ -8,7 +8,6 @@ from vystak.schema import (
     Postgres,
     Provider,
     Secret,
-    Skill,
 )
 
 anthropic = Provider(name="anthropic", type="anthropic")
@@ -35,7 +34,6 @@ agent = Agent(
     platform=Platform(name="docker", type="docker", provider=docker),
     sessions=Postgres(provider=docker),
     memory=Postgres(provider=docker),
-    skills=[Skill(name="assistant", tools=[])],
     secrets=[Secret(name="ANTHROPIC_API_KEY")],
     port=8094,
 )

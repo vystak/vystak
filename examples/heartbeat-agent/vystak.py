@@ -9,7 +9,6 @@ from vystak.schema import (
     Platform,
     Provider,
     Secret,
-    Skill,
 )
 
 anthropic = Provider(name="anthropic", type="anthropic")
@@ -33,7 +32,6 @@ ops_agent = Agent(
     ),
     default_model=model,
     platform=local,
-    skills=[Skill(name="ops", tools=[])],
     secrets=[Secret(name="ANTHROPIC_API_KEY")],
     heartbeat=Heartbeat(
         schedule="*/30 9-18 * * 1-5",

@@ -20,8 +20,6 @@ agents:
       If nothing is wrong, reply with HEARTBEAT_OK and nothing else.
     default_model: claude
     platform: local
-    skills:
-      - {name: ops, tools: []}
     secrets:
       - {name: ANTHROPIC_API_KEY}
     heartbeat:
