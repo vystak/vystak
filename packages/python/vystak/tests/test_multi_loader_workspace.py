@@ -133,7 +133,7 @@ def test_aca_workspace_persistence_bind_rejected():
     data = copy.deepcopy(ACA_WORKSPACE_CONFIG)
     data["agents"][0]["workspace"]["persistence"] = "bind"
     data["agents"][0]["workspace"]["path"] = "/tmp/x"
-    with pytest.raises(ValueError, match="persistence='bind' is not supported"):
+    with pytest.raises(ValueError, match="mode='bind'.*Container Apps"):
         load_multi_yaml(data)
 
 
@@ -156,3 +156,87 @@ def test_docker_workspace_persistence_bind_still_supported():
     agents, _channels, _vault = load_multi_yaml(data)
     assert agents[0].workspace.persistence == "bind"
     assert agents[0].workspace.path == "/tmp/ws"
+
+
+# --- volumes: section (Phase 1) -------------------------------------------
+
+def test_named_volume_resolves_onto_workspace():
+    data = copy.deepcopy(BASE_CONFIG)
+    data["volumes"] = {"team-code": {"mode": "persistent"}}
+    data["agents"][0]["workspace"] = {
+        "name": "dev",
+        "image": "python:3.12-slim",
+        "volume": "team-code",
+    }
+    agents, _channels, _vault = load_multi_yaml(data)
+    ws = agents[0].workspace
+    assert ws is not None
+    from vystak.schema.volume import Volume
+
+    assert isinstance(ws.volume, Volume)
+    assert ws.effective_volume.name == "team-code"
+
+
+def test_unknown_volume_reference_raises():
+    import pytest
+
+    data = copy.deepcopy(BASE_CONFIG)
+    data["volumes"] = {"team-code": {}}
+    data["agents"][0]["workspace"] = {
+        "name": "dev",
+        "image": "python:3.12-slim",
+        "volume": "does-not-exist",
+    }
+    with pytest.raises(KeyError, match="Unknown volume 'does-not-exist'"):
+        load_multi_yaml(data)
+
+
+def test_two_agents_share_one_volume():
+    data = copy.deepcopy(BASE_CONFIG)
+    data["volumes"] = {"team-code": {}}
+    second = copy.deepcopy(data["agents"][0])
+    second["name"] = "reviewer"
+    data["agents"].append(second)
+    for agent_data in data["agents"]:
+        agent_data["workspace"] = {
+            "name": "dev",
+            "image": "python:3.12-slim",
+            "volume": "team-code",
+        }
+    agents, _channels, _vault = load_multi_yaml(data)
+    assert agents[0].workspace.effective_volume.name == "team-code"
+    assert agents[1].workspace.effective_volume.name == "team-code"
+
+
+def test_bind_volume_rejected_on_container_apps():
+    import pytest
+
+    data = copy.deepcopy(BASE_CONFIG)
+    data["providers"]["azure"] = {"type": "azure"}
+    data["platforms"]["aca"] = {"type": "container-apps", "provider": "azure"}
+    data["volumes"] = {"local-src": {"mode": "bind", "path": "~/code"}}
+    data["agents"][0]["platform"] = "aca"
+    data["agents"][0]["workspace"] = {
+        "name": "dev",
+        "image": "python:3.12-slim",
+        "volume": "local-src",
+    }
+    with pytest.raises(ValueError, match="mode='bind'.*Container Apps"):
+        load_multi_yaml(data)
+
+
+def test_legacy_bind_persistence_still_rejected_on_container_apps():
+    import pytest
+
+    data = copy.deepcopy(BASE_CONFIG)
+    data["providers"]["azure"] = {"type": "azure"}
+    data["platforms"]["aca"] = {"type": "container-apps", "provider": "azure"}
+    data["agents"][0]["platform"] = "aca"
+    data["agents"][0]["workspace"] = {
+        "name": "dev",
+        "image": "python:3.12-slim",
+        "persistence": "bind",
+        "path": "/tmp/src",
+    }
+    with pytest.raises(ValueError, match="mode='bind'.*Container Apps"):
+        load_multi_yaml(data)

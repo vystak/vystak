@@ -6,6 +6,7 @@ from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
 from vystak.schema.vault import Vault
+from vystak.schema.volume import Volume
 
 
 def _validate_vault_provider_pairing(vault: Vault) -> None:
@@ -58,21 +59,23 @@ def _validate_heartbeat_targets(
                 )
 
 
-def _validate_workspace_platform_persistence(agent: Agent) -> None:
-    """Reject unsupported persistence modes for the target platform.
+def _validate_workspace_platform_volume(agent: Agent) -> None:
+    """Reject volume modes unsupported by the target platform.
 
-    ACA (container-apps) has no host filesystem — ``persistence: bind`` is
+    ACA (container-apps) has no host filesystem — mode='bind' is
     fundamentally unserviceable. Catch it at load time with an actionable
     message so users aren't debugging a failed deploy later.
     """
     ws = agent.workspace
-    if ws is None or ws.persistence != "bind":
+    if ws is None:
         return
-    if agent.platform.type == "container-apps":
+    vol = ws.effective_volume
+    if vol.mode == "bind" and agent.platform.type == "container-apps":
         raise ValueError(
-            f"Agent '{agent.name}': workspace.persistence='bind' is not "
-            f"supported on Azure Container Apps (no host filesystem). "
-            f"Use 'volume' (Azure Files) or 'ephemeral'."
+            f"Agent '{agent.name}': workspace volume '{vol.name}' has "
+            f"mode='bind', which is not supported on Azure Container Apps "
+            f"(no host filesystem). Use mode='persistent' (Azure Files) "
+            f"or 'ephemeral'."
         )
 
 
@@ -198,6 +201,10 @@ def load_multi_yaml(
             )
         models[name] = Model(name=name, provider=providers[provider_ref], **cfg)
 
+    volumes: dict[str, Volume] = {}
+    for name, cfg in data.get("volumes", {}).items():
+        volumes[name] = Volume(name=name, **cfg)
+
     # Phase 1: build all agents without their `subagents` field so we have a
     # name → Agent map for cross-resolution.
     agent_data_list: list[dict] = []
@@ -239,6 +246,19 @@ def load_multi_yaml(
                     resolved_models.append(model_ref)
             agent_data["models"] = resolved_models
 
+        ws_data = agent_data.get("workspace")
+        if isinstance(ws_data, dict) and isinstance(ws_data.get("volume"), str):
+            vol_ref = ws_data["volume"]
+            if vol_ref not in volumes:
+                raise KeyError(
+                    f"Unknown volume '{vol_ref}' in agent "
+                    f"'{agent_data.get('name')}' workspace. "
+                    f"Defined volumes: {', '.join(sorted(volumes))}"
+                )
+            ws_data = dict(ws_data)
+            ws_data["volume"] = volumes[vol_ref]
+            agent_data["workspace"] = ws_data
+
         # Stash subagents for phase 2, build agent without them so model_validate works.
         if "subagents" in agent_data:
             raw_subagents[agent_data["name"]] = agent_data.pop("subagents")
@@ -246,7 +266,7 @@ def load_multi_yaml(
 
     agents: list[Agent] = [Agent.model_validate(d) for d in agent_data_list]
     for agent in agents:
-        _validate_workspace_platform_persistence(agent)
+        _validate_workspace_platform_volume(agent)
     agents_by_name = {a.name: a for a in agents}
 
     # Phase 2: re-attach subagents now that all agents exist.
