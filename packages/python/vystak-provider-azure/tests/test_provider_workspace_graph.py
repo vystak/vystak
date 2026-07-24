@@ -177,3 +177,72 @@ def test_add_workspace_nodes_returns_none_when_no_workspace():
     assert name is None
     assert secrets == []
     graph.add.assert_not_called()
+
+
+def _agent_with_volume(volume):
+    """Like _agent_with_workspace but referencing a named Volume."""
+    from vystak.schema import Agent, Model, Platform, Provider, Workspace
+
+    return Agent(
+        name="assistant",
+        framework="langchain-python",
+        default_model=Model(
+            name="claude",
+            model_name="claude-3",
+            provider=Provider(name="anthropic", type="anthropic"),
+        ),
+        platform=Platform(
+            name="aca",
+            type="container-apps",
+            provider=Provider(name="azure", type="azure"),
+            config={
+                "subscription_id": "sub-test",
+                "resource_group": "rg-test",
+                "location": "eastus",
+                "storage_account": "mystorage",
+            },
+        ),
+        workspace=Workspace(name="dev", volume=volume),
+    )
+
+
+def _run_add_workspace_nodes(provider, graph, **client_overrides):
+    clients = {
+        "aca_client": MagicMock(),
+        "docker_client": MagicMock(),
+        "secret_client": MagicMock(),
+        "storage_client": MagicMock(),
+    }
+    clients.update(client_overrides)
+    return provider._add_workspace_nodes(
+        graph=graph,
+        agent=provider._agent,
+        rg_name="rg-test",
+        env_name="env-test",
+        acr_name="acrtest",
+        vault_node_name="vault-test",
+        workspace_identity_key="ws-id",
+        location="eastus",
+        cfg=provider._agent.platform.config,
+        **clients,
+    )
+
+
+def _added_node_names(graph):
+    return [call.args[0].name for call in graph.add.call_args_list]
+
+
+def test_named_volume_share_name():
+    from vystak.schema.volume import Volume
+
+    provider = _make_provider_for(_agent_with_volume(Volume(name="team-code")))
+    graph = MagicMock()
+    _run_add_workspace_nodes(provider, graph)
+    assert "files-share-vystak-volume-team-code" in _added_node_names(graph)
+
+
+def test_implicit_volume_keeps_legacy_share_name():
+    provider = _make_provider_for(_agent_with_workspace("volume"))
+    graph = MagicMock()
+    _run_add_workspace_nodes(provider, graph)
+    assert "files-share-vystak-assistant-workspace-data" in _added_node_names(graph)

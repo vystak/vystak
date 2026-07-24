@@ -487,6 +487,7 @@ class AzureProvider(PlatformProvider):
             return None, []
 
         ws = agent.workspace
+        vol = ws.effective_volume
         workspace_ssh_kv_secrets = [
             f"vystak-workspace-ssh-{agent.name}-client-key",
             f"vystak-workspace-ssh-{agent.name}-host-key-pub",
@@ -494,7 +495,7 @@ class AzureProvider(PlatformProvider):
 
         # Validate prereq for volume persistence.
         storage_account: str | None = None
-        if ws.persistence == "volume":
+        if vol.mode == "persistent":
             storage_account = cfg.get("storage_account")
             if not storage_account:
                 raise ValueError(
@@ -516,18 +517,26 @@ class AzureProvider(PlatformProvider):
         # Files share + env storage — only on volume mode.
         files_share_node_name: str | None = None
         env_storage_node_name: str | None = None
-        if ws.persistence == "volume":
-            share_name = f"vystak-{agent.name}-workspace-data"
+        if vol.mode == "persistent":
+            if ws.volume is not None:
+                share_name = f"vystak-volume-{vol.name}"
+            else:
+                share_name = f"vystak-{agent.name}-workspace-data"
             share_node = AzureFilesShareNode(
                 client=storage_client,
                 rg_name=rg_name,
                 storage_account=storage_account,
                 share_name=share_name,
+                enabled_protocols="SMB",
             )
             graph.add(share_node)
             files_share_node_name = share_node.name
 
-            storage_logical_name = f"vystak-{agent.name}-workspace"
+            storage_logical_name = (
+                f"vystak-volume-{vol.name}"
+                if ws.volume is not None
+                else f"vystak-{agent.name}-workspace"
+            )
             env_storage_node = ACAEnvStorageNode(
                 aca_client=aca_client,
                 storage_client=storage_client,

@@ -202,14 +202,15 @@ class ACAWorkspaceAppNode(Provisionable):
         ]
         user_secrets = [s.name for s in (self._agent.workspace.secrets or [])]
 
+        vol = self._agent.workspace.effective_volume
+        mode = "volume" if vol.mode == "persistent" else "ephemeral"
+
         storage_name = (
             None
             if self._env_storage is None
             else context[self._env_storage].info["storage_name"]
         )
-        share_subpath = (
-            "/workspace" if self._agent.workspace.persistence == "volume" else None
-        )
+        share_subpath = "/workspace" if mode == "volume" else None
 
         body = build_workspace_revision(
             agent_name=self._agent.name,
@@ -224,7 +225,7 @@ class ACAWorkspaceAppNode(Provisionable):
             acr_password_value=acr["admin_password"],
             storage_name=storage_name,
             share_subpath=share_subpath,
-            persistence_mode=self._agent.workspace.persistence,
+            persistence_mode=mode,
         )
 
         poller = self._aca.container_apps.begin_create_or_update(
