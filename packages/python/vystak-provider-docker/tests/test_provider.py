@@ -919,3 +919,56 @@ class TestDestroyWorkspaceVolume:
         client.volumes.get.assert_called_once_with(
             "vystak-assistant-workspace-data"
         )
+
+    def test_orphaned_named_volume_removed_when_container_gone(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        """Fallback path: workspace container already gone (e.g. a prior
+        partial destroy) so its vystak.volume.name label can't be read.
+        With --delete-workspace-data, scan for orphaned vystak.volume
+        labeled volumes instead of giving up after the legacy-name attempt.
+        """
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        client.volumes.get.side_effect = not_found_error("not found")
+        orphan = MagicMock()
+        client.volumes.list.return_value = [orphan]
+
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=True
+        )
+
+        client.volumes.list.assert_called_once_with(filters={"label": "vystak.volume"})
+        orphan.remove.assert_called_once()
+
+    def test_orphan_scan_skipped_without_delete_flag(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        """No --delete-workspace-data: never scan for orphaned volumes,
+        even though the container is already gone."""
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        client.volumes.get.side_effect = not_found_error("not found")
+
+        provider._destroy_workspace_resources(
+            agent_name="assistant", delete_workspace_data=False
+        )
+
+        client.volumes.list.assert_not_called()
+
+    def test_non_409_api_error_reraises(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        client, errors = mock_docker_client
+        self._ws_container(client, not_found_error, {
+            "vystak.volume.name": "vystak-volume-team-code",
+            "vystak.volume.retention": "retain",
+        })
+        err = errors.APIError("boom")
+        err.status_code = 500
+        client.volumes.get.return_value.remove.side_effect = err
+
+        with pytest.raises(errors.APIError):
+            provider._destroy_workspace_resources(
+                agent_name="assistant", delete_workspace_data=True
+            )

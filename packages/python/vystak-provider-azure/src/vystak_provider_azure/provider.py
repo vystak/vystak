@@ -6,6 +6,7 @@ from pathlib import Path
 
 import docker
 import docker.errors
+from azure.core.exceptions import ResourceNotFoundError
 from azure.keyvault.secrets import SecretClient
 from azure.mgmt.appcontainers import ContainerAppsAPIClient
 from azure.mgmt.authorization import AuthorizationManagementClient
@@ -499,11 +500,14 @@ class AzureProvider(PlatformProvider):
             storage_account = cfg.get("storage_account")
             if not storage_account:
                 raise ValueError(
-                    f"Agent '{agent.name}': workspace.persistence='volume' "
-                    f"requires platform.config.storage_account "
-                    f"(name of an existing Azure Storage account). "
-                    f"Add it to platform.config in vystak.yaml, or set "
-                    f"persistence: ephemeral."
+                    f"Agent '{agent.name}': workspace volume '{vol.name}' "
+                    f"has mode='persistent' (declared via a named volume, "
+                    f"or the legacy persistence='volume' field), which "
+                    f"requires platform.config.storage_account (name of an "
+                    f"existing Azure Storage account). Add it to "
+                    f"platform.config in vystak.yaml, or switch the volume "
+                    f"to an ephemeral one (mode='ephemeral', or the legacy "
+                    f"persistence: ephemeral)."
                 )
 
         # Keygen — always added when workspace declared.
@@ -521,9 +525,20 @@ class AzureProvider(PlatformProvider):
         if vol.mode == "persistent":
             nfs = vol.performance == "premium"
             if nfs:
-                props = storage_client.storage_accounts.get_properties(
-                    rg_name, storage_account
-                )
+                try:
+                    props = storage_client.storage_accounts.get_properties(
+                        rg_name, storage_account
+                    )
+                except ResourceNotFoundError:
+                    raise ValueError(
+                        f"Storage account '{storage_account}' not found in "
+                        f"resource group '{rg_name}'. Workspace volume "
+                        f"'{vol.name}' has performance='premium', which "
+                        f"requires an existing premium storage account. "
+                        f"Create it first:\n"
+                        f"  az storage account create -n {storage_account} "
+                        f"-g {rg_name} --kind FileStorage --sku Premium_LRS"
+                    ) from None
                 if getattr(props, "kind", None) != "FileStorage":
                     raise ValueError(
                         f"Agent '{agent.name}': volume '{vol.name}' has "

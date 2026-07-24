@@ -247,6 +247,43 @@ def test_plan_workspace_section_shown_when_declared(tmp_path):
     assert "provision steps: 1" in result.output
 
 
+NAMED_VOLUME_YAML = """\
+providers: {docker: {type: docker}, anthropic: {type: anthropic}}
+platforms: {local: {type: docker, provider: docker}}
+vault: {name: v, provider: docker, type: vault, mode: deploy, config: {}}
+models: {sonnet: {provider: anthropic, model_name: claude-sonnet-4-20250514}}
+volumes:
+  team-code: {mode: persistent, retention: retain}
+agents:
+  - name: coder
+    framework: langchain-python
+    default_model: sonnet
+    platform: local
+    workspace:
+      name: dev
+      image: python:3.12-slim
+      volume: team-code
+"""
+
+
+def test_plan_workspace_section_shows_named_volume(tmp_path):
+    """A workspace referencing a named volume must be shown as
+    volume=<name> (<mode>) — not the misleading legacy persistence=volume
+    line, which doesn't name the actual shared volume."""
+    config = tmp_path / "vystak.yaml"
+    config.write_text(NAMED_VOLUME_YAML)
+
+    runner = CliRunner()
+    with patch(
+        "vystak_cli.commands.plan.get_provider",
+        return_value=_stub_provider_for_plan(),
+    ):
+        result = runner.invoke(plan_cmd, ["--file", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert "volume=team-code (persistent)" in result.output
+
+
 # ---------------------------------------------------------------------------
 # default path (no vault)
 # ---------------------------------------------------------------------------

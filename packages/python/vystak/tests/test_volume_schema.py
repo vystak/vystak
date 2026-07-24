@@ -43,3 +43,23 @@ def test_volume_importable_from_schema_package():
     from vystak.schema import Volume as V
 
     assert V is Volume
+
+
+def test_volume_name_rejects_trailing_newline():
+    with pytest.raises(PydanticValidationError, match="lowercase alphanumerics"):
+        Volume(name="team\n")
+
+
+def test_volume_name_rejects_trailing_hyphen():
+    with pytest.raises(PydanticValidationError, match="lowercase alphanumerics"):
+        Volume(name="team-")
+
+
+def test_volume_name_rejects_too_long():
+    with pytest.raises(PydanticValidationError, match="lowercase alphanumerics"):
+        Volume(name="a" * 50)
+
+
+def test_volume_name_single_char_accepted():
+    vol = Volume(name="a")
+    assert vol.name == "a"

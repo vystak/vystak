@@ -143,3 +143,10 @@ def test_workspace_with_volume_round_trips_through_model_dump():
     )
     revalidated = Workspace.model_validate(ws.model_dump())
     assert revalidated.effective_volume.name == "team-code"
+
+
+def test_effective_volume_sanitizes_nonconforming_workspace_names():
+    ws = Workspace(name="My_WS.2", image="python:3.12-slim")
+    vol = ws.effective_volume
+    assert vol.mode == "persistent"
+    assert vol.name == "my-ws-2-implicit"

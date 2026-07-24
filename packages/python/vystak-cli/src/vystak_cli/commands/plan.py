@@ -154,8 +154,16 @@ def _print_workspace_section(agents) -> None:
             if ws.dockerfile
             else ws.image or "<no image>"
         )
+        vol = ws.effective_volume
+        if ws.volume is not None:
+            persistence_display = f"volume={vol.name} ({vol.mode})"
+        else:
+            # Implicit volume — surface it in the legacy persistence=
+            # vocabulary users declared it in, not the internal mode name.
+            reverse_map = {"persistent": "volume", "bind": "bind", "ephemeral": "ephemeral"}
+            persistence_display = f"persistence={reverse_map.get(vol.mode, vol.mode)}"
         click.echo(
-            f"  {a.name}-workspace  image={img}  persistence={ws.persistence}"
+            f"  {a.name}-workspace  image={img}  {persistence_display}"
         )
         if ws.provision:
             click.echo(f"    provision steps: {len(ws.provision)}")

@@ -12,7 +12,8 @@ from pydantic import model_validator
 
 from vystak.schema.common import NamedModel
 
-_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+_NAME_MAX_LEN = 49  # Azure share names cap at 63; "vystak-volume-" prefix is 14 chars.
 
 
 class Volume(NamedModel):
@@ -25,11 +26,12 @@ class Volume(NamedModel):
 
     @model_validator(mode="after")
     def _validate_name(self) -> Self:
-        if not _NAME_RE.match(self.name):
+        if not _NAME_RE.fullmatch(self.name) or len(self.name) > _NAME_MAX_LEN:
             raise ValueError(
                 f"Volume name '{self.name}' must be lowercase alphanumerics "
-                f"and hyphens (it becomes a Docker volume / Azure Files "
-                f"share name)."
+                f"and hyphens, must not start or end with a hyphen, and "
+                f"must be at most {_NAME_MAX_LEN} characters (it becomes a "
+                f"Docker volume / Azure Files share name)."
             )
         return self
 

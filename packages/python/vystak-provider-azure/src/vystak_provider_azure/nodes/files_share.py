@@ -47,13 +47,21 @@ class AzureFilesShareNode(Provisionable):
                 self._rg_name, self._storage_account
             )
         except ResourceNotFoundError:
+            create_cmd = (
+                f"  az storage account create -n {self._storage_account} "
+                f"-g {self._rg_name} --kind FileStorage --sku Premium_LRS"
+                if self._enabled_protocols == "NFS"
+                else (
+                    f"  az storage account create -n {self._storage_account} "
+                    f"-g {self._rg_name} --sku Standard_LRS"
+                )
+            )
             raise ValueError(
                 f"Storage account '{self._storage_account}' not found in "
                 f"resource group '{self._rg_name}'. Workspace volumes on "
                 f"Azure require an existing storage account named in "
                 f"platform.config.storage_account. Create it first:\n"
-                f"  az storage account create -n {self._storage_account} "
-                f"-g {self._rg_name} --sku Standard_LRS"
+                f"{create_cmd}"
             ) from None
 
         try:

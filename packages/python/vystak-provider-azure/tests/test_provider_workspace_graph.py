@@ -309,3 +309,26 @@ def test_premium_volume_wires_nfs_protocol():
     env_storage = next(n for n in added if isinstance(n, ACAEnvStorageNode))
     assert share._enabled_protocols == "NFS"
     assert env_storage._protocol == "NFS"
+
+
+def test_premium_volume_missing_storage_account_raises_actionable_error():
+    """The premium precheck (get_properties) hits Azure before the
+    AzureFilesShareNode's own precheck runs — its ResourceNotFoundError
+    must be turned into the same actionable ValueError style, not left to
+    bubble up as an opaque Azure SDK error."""
+    from azure.core.exceptions import ResourceNotFoundError
+    from vystak.schema.volume import Volume
+
+    provider = _make_provider_for(
+        _agent_with_volume(Volume(name="fast", performance="premium"))
+    )
+    storage_client, aca_client = _premium_clients()
+    storage_client.storage_accounts.get_properties.side_effect = (
+        ResourceNotFoundError("not found")
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        _run_add_workspace_nodes(
+            provider, MagicMock(),
+            storage_client=storage_client, aca_client=aca_client,
+        )

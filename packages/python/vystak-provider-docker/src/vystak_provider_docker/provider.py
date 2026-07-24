@@ -907,9 +907,17 @@ class DockerProvider(PlatformProvider):
         the container's ``vystak.volume.retention`` label is ``delete``.
         A volume still mounted by another agent's workspace is skipped —
         a named volume is only removable once its last referent is gone.
+
+        Fallback: when the workspace container is already gone (e.g. a
+        prior partial destroy), its ``vystak.volume.name`` label can't be
+        read, so the legacy per-agent volume name is tried instead. With
+        ``delete_workspace_data=True`` we additionally scan for any
+        ``vystak.volume``-labeled volumes left orphaned, since the named
+        volume this workspace used can't be identified by name alone.
         """
         volume_name = f"vystak-{agent_name}-workspace-data"
         retention = "retain"
+        container_found = True
         try:
             ws = self._client.containers.get(f"vystak-{agent_name}-workspace")
             labels = ws.labels or {}
@@ -918,19 +926,39 @@ class DockerProvider(PlatformProvider):
             ws.stop()
             ws.remove()
         except docker.errors.NotFound:
-            pass
+            container_found = False
 
         if delete_workspace_data or retention == "delete":
             try:
                 vol = self._client.volumes.get(volume_name)
-                vol.remove()
             except docker.errors.NotFound:
                 pass
-            except docker.errors.APIError:
+            else:
+                self._remove_volume_if_unused(vol)
+
+        if not container_found and delete_workspace_data:
+            for vol in self._client.volumes.list(filters={"label": "vystak.volume"}):
+                self._remove_volume_if_unused(vol)
+
+    def _remove_volume_if_unused(self, volume) -> None:
+        """Remove a Docker volume, skipping (not raising) if it's in use.
+
+        "In use" is detected via the 409 status Docker's API returns, with
+        a string-match fallback for mocks/older client versions that don't
+        set status_code. Any other APIError is a real failure and re-raises.
+        """
+        try:
+            volume.remove()
+        except docker.errors.NotFound:
+            pass
+        except docker.errors.APIError as e:
+            if getattr(e, "status_code", None) == 409 or "in use" in str(e).lower():
                 print(
-                    f"Volume '{volume_name}' is still in use by another "
+                    f"Volume '{volume.name}' is still in use by another "
                     f"agent's workspace; skipping delete."
                 )
+            else:
+                raise
 
     def _destroy_vault_resources(
         self, *, agent_name: str, delete_vault: bool, keep_sidecars: bool

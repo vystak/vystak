@@ -55,6 +55,23 @@ def test_missing_storage_account_raises_actionable_error():
         node.provision({})
 
 
+def test_missing_storage_account_nfs_message_suggests_premium_sku():
+    storage_client = MagicMock()
+    storage_client.storage_accounts.get_properties.side_effect = (
+        ResourceNotFoundError("no account")
+    )
+    node = AzureFilesShareNode(
+        client=storage_client,
+        rg_name="rg",
+        storage_account="missing",
+        share_name="vystak-volume-fast",
+        enabled_protocols="NFS",
+    )
+    with pytest.raises(ValueError, match="Premium_LRS") as exc_info:
+        node.provision({})
+    assert "--kind FileStorage" in str(exc_info.value)
+
+
 def test_share_created_with_smb_by_default():
     storage_client = MagicMock()
     storage_client.file_shares.get.side_effect = ResourceNotFoundError("x")

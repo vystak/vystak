@@ -173,7 +173,13 @@ class DockerWorkspaceNode(Provisionable):
             try:
                 self._client.volumes.get(self.data_volume_name)
             except docker.errors.NotFound:
-                self._client.volumes.create(name=self.data_volume_name)
+                self._client.volumes.create(
+                    name=self.data_volume_name,
+                    labels={
+                        "vystak.volume": "true",
+                        "vystak.volume.retention": vol.retention,
+                    },
+                )
             volumes[self.data_volume_name] = {"bind": "/workspace", "mode": "rw"}
         elif vol.mode == "bind":
             host_path = str(Path(vol.path).expanduser().resolve())

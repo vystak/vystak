@@ -1,5 +1,6 @@
 """Workspace model — agent execution environment."""
 
+import re
 from typing import Self
 
 from pydantic import model_validator
@@ -121,6 +122,12 @@ class Workspace(NamedModel):
 
     @model_validator(mode="after")
     def _validate_volume_exclusivity(self) -> Self:
+        # Deliberately value-based (not model_fields_set-based): the runtime
+        # round-trips this model through model_dump()/model_validate() (see
+        # test_workspace_with_volume_round_trips_through_model_dump), which
+        # loses field-set tracking. A model_fields_set check here would pass
+        # at first load and then crash deployed agents on the next
+        # round-trip. Do not "fix" this back to a fields-set check.
         if self.volume is not None and (
             self.persistence != "volume" or self.path is not None
         ):
@@ -149,8 +156,13 @@ class Workspace(NamedModel):
                 f"via load_multi_yaml."
             )
         mode = _PERSISTENCE_TO_MODE.get(self.persistence, "persistent")
+        # Workspace.name is unconstrained (unlike Volume.name), so legacy
+        # configs may contain characters the Volume name regex rejects
+        # (underscores, dots, uppercase, ...). Sanitize fully rather than
+        # just lowercasing, so previously-valid configs keep loading.
+        sanitized = re.sub(r"[^a-z0-9-]", "-", self.name.lower()).strip("-") or "ws"
         return Volume(
-            name=f"{self.name.lower()}-implicit",
+            name=f"{sanitized}-implicit",
             mode=mode,
             path=self.path if mode == "bind" else None,
         )
