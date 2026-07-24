@@ -3,7 +3,9 @@
 import os
 from pathlib import Path
 
+import pytest
 from _vystak.runtime.skills import build_skill_tools, skills_prompt_section
+from langchain_core.messages import HumanMessage
 from vystak.schema.skill import Skill
 
 
@@ -119,3 +121,68 @@ class TestBuildSkillTools:
         tools = build_skill_tools(_agent([_folder_skill()]), tmp_path)
         read = next(t for t in tools if t.name == "read_skill_file")
         assert "Invalid path" in read.invoke({"skill": "research", "path": "link.md"})
+
+
+class TestPromptWiring:
+    @pytest.mark.asyncio
+    async def test_prompt_includes_skills_section(self):
+        from _vystak.runtime.prompt_callable import build_prompt
+
+        agent = _agent([_folder_skill()])
+        agent.instructions = "You are helpful."
+        agent.compaction = None
+        agent.memory = None
+        fn = build_prompt(agent, memory_mgr=None, compactor=None, pruner=None)
+        msgs = await fn({"messages": [HumanMessage(content="hi")]})
+        assert "You are helpful." in msgs[0].content
+        assert "- research: Deep-research workflow." in msgs[0].content
+        assert "load_skill" in msgs[0].content
+
+    @pytest.mark.asyncio
+    async def test_prompt_appends_inline_skill_prompt(self):
+        from _vystak.runtime.prompt_callable import build_prompt
+
+        agent = _agent([Skill(name="ops", tools=["t"], prompt="Always verify orders.")])
+        agent.instructions = "You are helpful."
+        agent.compaction = None
+        agent.memory = None
+        fn = build_prompt(agent, memory_mgr=None, compactor=None, pruner=None)
+        msgs = await fn({"messages": [HumanMessage(content="hi")]})
+        assert "Always verify orders." in msgs[0].content
+
+
+class TestAppFactoryWiring:
+    def test_config_load_resolves_and_app_builds_with_skill_tools(self, tmp_path, monkeypatch):
+        from _vystak.runtime.config import load_agent
+
+        _write_skill_folder(tmp_path)
+        (tmp_path / "vystak.yaml").write_text(
+            "name: support\n"
+            "framework: langchain-python\n"
+            "default_model:\n"
+            "  name: claude\n"
+            "  provider: {name: anthropic, type: anthropic}\n"
+            "  model_name: claude-sonnet-4-20250514\n"
+            "skills: [research]\n"
+        )
+        agent = load_agent(str(tmp_path / "vystak.yaml"))
+        assert agent.skills[0].content_digest
+
+        tools = build_skill_tools(agent, tmp_path)
+        assert sorted(t.name for t in tools) == ["load_skill", "read_skill_file"]
+
+        monkeypatch.chdir(tmp_path)
+        from _vystak.runtime.app_factory import build_agent_app
+
+        app = build_agent_app(agent)
+        assert len(app.routes) >= 7
+
+
+class TestAgentCard:
+    def test_card_carries_skill_description(self):
+        from _vystak.runtime.a2a_native.card import build_agent_card
+
+        agent = _agent([_folder_skill()])
+        agent.instructions = "You are helpful."
+        card = build_agent_card(agent, base_url="http://agent:8000")
+        assert card.skills[0].description == "Deep-research workflow."
