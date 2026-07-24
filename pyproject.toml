@@ -72,7 +72,7 @@ testpaths = ["packages/python/*/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--import-mode=importlib -m 'not docker'"
+addopts = "--import-mode=importlib -m 'not docker and not release_smoke and not release_smoke_azure and not release_integration and not release_slack and not release_discord and not release_live_chat'"
 asyncio_mode = "auto"
 markers = [
     "docker: opt-in integration tests that spin up real Docker containers. Run with -m docker.",

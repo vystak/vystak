@@ -50,7 +50,6 @@ weather_agent = ast.Agent(
     instructions="You are a weather specialist. Answer concisely.",
     default_model=sonnet,
     platform=platform,
-    skills=[ast.Skill(name="weather", tools=[])],
     # Secrets must be declared on the agent for the Docker provider to
     # wire them into the container env. Add ANTHROPIC_API_URL here if
     # you're routing to a non-default Anthropic-compatible endpoint.

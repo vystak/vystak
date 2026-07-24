@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 from vystak.schema.multi_loader import load_multi_yaml
+from vystak.schema.skill_resolver import resolve_folder_skills
 
 
 def _examples_dir() -> Path:
@@ -152,3 +153,33 @@ def test_docker_slack_example_loads():
     assert ch.state is not None
     assert ch.state.type == "sqlite"
     assert ch.state.path == "/data/channel-state.db"
+
+
+def test_docker_skills_example_loads():
+    """`examples/docker-skills/vystak.yaml` — folder skill + inline skill.
+
+    Validates:
+    - The single agent is named ``shop-agent``.
+    - ``resolve_folder_skills`` fills in the folder skill's description and
+      content digest from ``skills/research/SKILL.md``.
+    - The inline skill ``orders`` keeps its declared tools untouched.
+    """
+    example_dir = _examples_dir() / "docker-skills"
+    path = example_dir / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
+
+    data = yaml.safe_load(path.read_text())
+    agents, _channels, _vault = load_multi_yaml(data)
+    resolve_folder_skills(agents, example_dir)
+
+    assert len(agents) == 1
+    agent = agents[0]
+    assert agent.name == "shop-agent"
+
+    skills_by_name = {s.name: s for s in agent.skills}
+    research = skills_by_name["research"]
+    assert research.description
+    assert research.content_digest
+
+    orders = skills_by_name["orders"]
+    assert orders.tools == ["lookup_order"]

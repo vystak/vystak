@@ -98,6 +98,11 @@ agent = ast.Agent(
 )
 ```
 
+Skills can also be **folders of packaged instructions** — put a
+`skills/<name>/SKILL.md` (with a `description` in its frontmatter) next to
+your `vystak.yaml` and declare `skills: [<name>]`; the agent loads the full
+instructions on demand. See `examples/docker-skills/`.
+
 ## What `vystak apply` Does
 
 ```
@@ -160,7 +165,7 @@ Features: streaming responses, tool call visibility, tab completion, persistent 
 - **Chat client** — interactive REPL with streaming, tool visibility, slash commands, and token tracking
 - **A2A protocol** — agents discover and communicate via Google's Agent-to-Agent standard (JSON-RPC 2.0)
 - **Multi-agent** — deploy multiple agents that call each other in parallel via A2A with nested streaming
-- **Real tool loading** — write plain Python functions in `tools/`, auto-scaffolded on first deploy
+- **Real tool loading** — write plain Python functions in `tools/`, referenced by name from skills
 - **Gateway** — channel routing service for Slack and other integrations
 - **YAML + Python** — define agents in YAML for simplicity or Python for power
 - **CLI** — `init`, `plan`, `apply`, `destroy`, `status`, `logs`

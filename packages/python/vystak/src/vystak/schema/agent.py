@@ -2,7 +2,7 @@
 
 from typing import Self
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 
 from vystak.schema.common import NamedModel
 from vystak.schema.compaction import Compaction
@@ -68,16 +68,29 @@ class Agent(NamedModel):
     def _validate_subagents(self) -> Self:
         names = [s.name for s in self.subagents]
         if self.name in names:
-            raise ValueError(
-                f"Agent '{self.name}' cannot list itself in subagents."
-            )
+            raise ValueError(f"Agent '{self.name}' cannot list itself in subagents.")
         seen: set[str] = set()
         for n in names:
             if n in seen:
-                raise ValueError(
-                    f"Agent '{self.name}' has duplicate subagent name '{n}'."
-                )
+                raise ValueError(f"Agent '{self.name}' has duplicate subagent name '{n}'.")
             seen.add(n)
+        return self
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def _normalize_skill_shorthand(cls, v):
+        """`skills: ["research"]` is shorthand for `Skill(name="research")`."""
+        if not isinstance(v, list):
+            return v
+        return [{"name": item} if isinstance(item, str) else item for item in v]
+
+    @model_validator(mode="after")
+    def _validate_skills_unique(self) -> Self:
+        seen: set[str] = set()
+        for s in self.skills:
+            if s.name in seen:
+                raise ValueError(f"Agent '{self.name}' has duplicate skill name '{s.name}'.")
+            seen.add(s.name)
         return self
 
     @model_validator(mode="after")

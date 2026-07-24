@@ -32,9 +32,6 @@ memory:
   provider:
     name: docker
     type: docker
-skills:
-  - name: assistant
-    tools: []
 channels:
   - name: api
     type: api

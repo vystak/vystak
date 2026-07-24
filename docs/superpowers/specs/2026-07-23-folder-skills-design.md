@@ -287,9 +287,13 @@ Upgrading causes a **one-time redeploy** of existing agents: the new `Skill`
 fields appear in `hash_model`'s full `model_dump` (changing every skill's
 canonical JSON), and the updated template runtime changes the template digest
 anyway. This is normal for a version upgrade and `vystak plan` surfaces it.
-The only behavior change for existing configs is the newly implemented
-inline-`prompt` append, which affects only users who set `prompt` expecting
-the documented behavior.
+Behavior changes for existing configs: (1) the newly implemented inline-`prompt`
+append, affecting only users who set `prompt` expecting the documented
+behavior; (2) a skill with no `tools`, no `prompt`, and no matching
+`skills/<name>/SKILL.md` folder is now a load-time error — previously such
+placeholder skills loaded silently and did nothing. The error message tells
+the user exactly what to do; the repo's examples with placeholder skills are
+migrated in this PR.
 
 ## See also
 

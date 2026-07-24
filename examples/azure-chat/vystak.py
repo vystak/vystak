@@ -54,7 +54,6 @@ weather_agent = ast.Agent(
     instructions="You are a weather specialist. Answer concisely.",
     default_model=sonnet,
     platform=platform,
-    skills=[ast.Skill(name="weather", tools=[])],
     secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
 )
 

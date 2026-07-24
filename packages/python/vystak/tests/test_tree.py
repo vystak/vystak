@@ -131,12 +131,8 @@ class TestAgentHashTreeServices:
         from vystak.schema.compaction import Compaction
 
         base = make_agent()
-        with_compaction = base.model_copy(
-            update={"compaction": Compaction(mode="conservative")}
-        )
-        aggressive = base.model_copy(
-            update={"compaction": Compaction(mode="aggressive")}
-        )
+        with_compaction = base.model_copy(update={"compaction": Compaction(mode="conservative")})
+        aggressive = base.model_copy(update={"compaction": Compaction(mode="aggressive")})
 
         h_base = hash_agent(base)
         h_cons = hash_agent(with_compaction)
@@ -347,11 +343,55 @@ def test_models_reorder_does_not_change_brain():
     default = Model(name="d", provider=anthropic, model_name="claude-d")
 
     a1 = Agent(
-        name="bot", framework="langchain-python",
-        default_model=default, models=[m_a, m_b], platform=platform,
+        name="bot",
+        framework="langchain-python",
+        default_model=default,
+        models=[m_a, m_b],
+        platform=platform,
     )
     a2 = Agent(
-        name="bot", framework="langchain-python",
-        default_model=default, models=[m_b, m_a], platform=platform,
+        name="bot",
+        framework="langchain-python",
+        default_model=default,
+        models=[m_b, m_a],
+        platform=platform,
     )
     assert hash_agent(a1).brain == hash_agent(a2).brain
+
+
+def test_folder_skill_file_edit_changes_root_hash(tmp_path):
+    from vystak.schema.skill_resolver import resolve_folder_skills
+
+    folder = tmp_path / "skills" / "research"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: research\ndescription: Research workflow.\n---\nBody v1.\n"
+    )
+    agent1 = make_agent(skills=[Skill(name="research")])
+    resolve_folder_skills([agent1], tmp_path)
+    tree1 = hash_agent(agent1)
+
+    (folder / "SKILL.md").write_text(
+        "---\nname: research\ndescription: Research workflow.\n---\nBody v2.\n"
+    )
+    agent2 = make_agent(skills=[Skill(name="research")])
+    resolve_folder_skills([agent2], tmp_path)
+    tree2 = hash_agent(agent2)
+
+    assert tree1.skills != tree2.skills
+    assert tree1.root != tree2.root
+
+
+def test_folder_skill_unchanged_folder_same_hash(tmp_path):
+    from vystak.schema.skill_resolver import resolve_folder_skills
+
+    folder = tmp_path / "skills" / "research"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: research\ndescription: Research workflow.\n---\nBody.\n"
+    )
+    agent1 = make_agent(skills=[Skill(name="research")])
+    resolve_folder_skills([agent1], tmp_path)
+    agent2 = make_agent(skills=[Skill(name="research")])
+    resolve_folder_skills([agent2], tmp_path)
+    assert hash_agent(agent1).root == hash_agent(agent2).root
