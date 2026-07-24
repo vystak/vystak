@@ -117,8 +117,31 @@ async def test_open_process_reconnects_once_on_dropped_connection(monkeypatch):
     c._conn = dead
 
     async def fake_connect():
-        c._conn = fresh
+        if c._conn is None:
+            c._conn = fresh
 
     monkeypatch.setattr(c, "connect", fake_connect)
     assert await c.invoke("fs.listDir", path=".") == []
     assert len(fresh.processes) == 1
+    assert c._conn is fresh
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_expected_kwargs(monkeypatch):
+    import _vystak.runtime.workspace_client as wc_mod
+
+    captured = {}
+
+    async def fake_asyncssh_connect(host, **kwargs):
+        captured["host"] = host
+        captured.update(kwargs)
+        return FakeConn([])
+
+    monkeypatch.setattr(wc_mod.asyncssh, "connect", fake_asyncssh_connect)
+    c = _client()
+    await c.connect()
+    assert captured["host"] == "ws"
+    assert captured["username"] == "vystak-agent"
+    assert captured["client_keys"] == ["/vystak/ssh/id_ed25519"]
+    assert captured["known_hosts"] == "/vystak/ssh/known_hosts"
+    assert captured["keepalive_interval"] == 30
