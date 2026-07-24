@@ -105,13 +105,27 @@ def generate_workspace_dockerfile(
             "RUN test -f /workspace/tools/package.json && "
             "(cd /workspace/tools && npm install) || true"
         )
-    # Entrypoint — Vault path uses a shim that blocks until
-    # /shared/secrets.env is populated; default path runs sshd directly
-    # because env is already delivered at container start.
+    # Seed folder — staged into the image; the workspace entrypoint copies
+    # it into /workspace (copy-if-absent) at container start. A Dockerfile
+    # COPY straight to /workspace would be shadowed by the volume mount.
+    lines.append("COPY seed/ /vystak/seed/")
+    lines.append("COPY workspace-entrypoint.sh /vystak/workspace-entrypoint.sh")
+    lines.append(
+        "RUN chmod +x /vystak/workspace-entrypoint.sh && "
+        "chown -R vystak-agent /vystak/seed"
+    )
+    # Entrypoint chain. Vault path: secrets shim first (ends in `exec "$@"`),
+    # chaining into the workspace entrypoint via CMD. Default path: the
+    # workspace entrypoint IS the entrypoint.
     if use_entrypoint_shim:
         lines.append("COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh")
         lines.append("RUN chmod +x /vystak/entrypoint-shim.sh")
         lines.append('ENTRYPOINT ["/vystak/entrypoint-shim.sh"]')
-    lines.append('CMD ["/usr/sbin/sshd", "-D", "-e"]')
+        lines.append(
+            'CMD ["/vystak/workspace-entrypoint.sh", "/usr/sbin/sshd", "-D", "-e"]'
+        )
+    else:
+        lines.append('ENTRYPOINT ["/vystak/workspace-entrypoint.sh"]')
+        lines.append('CMD ["/usr/sbin/sshd", "-D", "-e"]')
 
     return "\n".join(lines) + "\n"

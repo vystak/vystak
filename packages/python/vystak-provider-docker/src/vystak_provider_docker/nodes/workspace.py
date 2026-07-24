@@ -127,6 +127,21 @@ class DockerWorkspaceNode(Provisionable):
         else:
             tools_dst.mkdir()
 
+        # Seed folder — workspaces/<workspace-name>/ from the project dir.
+        from vystak_provider_docker.templates import generate_workspace_entrypoint
+
+        seed_dst = build_dir / "seed"
+        if seed_dst.exists():
+            shutil.rmtree(seed_dst)
+        seed_src = Path("workspaces") / ws.name
+        if seed_src.exists():
+            shutil.copytree(seed_src, seed_dst)
+        else:
+            seed_dst.mkdir()
+        (build_dir / "workspace-entrypoint.sh").write_text(
+            generate_workspace_entrypoint()
+        )
+
         # Human authorized_keys if ssh=True
         if ws.ssh:
             keys_content = "\n".join(ws.ssh_authorized_keys)

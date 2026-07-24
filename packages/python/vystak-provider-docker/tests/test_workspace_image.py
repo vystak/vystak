@@ -81,7 +81,7 @@ def test_tool_deps_none_skips_install():
 
 def test_entrypoint_shim_emitted_by_default():
     """Vault path (default) wires the shim that waits for
-    /shared/secrets.env."""
+    /shared/secrets.env, which chains into the workspace entrypoint."""
     from vystak_provider_docker.workspace_image import generate_workspace_dockerfile
 
     df = generate_workspace_dockerfile(
@@ -92,13 +92,13 @@ def test_entrypoint_shim_emitted_by_default():
     )
     assert "COPY entrypoint-shim.sh /vystak/entrypoint-shim.sh" in df
     assert 'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]' in df
-    assert 'CMD ["/usr/sbin/sshd"' in df
+    assert 'CMD ["/vystak/workspace-entrypoint.sh", "/usr/sbin/sshd", "-D", "-e"]' in df
 
 
 def test_no_entrypoint_shim_on_default_path():
     """Default path: no Vault Agent, no /shared/secrets.env, no shim.
-    sshd becomes CMD directly so the container doesn't block on a file
-    that will never appear."""
+    The workspace entrypoint becomes the ENTRYPOINT, and sshd is passed as CMD
+    to preserve environment set at container start."""
     from vystak_provider_docker.workspace_image import generate_workspace_dockerfile
 
     df = generate_workspace_dockerfile(
@@ -109,5 +109,33 @@ def test_no_entrypoint_shim_on_default_path():
         use_entrypoint_shim=False,
     )
     assert "entrypoint-shim" not in df
-    assert "ENTRYPOINT" not in df
-    assert 'CMD ["/usr/sbin/sshd"' in df
+    assert 'ENTRYPOINT ["/vystak/workspace-entrypoint.sh"]' in df
+    assert 'CMD ["/usr/sbin/sshd", "-D", "-e"]' in df
+
+
+def test_dockerfile_stages_seed_and_workspace_entrypoint_default_path():
+    df = generate_workspace_dockerfile(
+        image="python:3.12-slim", provision=[], copy={},
+        tool_deps_manager=None, use_entrypoint_shim=False,
+    )
+    assert "COPY seed/ /vystak/seed/" in df
+    assert "COPY workspace-entrypoint.sh /vystak/workspace-entrypoint.sh" in df
+    assert 'ENTRYPOINT ["/vystak/workspace-entrypoint.sh"]' in df
+    assert 'CMD ["/usr/sbin/sshd", "-D", "-e"]' in df
+
+
+def test_dockerfile_vault_path_chains_shim_then_workspace_entrypoint():
+    df = generate_workspace_dockerfile(
+        image="python:3.12-slim", provision=[], copy={},
+        tool_deps_manager=None, use_entrypoint_shim=True,
+    )
+    assert 'ENTRYPOINT ["/vystak/entrypoint-shim.sh"]' in df
+    assert 'CMD ["/vystak/workspace-entrypoint.sh", "/usr/sbin/sshd", "-D", "-e"]' in df
+
+
+def test_workspace_entrypoint_script_copy_if_absent():
+    from vystak_provider_docker.templates import generate_workspace_entrypoint
+
+    script = generate_workspace_entrypoint()
+    assert "cp -rn /vystak/seed/. /workspace/" in script
+    assert 'exec "$@"' in script

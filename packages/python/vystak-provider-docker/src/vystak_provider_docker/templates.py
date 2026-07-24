@@ -227,3 +227,26 @@ fi
 
 exec "$@"
 """
+
+
+def generate_workspace_entrypoint() -> str:
+    """Workspace container entrypoint: seed /workspace (copy-if-absent),
+    then exec the CMD (sshd).
+
+    Runs on BOTH delivery paths — default path as ENTRYPOINT, Vault path
+    chained after the secrets shim via CMD. `cp -rn` never overwrites
+    existing files, so workspace-side edits and agent-written files
+    survive re-applies; new seed files land on the next apply.
+    """
+    return """\
+#!/bin/sh
+# vystak workspace entrypoint — seed /workspace, then exec CMD
+set -e
+
+if [ -d /vystak/seed ] && [ -n "$(ls -A /vystak/seed 2>/dev/null)" ]; then
+  cp -rn /vystak/seed/. /workspace/ 2>/dev/null || true
+  chown -R vystak-agent /workspace 2>/dev/null || true
+fi
+
+exec "$@"
+"""

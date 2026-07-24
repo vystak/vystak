@@ -168,3 +168,50 @@ def test_workspace_default_path_depends_on_drops_vault_agent():
     )
     assert "vault-agent:assistant-workspace" not in node.depends_on
     assert "workspace-ssh-keygen:assistant" in node.depends_on
+
+
+def test_provision_stages_seed_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    seed_src = tmp_path / "workspaces" / "dev"
+    seed_src.mkdir(parents=True)
+    (seed_src / "hello.txt").write_text("seeded\n")
+
+    docker_client = MagicMock()
+    import docker.errors
+    docker_client.containers.get.side_effect = docker.errors.NotFound("nope")
+
+    node = DockerWorkspaceNode(
+        client=docker_client,
+        agent_name="assistant",
+        workspace=_workspace(),
+        tools_dir=tmp_path / "tools",
+    )
+    (tmp_path / "tools").mkdir()
+    context = {"network": MagicMock(info={"network": MagicMock(name="vystak-net")})}
+    node.provision(context=context)
+
+    build_dir = tmp_path / ".vystak" / "assistant-workspace"
+    assert (build_dir / "seed" / "hello.txt").read_text() == "seeded\n"
+    assert (build_dir / "workspace-entrypoint.sh").exists()
+
+
+def test_provision_without_seed_folder_stages_empty_seed_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    docker_client = MagicMock()
+    import docker.errors
+    docker_client.containers.get.side_effect = docker.errors.NotFound("nope")
+
+    node = DockerWorkspaceNode(
+        client=docker_client,
+        agent_name="assistant",
+        workspace=_workspace(),
+        tools_dir=tmp_path / "tools",
+    )
+    (tmp_path / "tools").mkdir()
+    context = {"network": MagicMock(info={"network": MagicMock(name="vystak-net")})}
+    node.provision(context=context)
+
+    build_dir = tmp_path / ".vystak" / "assistant-workspace"
+    assert (build_dir / "seed").is_dir()
+    assert list((build_dir / "seed").iterdir()) == []
