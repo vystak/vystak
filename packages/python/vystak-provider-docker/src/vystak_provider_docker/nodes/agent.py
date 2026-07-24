@@ -264,6 +264,19 @@ class DockerAgentNode(Provisionable):
                     "bind": "/shared/ssh/host_key.pub",
                     "mode": "ro",
                 }
+                # Assemble known_hosts so the agent's asyncssh client can
+                # verify the workspace host key (test_plan gap #2 / V11).
+                host_key_pub_path = ssh_dir / "host-key.pub"
+                if self._workspace_host and host_key_pub_path.exists():
+                    known_hosts_path = ssh_dir / "known_hosts"
+                    host_key_pub = host_key_pub_path.read_text().strip()
+                    known_hosts_path.write_text(
+                        f"{self._workspace_host} {host_key_pub}\n"
+                    )
+                    volumes[str(known_hosts_path)] = {
+                        "bind": "/shared/ssh/known_hosts",
+                        "mode": "ro",
+                    }
 
             # Run container
             host_port = self._agent.port if self._agent.port else None
