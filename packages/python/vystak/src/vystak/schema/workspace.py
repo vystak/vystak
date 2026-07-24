@@ -7,6 +7,13 @@ from pydantic import model_validator
 from vystak.schema.common import NamedModel, WorkspaceType
 from vystak.schema.provider import Provider
 from vystak.schema.secret import Secret
+from vystak.schema.volume import Volume
+
+_PERSISTENCE_TO_MODE = {
+    "volume": "persistent",
+    "bind": "bind",
+    "ephemeral": "ephemeral",
+}
 
 
 class Workspace(NamedModel):
@@ -27,6 +34,12 @@ class Workspace(NamedModel):
     # Filesystem / persistence
     persistence: str = "volume"  # "volume" | "bind" | "ephemeral"
     path: str | None = None
+
+    # Named volume reference (Phase 1 — see
+    # docs/superpowers/specs/2026-07-23-workspace-volume-design.md).
+    # str = unresolved name reference; the multi-loader resolves it to a
+    # Volume. persistence=/path= remain as the legacy implicit form.
+    volume: Volume | str | None = None
 
     # Network / resources
     network: bool = True
@@ -105,3 +118,39 @@ class Workspace(NamedModel):
                 f"or ssh_authorized_keys_file to grant human access."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_volume_exclusivity(self) -> Self:
+        if self.volume is not None and (
+            "persistence" in self.model_fields_set or "path" in self.model_fields_set
+        ):
+            raise ValueError(
+                f"Workspace '{self.name}': volume= is mutually exclusive with "
+                f"the legacy persistence=/path= fields. Declare persistence "
+                f"on the named volume instead."
+            )
+        return self
+
+    @property
+    def effective_volume(self) -> Volume:
+        """Normalized persistence config. The only shape providers consume.
+
+        Explicit named volume → returned as-is. Legacy persistence string →
+        an implicit per-agent Volume (providers keep legacy resource naming
+        for it, detected via ``ws.volume is None``).
+        """
+        if isinstance(self.volume, Volume):
+            return self.volume
+        if isinstance(self.volume, str):
+            raise ValueError(
+                f"Workspace '{self.name}': volume reference "
+                f"'{self.volume}' was never resolved. Named volumes require "
+                f"the multi-doc layout (top-level volumes: section) loaded "
+                f"via load_multi_yaml."
+            )
+        mode = _PERSISTENCE_TO_MODE.get(self.persistence, "persistent")
+        return Volume(
+            name=f"{self.name.lower()}-implicit",
+            mode=mode,
+            path=self.path if mode == "bind" else None,
+        )

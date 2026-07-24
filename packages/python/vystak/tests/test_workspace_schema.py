@@ -79,3 +79,57 @@ def test_workspace_legacy_type_mounted_maps_to_bind_needs_path():
     # type=mounted requires path (same as persistence=bind)
     with pytest.raises(PydanticValidationError, match="bind.*path"):
         Workspace(name="dev", type=WorkspaceType.MOUNTED)
+
+
+# --- Volume reference (Phase 1) -------------------------------------------
+
+
+def test_workspace_volume_and_persistence_mutually_exclusive():
+    from vystak.schema.volume import Volume
+
+    with pytest.raises(PydanticValidationError, match="mutually exclusive"):
+        Workspace(
+            name="dev",
+            image="python:3.12-slim",
+            persistence="ephemeral",
+            volume=Volume(name="team-code"),
+        )
+
+
+def test_effective_volume_from_explicit_volume():
+    from vystak.schema.volume import Volume
+
+    ws = Workspace(
+        name="dev", image="python:3.12-slim", volume=Volume(name="team-code")
+    )
+    vol = ws.effective_volume
+    assert vol.name == "team-code"
+    assert vol.mode == "persistent"
+
+
+def test_effective_volume_implicit_from_persistence_default():
+    ws = Workspace(name="dev", image="python:3.12-slim")
+    vol = ws.effective_volume
+    assert vol.mode == "persistent"
+    assert vol.retention == "retain"
+    assert ws.volume is None  # implicit — providers use legacy naming
+
+
+def test_effective_volume_implicit_bind_carries_path():
+    ws = Workspace(
+        name="dev", image="python:3.12-slim", persistence="bind", path="/tmp/proj"
+    )
+    vol = ws.effective_volume
+    assert vol.mode == "bind"
+    assert vol.path == "/tmp/proj"
+
+
+def test_effective_volume_implicit_ephemeral():
+    ws = Workspace(name="dev", image="python:3.12-slim", persistence="ephemeral")
+    assert ws.effective_volume.mode == "ephemeral"
+
+
+def test_effective_volume_unresolved_string_reference_raises():
+    ws = Workspace(name="dev", image="python:3.12-slim", volume="team-code")
+    with pytest.raises(ValueError, match="never resolved"):
+        _ = ws.effective_volume
