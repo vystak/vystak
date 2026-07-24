@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from vystak.hash.hasher import hash_model
+from vystak.hash.hasher import hash_dict, hash_model
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
 from vystak.schema.workspace import Workspace
@@ -86,6 +86,20 @@ def _hash_str(value: str | None) -> str:
     if value is None:
         return hashlib.sha256(b"null").hexdigest()
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _hash_workspace_deploy(ws) -> str:
+    """Hash the workspace minus fields that don't affect deploy identity.
+
+    Volume.retention only governs destroy-time behavior.
+    """
+    if ws is None:
+        return hashlib.sha256(b"null").hexdigest()
+    data = ws.model_dump(mode="python")
+    vol = data.get("volume")
+    if isinstance(vol, dict):
+        vol.pop("retention", None)
+    return hash_dict(data)
 
 
 def hash_workspace(ws: Workspace) -> WorkspaceHashTree:
@@ -219,7 +233,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
     framework = _hash_str(agent.framework)
     skills = _hash_list(agent.skills)
     mcp_servers = _hash_list(agent.mcp_servers)
-    workspace = _hash_optional(agent.workspace)
+    workspace = _hash_workspace_deploy(agent.workspace)
     resources = _hash_list(agent.resources)
     secrets = _hash_list(agent.secrets)
     sessions = _hash_optional(agent.sessions)
