@@ -54,9 +54,9 @@ Vystak holds no state. No state files, no remote backend, no state locking. The 
 
 ## 7. The framework is a runtime target, not an abstraction
 
-Vystak does not abstract frameworks. It targets them. Each framework adapter generates native code using that framework's idioms. Mastra adapter produces Mastra code. LangChain adapter produces LangChain code. No lowest common denominator.
+Vystak does not abstract frameworks. It targets them. Each framework template is a real, runnable project tree written in that framework's idioms — not generated source, not a generic wrapper. The LangChain template is idiomatic LangChain/LangGraph. No lowest common denominator.
 
-*In practice:* When you choose Mastra as your framework, the generated code is idiomatic Mastra — not a generic wrapper. You can read it, debug it, and extend it using Mastra's documentation. Vystak doesn't hide the framework from you.
+*In practice:* `vystak init` copies the framework template wholesale into your project. You own `server.py`, the Dockerfile, and your tools; the `_vystak/runtime/` machinery composes the framework-native app at runtime and is refreshed by `vystak update`. You can read it, debug it, and extend it using the framework's own documentation. Vystak doesn't hide the framework from you — and it never emits source code as strings.
 
 ---
 
@@ -74,10 +74,13 @@ Everything in Vystak maps to one of seven concepts:
 | **Provider** | Who provisions it — cloud/service | AWS, Anthropic, Docker, E2B |
 | **Platform** | Where it runs — deployment target | AgentCore, Gradient, Cloud Run, Kubernetes |
 
-Every deployment is a combination of three independent choices:
+Every deployment is a combination of four independent choices:
 
-- **Framework adapter** — HOW the agent thinks (Mastra, LangChain, CrewAI)
-- **Platform provider** — WHERE the agent runs (Docker, AWS, K8s)
-- **Channel adapter** — HOW users reach it (API, Slack, voice)
+- **Framework template** — HOW the agent thinks (LangChain today; Mastra, CrewAI planned)
+- **Platform provider** — WHERE the agent runs (Docker, Azure)
+- **Channel plugin** — HOW users reach it (OpenAI-compatible chat, Slack, Discord)
+- **Transport plugin** — HOW agents talk to each other (HTTP, NATS)
 
 Any combination works. The definition doesn't change — only the target config changes.
+
+See [Architecture](architecture.md) for how these axes are implemented.
