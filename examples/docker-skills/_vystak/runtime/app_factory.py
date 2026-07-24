@@ -30,6 +30,7 @@ from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
 from _vystak.runtime.openai.responses import ResponsesHandler
 from _vystak.runtime.prompt_callable import build_prompt
+from _vystak.runtime.skills import build_skill_tools
 from _vystak.runtime.store import (
     _LazyCheckpointer,
     _LazyStore,
@@ -42,7 +43,11 @@ from _vystak.runtime.tools import load_user_tools
 
 
 async def pick_model_for_turn(
-    agent: Any, *, sessions, session_id: str, override: str | None,
+    agent: Any,
+    *,
+    sessions,
+    session_id: str,
+    override: str | None,
 ) -> str:
     """Resolve the model name to use for this turn.
 
@@ -54,7 +59,10 @@ async def pick_model_for_turn(
 
 
 async def persist_model_choice(
-    *, sessions, session_id: str, chosen: str,
+    *,
+    sessions,
+    session_id: str,
+    chosen: str,
 ) -> None:
     """Persist `chosen` only if the session does not already have a model."""
     stored = await sessions.get_model(session_id)
@@ -84,6 +92,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     memory_store = build_memory_store(agent)
     user_tools = load_user_tools(agent, Path("tools"))
     subagent_tools = build_subagent_tools(agent)
+    skill_tools = build_skill_tools(agent, Path("."))
     # TODO(later-phase): wire build_workspace_tools(agent) once builtin
     # workspace tools land. For now agents only see user-defined tools.
     workspace_tools: list[Any] = []
@@ -94,11 +103,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     memory_mgr = MemoryManager(agent, store=memory_mgr_store) if agent.memory else None
 
     pruner = PreCallPruner(agent.compaction) if agent.compaction else None
-    compactor = (
-        ThresholdCompactor(agent, store=None, summarizer=None)
-        if agent.compaction
-        else None
-    )
+    compactor = ThresholdCompactor(agent, store=None, summarizer=None) if agent.compaction else None
 
     prompt = build_prompt(agent, memory_mgr=memory_mgr, compactor=compactor, pruner=pruner)
 
@@ -112,7 +117,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     graph = build_graph(
         agent,
         prompt=prompt,
-        tools=user_tools + workspace_tools + subagent_tools,
+        tools=user_tools + workspace_tools + subagent_tools + skill_tools,
         checkpointer=initial_checkpointer,
     )
 
@@ -158,7 +163,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
-                    tools=user_tools + workspace_tools + subagent_tools + mcp_tools,
+                    tools=user_tools + workspace_tools + subagent_tools + skill_tools + mcp_tools,
                     checkpointer=resolved,
                 )
                 a2a_executor._graph = new_graph
@@ -169,9 +174,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                 app_.state.graph = graph
 
             if isinstance(memory_store, _LazyStore):
-                resolved_store = await stack.enter_async_context(
-                    memory_store.context_manager()
-                )
+                resolved_store = await stack.enter_async_context(memory_store.context_manager())
                 # Postgres-backed stores create their schema on first use; SQLite
                 # / in-memory stores ignore setup. Always call when present.
                 setup_fn = getattr(resolved_store, "setup", None)
@@ -225,9 +228,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     async def list_models():
         return {
             "object": "list",
-            "data": [
-                {"id": f"vystak/{agent.name}", "object": "model", "owned_by": "vystak"}
-            ],
+            "data": [{"id": f"vystak/{agent.name}", "object": "model", "owned_by": "vystak"}],
         }
 
     @app.post("/v1/chat/completions")
