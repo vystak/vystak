@@ -91,6 +91,11 @@ process starts; `workspace.py` itself never branches on provider.
   Docker's Vault path) materializes both into the canonical
   `/vystak/ssh/id_ed25519` / `/vystak/ssh/known_hosts` paths before
   `exec`ing the main process, then unsets the env vars.
+  **Known gap:** the Azure agent container's image is CMD-only
+  (`aca_app.py` writes only `CMD [...]`, no `ENTRYPOINT`) and does not
+  yet run this shim, so `/vystak/ssh/*` is never materialized there —
+  workspace tools are inert on Azure until the agent-side entrypoint is
+  wired (tracked for the Azure enablement pass).
 
 ### Tool set (matches the validated prototype `builtin_tools.py`)
 

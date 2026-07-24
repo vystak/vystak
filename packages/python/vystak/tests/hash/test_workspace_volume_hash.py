@@ -65,4 +65,12 @@ def test_seed_folder_content_changes_workspace_hash(tmp_path, monkeypatch):
 def test_no_seed_folder_keeps_hash_stable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     agent = _agent(Volume(name="team-code"))
-    assert hash_agent(agent).workspace == hash_agent(agent).workspace
+    h_no_seed = hash_agent(agent).workspace
+
+    # A seed folder under a DIFFERENT workspace name must not affect this
+    # agent's workspace hash — the seed lookup is scoped by workspace name.
+    other_seed = tmp_path / "workspaces" / "other"
+    other_seed.mkdir(parents=True)
+    (other_seed / "x.txt").write_text("content")
+
+    assert hash_agent(agent).workspace == h_no_seed

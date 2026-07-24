@@ -5,6 +5,7 @@ call to the vystak-rpc subsystem; reads JSONL responses. If the cached
 connection has died (e.g. ACA idle-timeout RST), reconnects once.
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -28,18 +29,22 @@ class WorkspaceRpcClient:
         self._client_keys = list(client_keys)
         self._known_hosts = known_hosts
         self._conn: asyncssh.SSHClientConnection | None = None
+        self._connect_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         if self._conn is not None:
             return
-        self._conn = await asyncssh.connect(
-            self._host,
-            port=self._port,
-            username=self._username,
-            client_keys=self._client_keys,
-            known_hosts=self._known_hosts,
-            keepalive_interval=30,
-        )
+        async with self._connect_lock:
+            if self._conn is not None:
+                return
+            self._conn = await asyncssh.connect(
+                self._host,
+                port=self._port,
+                username=self._username,
+                client_keys=self._client_keys,
+                known_hosts=self._known_hosts,
+                keepalive_interval=30,
+            )
 
     async def close(self) -> None:
         if self._conn is not None:

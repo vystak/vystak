@@ -8,6 +8,7 @@ so the LLM turn survives.
 
 import logging
 import os
+import shlex
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -102,9 +103,13 @@ def build_workspace_tools(agent: Any) -> list[Any]:
 
     @tool
     async def run(cmd: str) -> object:
-        """Run a command in the workspace (cwd /workspace). Returns its output and exit code."""
+        """Run a command (with arguments) in the workspace, cwd /workspace.
+        Returns output and exit code. For pipes/redirection use shell."""
         try:
-            return await _stream("exec.run", cmd=cmd)
+            argv = shlex.split(cmd)
+            if not argv:
+                return "Error calling exec.run: empty command"
+            return await _stream("exec.run", cmd=argv[0], args=argv[1:])
         except Exception as e:
             return _err("exec.run", e)
 

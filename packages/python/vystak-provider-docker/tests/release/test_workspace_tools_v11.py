@@ -58,6 +58,21 @@ async def main():
 asyncio.run(main())
 """
 
+TOOLS_SNIPPET = """\
+import asyncio, sys, types
+sys.path.insert(0, "/app")
+from _vystak.runtime.workspace import build_workspace_tools
+
+agent = types.SimpleNamespace(name="wstools", workspace=types.SimpleNamespace(name="dev"))
+
+async def main():
+    tools = {t.name: t for t in build_workspace_tools(agent)}
+    out = await tools["run"].ainvoke({"cmd": "cat hello.txt"})
+    print(out)
+
+asyncio.run(main())
+"""
+
 
 def test_workspace_tools_v11_and_seed(workspace_clean, project):
     # `vystak apply` requires a scaffolded `_vystak/` tree (the no-codegen
@@ -89,6 +104,22 @@ def test_workspace_tools_v11_and_seed(workspace_clean, project):
     )
     assert "hello.txt" in result.stdout, (
         f"V11 fs.listDir failed:\n{result.stdout}\n{result.stderr}"
+    )
+
+    # Tools layer — build_workspace_tools + the `run` tool end-to-end,
+    # inside the agent container. This is the layer where the shlex-split
+    # fix (client sends unstructured "cmd string" vs. the RPC server's
+    # argv=[cmd] no-shell exec) actually hid; V11 above only exercises
+    # _make_client + fs.listDir directly and would not have caught it.
+    result = run(
+        ["docker", "exec", "-i", "vystak-wstools", "python3", "-"],
+        input=TOOLS_SNIPPET,
+    )
+    assert "seeded-v1" in result.stdout, (
+        f"tools-layer run() failed:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "exit_code=0" in result.stdout, (
+        f"tools-layer run() missing exit_code:\n{result.stdout}\n{result.stderr}"
     )
 
     # Copy-if-absent across re-apply: mutate the seeded file in the

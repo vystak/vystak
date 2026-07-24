@@ -49,17 +49,34 @@ async def test_read_file_maps_to_fs_read(monkeypatch):
 async def test_run_streams_and_returns_output_with_exit_code(monkeypatch):
     monkeypatch.setenv("VYSTAK_WORKSPACE_HOST", "ws-host")
 
+    captured = {}
+
     class FakeClient:
         async def invoke_stream(self, method, **params):
-            assert method == "exec.run"
+            captured["method"] = method
+            captured["params"] = params
             yield {"channel": "stdout", "chunk": "hello\n"}
             yield {"channel": "stderr", "chunk": "warn\n"}
             yield {"exit_code": 0, "duration_ms": 3}
 
     monkeypatch.setattr(ws_mod, "_make_client", lambda host: FakeClient())
     tools = {t.name: t for t in build_workspace_tools(_agent())}
-    result = await tools["run"].ainvoke({"cmd": "echo hello"})
+    result = await tools["run"].ainvoke({"cmd": "echo hello world"})
     assert "hello" in result and "exit_code=0" in result
+    # The RPC server (exec.py) builds argv via create_subprocess_exec with
+    # no shell — the client must split the command itself and send it as
+    # cmd + args, matching the server's actual contract.
+    assert captured["method"] == "exec.run"
+    assert captured["params"] == {"cmd": "echo", "args": ["hello", "world"]}
+
+
+@pytest.mark.asyncio
+async def test_run_empty_command_is_an_error_string(monkeypatch):
+    monkeypatch.setenv("VYSTAK_WORKSPACE_HOST", "ws-host")
+    monkeypatch.setattr(ws_mod, "_make_client", lambda host: AsyncMock())
+    tools = {t.name: t for t in build_workspace_tools(_agent())}
+    result = await tools["run"].ainvoke({"cmd": "   "})
+    assert isinstance(result, str) and "empty command" in result
 
 
 @pytest.mark.asyncio

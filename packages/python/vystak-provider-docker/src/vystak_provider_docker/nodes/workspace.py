@@ -134,7 +134,7 @@ class DockerWorkspaceNode(Provisionable):
         if seed_dst.exists():
             shutil.rmtree(seed_dst)
         seed_src = Path("workspaces") / ws.name
-        if seed_src.exists():
+        if seed_src.is_dir():
             shutil.copytree(seed_src, seed_dst)
         else:
             seed_dst.mkdir()

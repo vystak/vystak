@@ -319,7 +319,7 @@ class ACAWorkspaceAppNode(Provisionable):
         tools_dst = build_dir / "tools"
         if tools_dst.exists():
             shutil.rmtree(tools_dst)
-        if tools_src.exists():
+        if tools_src.is_dir():
             shutil.copytree(tools_src, tools_dst)
         else:
             tools_dst.mkdir()
@@ -328,7 +328,7 @@ class ACAWorkspaceAppNode(Provisionable):
         if seed_dst.exists():
             shutil.rmtree(seed_dst)
         seed_src = Path("workspaces") / ws.name
-        if seed_src.exists():
+        if seed_src.is_dir():
             shutil.copytree(seed_src, seed_dst)
         else:
             seed_dst.mkdir()
