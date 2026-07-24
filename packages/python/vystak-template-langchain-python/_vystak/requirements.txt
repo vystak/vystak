@@ -19,3 +19,4 @@ opentelemetry-sdk>=1.27
 opentelemetry-exporter-otlp-proto-grpc>=1.27
 opentelemetry-instrumentation-fastapi>=0.48b0
 opentelemetry-instrumentation-httpx>=0.48b0
+asyncssh>=2.14
