@@ -71,6 +71,8 @@ def build_conversations_router(
     ) -> dict:
         await require_conversation_access(rt, conv_id, user)
         conv = await rt.panel_store.update_conversation(conv_id, title=body.title)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="unknown conversation")
         return {"conversation": conv.model_dump()}
 
     @router.delete("/conversations/{conv_id}", status_code=204)

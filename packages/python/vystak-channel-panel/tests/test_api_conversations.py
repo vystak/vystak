@@ -90,3 +90,31 @@ async def test_unknown_conversation_404(api):
     # Pins the 404 to require_conversation_access's own check, not FastAPI's
     # default "route not found" 404 (which a missing route would also satisfy).
     assert resp.json()["detail"] == "unknown conversation"
+
+
+async def test_rename_concurrently_deleted_conversation_404(api, panel_rt):
+    owner, pid = await _ready(api)
+    cid = (
+        await api.post(
+            f"/api/projects/{pid}/conversations",
+            json={"agent_name": "weather-agent"},
+            headers=as_user(owner),
+        )
+    ).json()["conversation"]["id"]
+
+    # Simulate the row vanishing between require_conversation_access's check
+    # and the update itself (e.g. a concurrent DELETE): update_conversation
+    # returns None, as it does for a row that no longer exists.
+    async def vanished(conversation_id, *, title=None, last_response_id=None):
+        return None
+
+    panel_rt.panel_store.update_conversation = vanished
+
+    resp = await api.patch(
+        f"/api/conversations/{cid}", json={"title": "New title"},
+        headers=as_user(owner),
+    )
+    assert resp.status_code == 404
+    # Same detail string as require_conversation_access's 404, so the two
+    # cases are indistinguishable to a client.
+    assert resp.json()["detail"] == "unknown conversation"
