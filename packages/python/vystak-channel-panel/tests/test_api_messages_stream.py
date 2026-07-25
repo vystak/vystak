@@ -77,6 +77,9 @@ async def test_stream_persists_and_replies(api, panel_rt):
     assert fake.capture["base_url"] == "http://vystak-weather-agent:8000"
     assert fake.capture["previous_response_id"] is None
     assert fake.capture["project_id"] == pid
+    assert fake.capture["user_id"] == (
+        await api.get("/api/bootstrap", headers=as_user(owner))
+    ).json()["user"]["id"]
 
     # persistence: user + assistant rows, last_response_id set
     msgs = (
@@ -161,3 +164,51 @@ async def test_empty_text_rejected(api):
         headers=as_user(owner),
     )
     assert resp.status_code == 422
+
+
+async def test_stream_requires_conversation_access(api, panel_rt):
+    owner, pid, cid = await _ready(api)
+    # Assert the invite lands: if it silently failed, the 403 below would come
+    # from current_user's "not invited" check instead of project access, and
+    # this test would stop pinning conversation authorization at all.
+    invited = await api.post(
+        "/api/users", json={"email": "s@example.com"}, headers=as_user(owner)
+    )
+    assert invited.status_code == 200
+
+    fake = FakeResponsesClient([PanelStreamEvent(type="done", response_id="resp_x")])
+    panel_rt.responses_client = fake
+
+    # stranger (invited to the panel, but not a member of this project)
+    # cannot post into the owner's conversation
+    deny = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "sneaky"},
+        headers=as_user("s@example.com"),
+    )
+    assert deny.status_code == 403
+
+    # denial short-circuits before the agent is ever called...
+    assert fake.capture == {}
+    # ...and before the user's message is persisted
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assert msgs == []
+
+
+async def test_stream_unknown_conversation_404(api):
+    owner, pid, cid = await _ready(api)
+    resp = await api.post(
+        "/api/conversations/nope/messages",
+        json={"text": "hi"},
+        headers=as_user(owner),
+    )
+    assert resp.status_code == 404
+    # Pins the 404 to require_conversation_access's own check, not FastAPI's
+    # default "route not found" 404 (which a missing route would also
+    # satisfy) — see test_unknown_conversation_404 in
+    # test_api_conversations.py for the precedent.
+    assert resp.json()["detail"] == "unknown conversation"
