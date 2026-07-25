@@ -156,6 +156,50 @@ async def test_truncated_stream_still_persists_streamed_text(api, panel_rt):
     ]
 
 
+async def test_empty_response_id_does_not_clobber_last_response_id(api, panel_rt):
+    """A malformed done event with no response id (response_id defaults to
+    "") must not overwrite a previously-stored last_response_id with "".
+
+    COALESCE only guards against SQL NULL, not empty string — if the empty
+    id were passed straight through, the next turn would send
+    previous_response_id="" and the agent would silently start a brand-new
+    thread, losing all prior context (see routes_messages.py `done` branch).
+    """
+    owner, pid, cid = await _ready(api)
+
+    # First turn: agent replies with a good response id.
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="done", response_id="resp_good"),
+    ])
+    await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "first"},
+        headers=as_user(owner),
+    )
+    conv = (
+        await api.get(
+            f"/api/projects/{pid}/conversations", headers=as_user(owner)
+        )
+    ).json()["conversations"][0]
+    assert conv["last_response_id"] == "resp_good"
+
+    # Second turn: agent's terminal event carries no response id.
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="done"),
+    ])
+    await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "second"},
+        headers=as_user(owner),
+    )
+    conv = (
+        await api.get(
+            f"/api/projects/{pid}/conversations", headers=as_user(owner)
+        )
+    ).json()["conversations"][0]
+    assert conv["last_response_id"] == "resp_good"
+
+
 async def test_empty_text_rejected(api):
     owner, pid, cid = await _ready(api)
     resp = await api.post(

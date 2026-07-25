@@ -72,11 +72,16 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                         done_seen = True
                         msg = await rt.panel_store.add_message(
                             conv_id, "assistant", "".join(parts),
-                            response_id=ev.response_id,
+                            response_id=ev.response_id or None,
                         )
-                        await rt.panel_store.update_conversation(
-                            conv_id, last_response_id=ev.response_id
-                        )
+                        # An empty id means the agent's terminal event carried
+                        # none; keep the previous one rather than clobbering it
+                        # (COALESCE only guards NULL, and "" would silently
+                        # start a new agent-side thread on the next turn).
+                        if ev.response_id:
+                            await rt.panel_store.update_conversation(
+                                conv_id, last_response_id=ev.response_id
+                            )
                         yield _sse({
                             "type": "done",
                             "message_id": msg.id,
