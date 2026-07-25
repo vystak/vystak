@@ -259,7 +259,7 @@ Loading paths:
 
 ## Examples
 
-`examples/` (30 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+`examples/` (35 dirs) maps onto the feature axes: `docker-*` / `azure-*`
 (provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
 `heartbeat-*`, `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
 `docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
