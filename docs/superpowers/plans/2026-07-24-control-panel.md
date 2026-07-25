@@ -2808,6 +2808,31 @@ async def test_agent_error_keeps_user_message(api, panel_rt):
     assert [(m["role"]) for m in msgs] == ["user"]
 
 
+async def test_truncated_stream_still_persists_streamed_text(api, panel_rt):
+    """Agent stream ends with no terminal event (only `data: [DONE]`).
+    The text the user already watched stream must not vanish on reload."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="par"),
+        PanelStreamEvent(type="token", text="tial"),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "hello?"},
+        headers=as_user(owner),
+    )
+    assert [e["type"] for e in _parse_sse(resp.text)] == ["delta", "delta", "done"]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assert [(m["role"], m["content"]) for m in msgs] == [
+        ("user", "hello?"),
+        ("assistant", "partial"),
+    ]
+
+
 async def test_empty_text_rejected(api):
     owner, pid, cid = await _ready(api)
     resp = await api.post(
@@ -2886,6 +2911,7 @@ def build_messages_router(rt: "PanelChannelRuntime", current_user) -> APIRouter:
 
         async def gen():
             parts: list[str] = []
+            done_seen = False
             try:
                 async for ev in rt.responses_client.stream_message(
                     base_url,
@@ -2898,6 +2924,7 @@ def build_messages_router(rt: "PanelChannelRuntime", current_user) -> APIRouter:
                         parts.append(ev.text)
                         yield _sse({"type": "delta", "text": ev.text})
                     elif ev.type == "done":
+                        done_seen = True
                         msg = await rt.panel_store.add_message(
                             conv_id, "assistant", "".join(parts),
                             response_id=ev.response_id,
@@ -2912,7 +2939,24 @@ def build_messages_router(rt: "PanelChannelRuntime", current_user) -> APIRouter:
                             "title": title,
                         })
                     elif ev.type == "error":
+                        done_seen = True
                         yield _sse({"type": "error", "message": ev.text})
+                if not done_seen and parts:
+                    # Truncated agent stream: `data: [DONE]` arrived with no
+                    # preceding response.completed/failed, so ResponsesClient
+                    # yields no terminal event. Persist what we streamed —
+                    # otherwise the user watches text appear and finds it gone
+                    # on reload. last_response_id is left untouched: no new
+                    # agent-side response id was confirmed.
+                    msg = await rt.panel_store.add_message(
+                        conv_id, "assistant", "".join(parts),
+                    )
+                    yield _sse({
+                        "type": "done",
+                        "message_id": msg.id,
+                        "response_id": conv.last_response_id or "",
+                        "title": title,
+                    })
             except Exception as exc:  # noqa: BLE001 — stream must not raise
                 logger.exception("panel stream failed for conv=%s", conv_id)
                 yield _sse({"type": "error", "message": str(exc)})
