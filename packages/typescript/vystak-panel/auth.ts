@@ -6,7 +6,7 @@ import { getBootstrap, setupAdmin } from '@/lib/panel';
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
   session: { strategy: 'jwt' },
-  pages: { signIn: '/signin' },
+  pages: { signIn: '/signin', error: '/signin' },
   callbacks: {
     async signIn({ user }) {
       const email = user.email?.toLowerCase();

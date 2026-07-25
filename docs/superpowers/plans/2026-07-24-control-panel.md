@@ -3691,7 +3691,10 @@ import { getBootstrap, setupAdmin } from '@/lib/panel';
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
   session: { strategy: 'jwt' },
-  pages: { signIn: '/signin' },
+  // `error` must also point here: an AccessDenied has kind "error", so
+  // without it Auth.js redirects to its own built-in error page and the
+  // not-invited message below is unreachable.
+  pages: { signIn: '/signin', error: '/signin' },
   callbacks: {
     async signIn({ user }) {
       const email = user.email?.toLowerCase();
@@ -3748,6 +3751,12 @@ export default async function SignInPage({
           <p style={{ color: 'crimson' }}>
             This Google account has not been invited. Ask an administrator to
             add your email.
+          </p>
+        )}
+        {error && error !== 'AccessDenied' && (
+          <p style={{ color: 'crimson' }}>
+            Sign-in failed. The control panel API may be unavailable — try
+            again, or contact an administrator.
           </p>
         )}
         <button type="submit">Sign in with Google</button>
