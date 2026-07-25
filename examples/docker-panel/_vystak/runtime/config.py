@@ -1,13 +1,25 @@
-"""Agent config loader — dispatches by extension to vystak.schema.loader."""
+"""Agent config loader — dispatches by extension to vystak.schema.loader.
+
+Prefers `agent.json` (CLI-bundled per-agent Pydantic dump) when present —
+that's what the platform provider drops alongside the user's vystak.yaml so
+multi-agent projects don't have to re-resolve the right agent inside the
+container.
+"""
 
 from pathlib import Path
 
 from vystak.schema.agent import Agent
 from vystak.schema.loader import load_agent as _load_yaml
+from vystak.schema.skill_resolver import resolve_folder_skills
 
 
 def load_agent(path: str | Path) -> Agent:
+    # Prefer the bundled per-agent JSON when present.
     p = Path(path)
+    bundled = p.parent / "agent.json"
+    if bundled.exists():
+        return Agent.model_validate_json(bundled.read_text())
+
     if p.suffix in {".yaml", ".yml"}:
         return _load_yaml(p)
     if p.suffix == ".py":
@@ -23,4 +35,5 @@ def _load_py(path: Path) -> Agent:
     agent = getattr(module, "agent", None)
     if agent is None:
         raise ValueError(f"{path} does not define a module-level `agent` binding")
+    resolve_folder_skills([agent], path.parent)
     return agent

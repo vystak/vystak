@@ -1,16 +1,29 @@
-"""Session checkpointer factory."""
+"""Session checkpointer factory.
+
+LangGraph 1.x checkpointers (AsyncSqliteSaver, AsyncPostgresSaver) are built
+via async context managers. We can't materialize them sync at app construction
+time. _LazyCheckpointer wraps a context-manager factory; the FastAPI lifespan
+opens the context once at startup via AsyncExitStack and keeps it open for
+the app's lifetime.
+"""
 
 from typing import Any
 
 
 class _LazyCheckpointer:
-    """Wraps an async-only saver behind a sync factory; resolved at app startup."""
+    """Async-context-manager factory for a checkpointer.
 
-    def __init__(self, factory):  # noqa: ANN001
-        self._factory = factory
+    The factory returns whatever `AsyncSqliteSaver.from_conn_string` /
+    `AsyncPostgresSaver.from_conn_string` returns — an async context manager
+    whose `__aenter__` produces the actual saver instance. The lifespan opens
+    the context with AsyncExitStack so the saver lives for the app's lifetime.
+    """
 
-    async def aresolve(self):
-        return await self._factory()
+    def __init__(self, cm_factory):  # noqa: ANN001
+        self._cm_factory = cm_factory
+
+    def context_manager(self):
+        return self._cm_factory()
 
 
 def build_checkpointer(agent: Any):
@@ -22,16 +35,64 @@ def build_checkpointer(agent: Any):
     engine = getattr(sessions, "engine", None)
     if engine == "sqlite":
         path = getattr(sessions, "path", None) or ":memory:"
-        async def _make():
+
+        def _make_cm():
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
             return AsyncSqliteSaver.from_conn_string(path)
-        return _LazyCheckpointer(_make)
+
+        return _LazyCheckpointer(_make_cm)
 
     if engine == "postgres":
-        async def _make():
+        def _make_cm():
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
             return AsyncPostgresSaver.from_conn_string(sessions.connection_string)
-        return _LazyCheckpointer(_make)
+
+        return _LazyCheckpointer(_make_cm)
 
     from langgraph.checkpoint.memory import MemorySaver
     return MemorySaver()
+
+
+class _LazyStore:
+    """Async-context-manager factory for a long-term memory store.
+
+    Same shape as _LazyCheckpointer; the lifespan opens the context via
+    AsyncExitStack and keeps the resolved store for the app's lifetime.
+    """
+
+    def __init__(self, cm_factory):  # noqa: ANN001
+        self._cm_factory = cm_factory
+
+    def context_manager(self):
+        return self._cm_factory()
+
+
+def build_memory_store(agent: Any):
+    """Build a LangGraph BaseStore for long-term memory.
+
+    Reads agent.memory.engine. Returns InMemoryStore (sync, no lifespan) or
+    a _LazyStore wrapping AsyncPostgresStore (resolved via lifespan).
+    """
+    import os
+
+    memory = getattr(agent, "memory", None)
+    if memory is None:
+        return None
+
+    engine = getattr(memory, "engine", None)
+
+    if engine == "postgres":
+        conn = (
+            os.environ.get("MEMORY_STORE_URL")
+            or getattr(memory, "connection_string", None)
+        )
+
+        def _make_cm():
+            from langgraph.store.postgres.aio import AsyncPostgresStore
+            return AsyncPostgresStore.from_conn_string(conn)
+
+        return _LazyStore(_make_cm)
+
+    # in-memory fallback for any other / unset engine
+    from langgraph.store.memory import InMemoryStore
+    return InMemoryStore()

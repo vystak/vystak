@@ -19,6 +19,8 @@ class MemoryManager:
         query: str = "",
         project_id: str = "default",
     ) -> list[str]:
+        if self.store is None:
+            return []
         scopes = [
             ("user", user_id),
             ("project", project_id),
@@ -26,7 +28,7 @@ class MemoryManager:
         ]
         out: list[str] = []
         for ns in scopes:
-            results = await self.store.asearch(ns, query)
+            results = await self.store.asearch(ns, query=query)
             for r in results:
                 content = r.value.get("content") if isinstance(r.value, dict) else str(r.value)
                 out.append(f"[{ns[0]}/{r.key}] {content}")
@@ -40,11 +42,15 @@ class MemoryManager:
         project_id: str = "default",
     ) -> bool:
         if output.startswith(SAVE_SENTINEL):
+            if self.store is None:
+                return True  # silently no-op when memory store isn't wired
             _, scope, content = output.split("|", 2)
             ns = self._namespace_for(scope, user_id=user_id, project_id=project_id)
             await self.store.aput(ns, str(uuid.uuid4()), {"content": content})
             return True
         if output.startswith(FORGET_SENTINEL):
+            if self.store is None:
+                return True
             memory_id = output[len(FORGET_SENTINEL):]
             for scope in ("user", "project", "global"):
                 ns = self._namespace_for(scope, user_id=user_id, project_id=project_id)
