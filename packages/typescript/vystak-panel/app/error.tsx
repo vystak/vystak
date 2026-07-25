@@ -1,5 +1,9 @@
 'use client';
 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { AlertCircleIcon } from 'lucide-react';
+
 export default function Error({
   error,
   reset,
@@ -8,16 +12,17 @@ export default function Error({
   reset: () => void;
 }) {
   return (
-    <main style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
-      <div style={{ maxWidth: 480, textAlign: 'center' }}>
-        <h1 style={{ fontSize: 20 }}>Something went wrong</h1>
-        <p>
-          The control panel could not complete that request. The panel API may
-          be unavailable.
-        </p>
-        <button type="button" onClick={() => reset()}>
-          Try again
-        </button>
+    <main className="flex min-h-svh items-center justify-center p-4">
+      <div className="flex w-full max-w-md flex-col items-center gap-4">
+        <Alert variant="destructive">
+          <AlertCircleIcon />
+          <AlertTitle>Something went wrong</AlertTitle>
+          <AlertDescription>
+            The control panel could not complete that request. The panel API
+            may be unavailable.
+          </AlertDescription>
+        </Alert>
+        <Button onClick={() => reset()}>Try again</Button>
       </div>
     </main>
   );
