@@ -8,7 +8,8 @@ export default async function UsersPage() {
   const email = session?.user?.email?.toLowerCase();
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
-  if (bootstrap.user?.role !== 'admin') redirect('/');
+  const me = bootstrap.user;
+  if (me?.role !== 'admin') redirect('/');
   const { users } = await listUsers(email);
 
   return (
@@ -30,17 +31,24 @@ export default async function UsersPage() {
               <td>{u.role}</td>
               <td>{u.status}</td>
               <td>
-                <form
-                  action={setUserStatusAction.bind(
-                    null,
-                    u.id,
-                    u.status === 'active' ? 'deactivated' : 'active',
-                  )}
-                >
-                  <button type="submit">
-                    {u.status === 'active' ? 'Deactivate' : 'Reactivate'}
-                  </button>
-                </form>
+                {/* No self-deactivation: the channel only refuses removing
+                    the LAST admin, so with a second admin present one stray
+                    click would end your own session. */}
+                {u.id === me.id ? (
+                  <span style={{ opacity: 0.6 }}>you</span>
+                ) : (
+                  <form
+                    action={setUserStatusAction.bind(
+                      null,
+                      u.id,
+                      u.status === 'active' ? 'deactivated' : 'active',
+                    )}
+                  >
+                    <button type="submit">
+                      {u.status === 'active' ? 'Deactivate' : 'Reactivate'}
+                    </button>
+                  </form>
+                )}
               </td>
             </tr>
           ))}
