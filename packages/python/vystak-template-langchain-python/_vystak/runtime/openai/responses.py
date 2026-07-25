@@ -1,5 +1,6 @@
 """Stateful /v1/responses handler."""
 
+import json
 import time
 import uuid
 from typing import Any
@@ -73,7 +74,8 @@ class ResponsesHandler:
             async for ev in self.graph.astream_events(
                 {"messages": messages}, config, version="v2"
             ):
-                if ev.get("event") == "on_chat_model_stream":
+                ev_type = ev.get("event")
+                if ev_type == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
                     if isinstance(chunk, dict):
                         raw_text = chunk["content"]
@@ -88,6 +90,52 @@ class ResponsesHandler:
                             "output_index": 0,
                             "content_index": 0,
                             "delta": text,
+                        })
+                elif ev_type == "on_tool_start":
+                    # Same events a2a_native/executor.py watches to surface
+                    # tool activity to Slack; here they become the OpenAI
+                    # Responses tool-call SSE shapes vystak-chat/client.py
+                    # already parses. run_id is the stable per-invocation key
+                    # (matches the executor's start/end correlation).
+                    call_id = str(ev.get("run_id") or "")
+                    if call_id:
+                        tool_name = ev.get("name") or ""
+                        arguments = _serialize_tool_payload(
+                            ev.get("data", {}).get("input", {})
+                        )
+                        yield _sse({
+                            "type": "response.output_item.added",
+                            "item": {
+                                "type": "function_call",
+                                "id": call_id,
+                                "call_id": call_id,
+                                "name": tool_name,
+                                "arguments": "",
+                            },
+                        })
+                        yield _sse({
+                            "type": "response.function_call_arguments.delta",
+                            "call_id": call_id,
+                            "delta": arguments,
+                        })
+                        yield _sse({
+                            "type": "response.function_call_arguments.done",
+                            "call_id": call_id,
+                            "arguments": arguments,
+                        })
+                elif ev_type == "on_tool_end":
+                    call_id = str(ev.get("run_id") or "")
+                    if call_id:
+                        output = _serialize_tool_payload(
+                            ev.get("data", {}).get("output", "")
+                        )
+                        yield _sse({
+                            "type": "response.output_item.added",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": output,
+                            },
                         })
         except Exception as e:  # noqa: BLE001
             yield _sse({
@@ -163,5 +211,29 @@ def _normalize_input(value: Any) -> list[dict]:
 
 
 def _sse(payload: dict) -> str:
-    import json
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def _serialize_tool_payload(value: Any) -> str:
+    """Serialize a tool call's `input`/`output` for the wire.
+
+    Neither is guaranteed to be a string: `input` is typically a plain dict
+    of kwargs, and `output` is whatever the tool returned — which can itself
+    be LangChain-style content (a list of typed blocks, e.g. extended
+    thinking/tool-result shapes) if the tool returns multi-part content.
+    Try flatten_content first for the str/list-of-content-block shapes the
+    rest of this runtime already contends with; fall back to json.dumps for
+    arbitrary objects (dicts, numbers, custom types). A dict must never reach
+    flatten_content directly — it falls through to `str(dict)`, which is a
+    Python repr, not valid JSON.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        flattened = flatten_content(value)
+        if flattened:
+            return flattened
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return str(value)
