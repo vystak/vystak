@@ -27,6 +27,14 @@ The UI is the `vystak-panel` Next.js app (not deployed by `vystak apply`):
 Open http://localhost:3000 — the first Google account to sign in becomes the
 admin; invite others from /admin/users.
 
+## Password sign-in
+
+To enable email+password authentication alongside Google OAuth, set
+`PANEL_PASSWORD_AUTH=1` in the panel app's environment (`.env.local`). The
+first admin still bootstraps via Google (or the channel API); after that, any
+admin can set passwords for other users from the admin Users page. Users can
+then sign in with email and password instead of Google.
+
 ## Tear down
 
     vystak destroy
