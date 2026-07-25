@@ -18,6 +18,16 @@ class FakeNatsClient:
             raise TurnStreamIdle(subject)
 
 
+class FakeNatsClientRaises:
+    """Simulates a transient infra failure (e.g. JetStream subscribe error)
+    unrelated to the turn's own lifecycle — must NOT be treated like
+    TurnStreamIdle or an `error` terminal event."""
+
+    async def stream_turn_events(self, subject):
+        raise RuntimeError("jetstream subscribe failed")
+        yield  # pragma: no cover — makes this an async generator
+
+
 class FakeRuntime:
     def __init__(self, store, nats_client):
         self.panel_store = store
@@ -124,6 +134,22 @@ async def test_persister_idle_timeout_persists_partial(panel_store, conversation
     ]
     assert len(assistant) == 1 and assistant[0].content == "part"
     assert (await panel_store.get_conversation(conversation.id)).active_turn_id is None
+
+
+@pytest.mark.asyncio
+async def test_persister_infra_failure_leaves_turn_active_for_retry(panel_store, conversation):
+    await panel_store.set_active_turn(conversation.id, "t5")
+    rt = FakeRuntime(panel_store, FakeNatsClientRaises())
+    rt.turn_tasks["t5"] = object()
+
+    await run_turn_persister(rt, conversation.id, "t5", "subj")
+
+    assert [
+        m for m in await panel_store.list_messages(conversation.id) if m.role == "assistant"
+    ] == []
+    conv = await panel_store.get_conversation(conversation.id)
+    assert conv.active_turn_id == "t5"
+    assert "t5" not in rt.turn_tasks
 
 
 def test_turn_subject_for():
