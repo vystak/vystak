@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import { Members } from '@/components/members';
-import { NewConversation } from '@/components/new-conversation';
 import { getBootstrap, listConversations, listMembers } from '@/lib/panel';
 
 export default async function ProjectPage({
@@ -22,7 +21,6 @@ export default async function ProjectPage({
   ]);
   return (
     <div>
-      <NewConversation projectId={projectId} agents={bootstrap.agents} />
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {conversations.map(c => (
           <li key={c.id} style={{ margin: '8px 0' }}>

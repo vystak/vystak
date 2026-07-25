@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
-import { Sidebar } from '@/components/sidebar';
-import { getBootstrap, listProjects } from '@/lib/panel';
+import { AppSidebar } from '@/components/app-sidebar';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { getBootstrap, listConversations, listProjects } from '@/lib/panel';
 
 export default async function ProjectLayout({
   children,
@@ -16,15 +17,20 @@ export default async function ProjectLayout({
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
   if (!bootstrap.user) redirect('/signin?error=AccessDenied');
-  const { projects } = await listProjects(email);
+  const [{ projects }, { conversations }] = await Promise.all([
+    listProjects(email),
+    listConversations(email, projectId),
+  ]);
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar
+    <SidebarProvider>
+      <AppSidebar
         projects={projects}
+        conversations={conversations}
         activeProjectId={projectId}
         user={bootstrap.user}
+        agents={bootstrap.agents}
       />
-      <main style={{ flex: 1, padding: 16 }}>{children}</main>
-    </div>
+      <SidebarInset>{children}</SidebarInset>
+    </SidebarProvider>
   );
 }
