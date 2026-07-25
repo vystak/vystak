@@ -2112,6 +2112,7 @@ Expected: FAIL — 404s (routes not mounted)
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -2146,9 +2147,18 @@ def build_users_router(rt: "PanelChannelRuntime", admin_user) -> APIRouter:
     ) -> dict:
         if body.role not in ("admin", "member"):
             raise HTTPException(status_code=422, detail="invalid role")
+        # Cheap fast path; the UNIQUE constraint is the authoritative guard.
+        # Check-then-create alone races: two concurrent invites of the same
+        # email both pass the check and the loser's IntegrityError surfaces
+        # as a 500 instead of a 409.
         if await rt.panel_store.get_user_by_email(body.email) is not None:
             raise HTTPException(status_code=409, detail="user already exists")
-        user = await rt.panel_store.create_user(body.email, role=body.role)
+        try:
+            user = await rt.panel_store.create_user(body.email, role=body.role)
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409, detail="user already exists"
+            ) from None
         return {"user": user.model_dump()}
 
     @router.patch("/{user_id}")
