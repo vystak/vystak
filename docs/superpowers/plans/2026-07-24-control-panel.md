@@ -2332,9 +2332,12 @@ async def test_delete_project_rules(api):
     assert (
         await api.delete(f"/api/projects/{default_pid}", headers=as_user(owner))
     ).status_code == 400
+    # Deterministically 403, not 404: require_project_access finds the project
+    # first, then rejects on visibility. Accepting 404 here would let a broken
+    # ordering (404-on-invisible) pass silently.
     assert (
         await api.delete(f"/api/projects/{pid}", headers=as_user(guest))
-    ).status_code in (403, 404)
+    ).status_code == 403
     assert (
         await api.delete(f"/api/projects/{pid}", headers=as_user(owner))
     ).status_code == 204
