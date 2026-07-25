@@ -35,6 +35,7 @@ const sidebars = {
         'channels/chat',
         'channels/slack',
         'channels/discord',
+        'channels/panel',
       ],
     },
     {

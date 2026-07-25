@@ -15,6 +15,7 @@ A **channel** is how the outside world reaches your agents. Channels are sibling
 | [`slack`](./slack) | Stable | Slack Socket Mode bot with self-serve runtime routing |
 | `api` | Stable | OpenAI-compatible HTTP endpoint (`/v1/chat/completions`, `/v1/responses`) |
 | `chat` | Stable | Browser-friendly chat UI |
+| [`panel`](./panel) | Stable | Control-panel API for the `vystak-panel` web UI — users, projects, conversations, tool-call visualization |
 
 ## Common shape
 
@@ -38,6 +39,7 @@ channels:
 Type-specific fields are documented per channel:
 
 - [Slack channel →](./slack)
+- [Control panel channel →](./panel)
 
 ## How channels and agents connect
 
