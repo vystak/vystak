@@ -393,21 +393,33 @@ Append to `packages/python/vystak-channel-panel/tests/test_plugin.py`:
 
 ```python
 class TestCliRegistration:
-    def test_cli_source_imports_panel_plugin(self):
-        """cli.py must import vystak_channel_panel for its registration
-        side effect — without it, `vystak apply` can't resolve type: panel
-        unless something else happened to import the package first."""
-        import inspect
+    def test_cli_import_registers_panel_plugin(self):
+        """Importing the CLI must register the panel plugin. Runs in a fresh
+        interpreter: in-process, this test module's own top-level import of
+        vystak_channel_panel would have already registered it, hiding a
+        missing side-effect import in cli.py."""
+        import subprocess
+        import sys
 
-        import vystak_cli.cli as cli
-
-        assert "import vystak_channel_panel" in inspect.getsource(cli)
+        code = (
+            "import vystak_cli.cli;"
+            "from vystak.channels import get_plugin;"
+            "from vystak.schema.common import ChannelType;"
+            "print(type(get_plugin(ChannelType.PANEL)).__name__)"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert out.stdout.strip() == "PanelChannelPlugin"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest packages/python/vystak-channel-panel/tests/test_plugin.py::TestCliRegistration -v`
-Expected: FAIL — the import line is not in cli.py yet.
+Expected: FAIL — `CalledProcessError`; the subprocess raises `KeyError: No plugin registered for channel type 'panel'` because cli.py does not import the package yet.
 
 - [ ] **Step 3: Wire the CLI import**
 
@@ -2179,7 +2191,6 @@ async def test_create_and_list_visible_only(api):
         "/api/projects", json={"name": "Research"}, headers=as_user(owner)
     )
     assert created.status_code == 200
-    pid = created.json()["project"]["id"]
 
     owner_list = await api.get("/api/projects", headers=as_user(owner))
     names = {p["name"] for p in owner_list.json()["projects"]}
@@ -2192,7 +2203,6 @@ async def test_create_and_list_visible_only(api):
     await api.get("/api/bootstrap", headers=as_user(guest))
     guest_list = await api.get("/api/projects", headers=as_user(guest))
     assert {p["name"] for p in guest_list.json()["projects"]} == {"Personal"}
-    assert pid  # silence unused
 
 
 async def test_sharing_flow(api):
