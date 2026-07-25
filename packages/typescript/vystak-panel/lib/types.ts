@@ -74,13 +74,3 @@ export interface Bootstrap {
   default_project_id: string | null;
 }
 
-// Persisted message parts (panel channel schema v2, tool-call visualization plan).
-export type StoredPart =
-  | { type: 'text'; text: string }
-  | {
-      type: 'tool';
-      tool_call_id: string;
-      tool_name: string;
-      input: string;
-      output: string;
-    };
