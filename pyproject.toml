@@ -59,6 +59,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom: `Depends(...)` in a default arg is
+# evaluated once and cached per-request by Starlette, not a mutable-default
+# bug. https://fastapi.tiangolo.com/tutorial/dependencies/
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.ruff.lint.per-file-ignores]
 # Code-generation modules emit literal Python source as strings; long lines are inherent.
 "packages/python/vystak-channel-chat/src/vystak_channel_chat/server_template.py" = ["E501"]
