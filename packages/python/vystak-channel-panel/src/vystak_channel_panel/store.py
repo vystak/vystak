@@ -122,9 +122,10 @@ class SqlitePanelStore:
         Guarded two ways, since a live volume with real data exists:
         the `schema_version` row in `settings` (the durable, cross-restart
         record) AND actual `PRAGMA table_info(messages)` / `PRAGMA
-        table_info(users)` checks before the ALTER TABLE statements — so
-        this can't fail with "duplicate column" if the version row and the
-        on-disk shape ever disagree.
+        table_info(users)` / `PRAGMA table_info(conversations)` checks
+        before the ALTER TABLE statements — so this can't fail with
+        "duplicate column" if the version row and the on-disk shape ever
+        disagree.
         """
         raw = await self.get_setting("schema_version")
         version = int(raw) if raw is not None else 1
