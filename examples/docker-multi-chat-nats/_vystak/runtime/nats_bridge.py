@@ -139,6 +139,9 @@ class NatsHttpBridge:
             if method == "responses/get":
                 await self._handle_responses_get(envelope, reply_subject)
                 return
+            if method == "responses/createDetached":
+                await self._handle_responses_create_detached(envelope, reply_subject)
+                return
 
             # Extract the upstream W3C traceparent (if any) so the local
             # /a2a call continues the same trace. The publisher
@@ -322,6 +325,84 @@ class NatsHttpBridge:
         if reply_subject:
             await self._nc.publish(reply_subject, json.dumps(reply).encode())
 
+    async def _handle_responses_create_detached(
+        self, envelope: dict[str, Any], reply_subject: str
+    ) -> None:
+        """Ack immediately, then run the turn to completion publishing every
+        Responses SSE event durably to JetStream — the turn's lifetime is
+        decoupled from the requester (and from any browser)."""
+        params = envelope.get("params") or {}
+        request = params.get("request")
+        turn_id = params.get("turn_id")
+        stream_subject = params.get("stream_subject")
+        if not request or not turn_id or not stream_subject:
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message="responses/createDetached requires request, turn_id, stream_subject",
+                request_id=envelope.get("id"),
+            )
+            return
+        ack = {
+            "jsonrpc": "2.0",
+            "id": envelope.get("id"),
+            "result": {"turn_id": turn_id, "stream_subject": stream_subject},
+        }
+        if reply_subject:
+            await self._nc.publish(reply_subject, json.dumps(ack).encode())
+        task = asyncio.create_task(self._run_detached(dict(request), stream_subject))
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+
+    async def _run_detached(self, request: dict[str, Any], stream_subject: str) -> None:
+        js = self._nc.jetstream()
+        seq = 0
+
+        async def publish(event: dict) -> None:
+            nonlocal seq
+            await js.publish(stream_subject, json.dumps({"seq": seq, "event": event}).encode())
+            seq += 1
+
+        try:
+            await _ensure_turn_stream(js, _stream_base_of_turn_subject(stream_subject))
+        except Exception:
+            logger.exception("nats_bridge.detached_ensure_stream_failed")
+            return
+        request["stream"] = True
+        assert self._http is not None
+        try:
+            async with self._http.stream(
+                "POST",
+                f"{self._local_base}/v1/responses",
+                json=request,
+                # Long-lived LLM stream: the client-level 120s total timeout
+                # would kill slow turns; only bound connect + inter-chunk read.
+                timeout=httpx.Timeout(None, connect=10.0, read=300.0),
+            ) as resp:
+                if resp.status_code != 200:
+                    await publish(_failed_event(f"local /v1/responses returned {resp.status_code}"))
+                    return
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        return
+                    try:
+                        event = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    await publish(event)
+                # Truncated stream (no [DONE], no terminal event): make sure
+                # consumers still terminate.
+                await publish(_failed_event("agent stream ended without a terminal event"))
+        except Exception as e:  # noqa: BLE001 — the failure must reach consumers
+            logger.exception("nats_bridge.detached_failed")
+            try:
+                await publish(_failed_event(str(e)))
+            except Exception:  # noqa: BLE001 — nothing left to do
+                logger.exception("nats_bridge.detached_failed_publish")
+
     async def _publish_error_async(
         self,
         reply_subject: str,
@@ -434,3 +515,37 @@ def _derive_subject(agent: Any) -> str | None:
 def _slug(s: str) -> str:
     """Lowercase and dot-safe — keeps subject parsing simple downstream."""
     return s.replace(" ", "-").lower()
+
+
+# KEEP IN SYNC with vystak_transport_nats/streams.py — the template cannot
+# import that package (agent images install vystak from PyPI only). Same
+# convention: turn subject "{base}.streams.{conv}.{turn}", stream name
+# "{base with . -> -}-streams", subject filter "{base}.streams.>".
+def _stream_base_of_turn_subject(stream_subject: str) -> str:
+    base, sep, _ = stream_subject.partition(".streams.")
+    if not sep:
+        raise ValueError(f"not a turn subject: {stream_subject!r}")
+    return base
+
+
+async def _ensure_turn_stream(js: Any, base: str) -> None:
+    from nats.js.api import RetentionPolicy, StorageType, StreamConfig
+
+    cfg = StreamConfig(
+        name=base.replace(".", "-") + "-streams",
+        subjects=[f"{base}.streams.>"],
+        retention=RetentionPolicy.LIMITS,
+        max_age=3600.0,
+        storage=StorageType.FILE,
+    )
+    try:
+        await js.add_stream(cfg)
+    except Exception:  # noqa: BLE001 — exists; converge
+        await js.update_stream(cfg)
+
+
+def _failed_event(message: str) -> dict:
+    return {
+        "type": "response.failed",
+        "response": {"status": "failed", "error": {"message": message}},
+    }

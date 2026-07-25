@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -463,3 +464,137 @@ async def test_responses_get_proxies_and_maps_404_to_null_result():
     reply = json.loads(payload)
     assert reply["id"] == "43"
     assert reply["result"] is None
+
+
+# ---------------------------------------------------------------------------
+# responses/createDetached — detached JetStream turn publisher
+# ---------------------------------------------------------------------------
+
+
+class _RecordingJS:
+    """Fake JetStream context: records add_stream calls and decoded publishes."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, dict]] = []
+        self.streams_added: list = []
+
+    async def add_stream(self, cfg):  # noqa: ANN001
+        self.streams_added.append(cfg)
+
+    async def update_stream(self, cfg):  # noqa: ANN001
+        pass
+
+    async def publish(self, subject, payload):  # noqa: ANN001
+        self.published.append((subject, json.loads(payload)))
+
+
+def _sse_bytes(*events: dict, done: bool = True) -> bytes:
+    lines = [f"data: {json.dumps(e)}\n\n" for e in events]
+    if done:
+        lines.append("data: [DONE]\n\n")
+    return "".join(lines).encode()
+
+
+@pytest.mark.asyncio
+async def test_create_detached_acks_then_publishes_stream_to_jetstream():
+    """responses/createDetached acks immediately with {turn_id, stream_subject},
+    then a detached task streams every SSE event to JetStream as {seq, event}."""
+    sse = _sse_bytes(
+        {"type": "response.created", "response": {"id": "r1"}},
+        {"type": "response.output_text.delta", "delta": "hel"},
+        {"type": "response.output_text.delta", "delta": "lo"},
+        {"type": "response.completed", "response": {"id": "r1"}},
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://localhost:8000/v1/responses"
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"})
+
+    bridge, fake_nc = _bridge_with_mock_http(handler)
+    js = _RecordingJS()
+    fake_nc.jetstream = lambda: js
+
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "7",
+            "method": "responses/createDetached",
+            "params": {
+                "request": {"input": "hi"},
+                "turn_id": "t1",
+                "stream_subject": "vystak.multi.streams.c1.t1",
+            },
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r7"))
+
+    # The ack must be published immediately, before the stream is drained.
+    assert len(fake_nc.published) == 1
+    reply_subject, payload = fake_nc.published[0]
+    assert reply_subject == "_INBOX.r7"
+    ack = json.loads(payload)
+    assert ack["result"] == {"turn_id": "t1", "stream_subject": "vystak.multi.streams.c1.t1"}
+
+    # Drain the detached task.
+    await asyncio.gather(*bridge._inflight)
+
+    assert js.streams_added and js.streams_added[0].name == "vystak-multi-streams"
+    subjects = {s for s, _ in js.published}
+    assert subjects == {"vystak.multi.streams.c1.t1"}
+    payloads = [p for _, p in js.published]
+    assert [p["seq"] for p in payloads] == [0, 1, 2, 3]
+    assert payloads[-1]["event"]["type"] == "response.completed"
+
+
+@pytest.mark.asyncio
+async def test_create_detached_publishes_failed_event_on_http_error():
+    """A non-200 local /v1/responses response publishes a single synthesized
+    response.failed terminal event so consumers stop waiting."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    bridge, fake_nc = _bridge_with_mock_http(handler)
+    js = _RecordingJS()
+    fake_nc.jetstream = lambda: js
+
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "8",
+            "method": "responses/createDetached",
+            "params": {
+                "request": {"input": "hi"},
+                "turn_id": "t2",
+                "stream_subject": "vystak.multi.streams.c1.t2",
+            },
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r8"))
+    await asyncio.gather(*bridge._inflight)
+
+    payloads = [p for _, p in js.published]
+    assert len(payloads) == 1
+    assert payloads[0]["event"]["type"] == "response.failed"
+
+
+@pytest.mark.asyncio
+async def test_create_detached_missing_params_is_invalid_params_error():
+    """Missing request/turn_id/stream_subject → JSON-RPC -32602, no task spawned."""
+    bridge, fake_nc = _bridge_with_mock_http(lambda r: httpx.Response(200))
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "9",
+            "method": "responses/createDetached",
+            "params": {"request": {"input": "hi"}},
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r9"))
+
+    assert len(fake_nc.published) == 1
+    _, payload = fake_nc.published[0]
+    reply = json.loads(payload)
+    assert reply["error"]["code"] == -32602
+    assert not bridge._inflight
