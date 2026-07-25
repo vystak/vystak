@@ -195,7 +195,7 @@ Channels (each a `ChannelPlugin`, deployed as its own container):
 - **`vystak-channel-chat`** — OpenAI-compatible unified endpoint (`/v1/chat/completions`), routes by `model="vystak/<agent-name>"`. This replaced the old `vystak-gateway` router.
 - **`vystak-channel-slack`** — Slack Socket Mode runner (slack-bolt).
 - **`vystak-channel-discord`** — Discord Gateway runner (discord.py).
-- **`vystak-channel-panel`** — control-panel REST + SSE API (users, projects, conversations); consumed by the `vystak-panel` Next.js app.
+- **`vystak-channel-panel`** — control-panel REST + SSE API (users, projects, conversations, message persistence with tool-call `parts`, admin-provisioned password auth via bcrypt + `POST /api/auth/verify`); consumed by the `vystak-panel` Next.js app. SQLite store with versioned in-place migrations (`SCHEMA_VERSION` in `store.py`).
 
 Transports: **`vystak-transport-http`** (no broker), **`vystak-transport-nats`** (JetStream; provisions broker + injects listener code into agent `server.py`).
 
@@ -231,6 +231,15 @@ The channel `server_template.py` files emit build-time `REQUIREMENTS`/
 provider-docker `templates.py` emits deterministic Vault HCL + entrypoint
 shims. Do **not** remove the ignores or mechanically break lines inside the
 emitted strings.
+
+**Channel containers install the emitted `REQUIREMENTS` string, not
+`pyproject.toml`.** A dependency added only to a channel package's
+pyproject deploys as a crash-looping container (`ModuleNotFoundError` at
+import — bcrypt did exactly this; no CI gate catches it, only a live
+deploy). When adding a runtime dependency to a channel package, add it to
+that package's `server_template.py` `REQUIREMENTS` in the same commit.
+`vystak-channel-panel/tests/test_server_template.py` pins the panel
+channel's imports; extend it when adding deps there.
 
 ## Side-effect / test-mock import quirks
 
@@ -304,4 +313,4 @@ This is a **public** repo. Every commit is indexable by credential-harvesting bo
 - Renamed from **AgentStack → Vystak** (commit history still shows `AgentStack` in older messages).
 - Legacy `.agentstack/` output path is retained in `.gitignore` alongside new `.vystak/`.
 - Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. Deliberately unpublished: `vystak-template-langchain-python` (bundled into the `vystak-cli` wheel by its build hook).
-- TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented. `vystak-panel` is the exception: a real Next.js app (control-panel UI), not part of the TS port.
+- TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented. `vystak-panel` is the exception: a real Next.js app (control-panel UI) on Tailwind v4 + vendored shadcn/ui + AI Elements (see its README), not part of the TS port. Its optional email/password sign-in is enabled with `PANEL_PASSWORD_AUTH=1`.
