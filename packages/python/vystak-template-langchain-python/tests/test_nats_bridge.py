@@ -579,6 +579,51 @@ async def test_create_detached_publishes_failed_event_on_http_error():
     assert payloads[0]["event"]["type"] == "response.failed"
 
 
+class _FailingEnsureJS(_RecordingJS):
+    """add_stream AND update_stream both fail — _ensure_turn_stream can't
+    converge, but the stream may still exist and be publishable."""
+
+    async def add_stream(self, cfg):  # noqa: ANN001
+        raise RuntimeError("add_stream conflict")
+
+    async def update_stream(self, cfg):  # noqa: ANN001
+        raise RuntimeError("update_stream also failed")
+
+
+@pytest.mark.asyncio
+async def test_create_detached_publishes_failed_event_when_ensure_stream_fails():
+    """_ensure_turn_stream failing (add_stream AND update_stream both raise)
+    still publishes exactly one synthesized response.failed terminal event,
+    so the JetStream consumer doesn't hang until its idle timeout."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("local /v1/responses should not be called")
+
+    bridge, fake_nc = _bridge_with_mock_http(handler)
+    js = _FailingEnsureJS()
+    fake_nc.jetstream = lambda: js
+
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "10",
+            "method": "responses/createDetached",
+            "params": {
+                "request": {"input": "hi"},
+                "turn_id": "t3",
+                "stream_subject": "vystak.multi.streams.c1.t3",
+            },
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r10"))
+    await asyncio.gather(*bridge._inflight)
+
+    assert len(js.published) == 1
+    subject, payload = js.published[0]
+    assert subject == "vystak.multi.streams.c1.t3"
+    assert payload["event"]["type"] == "response.failed"
+
+
 @pytest.mark.asyncio
 async def test_create_detached_missing_params_is_invalid_params_error():
     """Missing request/turn_id/stream_subject → JSON-RPC -32602, no task spawned."""

@@ -355,7 +355,13 @@ class NatsHttpBridge:
         task.add_done_callback(self._inflight.discard)
 
     async def _run_detached(self, request: dict[str, Any], stream_subject: str) -> None:
-        js = self._nc.jetstream()
+        try:
+            js = self._nc.jetstream()
+        except Exception:
+            # No JetStream context means no one can publish OR consume —
+            # there's no subject to carry a failure event to.
+            logger.exception("nats_bridge.detached_jetstream_failed")
+            return
         seq = 0
 
         async def publish(event: dict) -> None:
@@ -365,8 +371,16 @@ class NatsHttpBridge:
 
         try:
             await _ensure_turn_stream(js, _stream_base_of_turn_subject(stream_subject))
-        except Exception:
+        except Exception as e:
             logger.exception("nats_bridge.detached_ensure_stream_failed")
+            # The stream may still exist and be publishable (e.g. add_stream
+            # hit a config conflict, then update_stream also failed) — make
+            # a best-effort attempt so the consumer doesn't hang until its
+            # idle timeout.
+            try:
+                await publish(_failed_event(str(e)))
+            except Exception:  # noqa: BLE001 — nothing left to do
+                logger.exception("nats_bridge.detached_ensure_stream_publish_failed")
             return
         request["stream"] = True
         assert self._http is not None
