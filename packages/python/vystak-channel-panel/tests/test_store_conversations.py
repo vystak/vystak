@@ -105,6 +105,36 @@ async def test_list_messages_survives_malformed_parts_json(store, project, caplo
     assert any("parts" in rec.message for rec in caplog.records)
 
 
+async def test_active_turn_lifecycle(store, project):
+    user, proj = project
+    conv = await store.create_conversation(proj.id, user.id, "agent-a")
+    assert conv.active_turn_id is None
+
+    await store.set_active_turn(conv.id, "turn-1")
+    conv2 = await store.get_conversation(conv.id)
+    assert conv2.active_turn_id == "turn-1"
+    assert [c.id for c in await store.list_active_turns()] == [conv.id]
+
+    # mismatched turn id: no-op
+    assert await store.clear_active_turn(conv.id, "other-turn") is False
+    assert (await store.get_conversation(conv.id)).active_turn_id == "turn-1"
+
+    assert await store.clear_active_turn(conv.id, "turn-1") is True
+    assert (await store.get_conversation(conv.id)).active_turn_id is None
+    assert await store.list_active_turns() == []
+    # idempotent second clear
+    assert await store.clear_active_turn(conv.id, "turn-1") is False
+
+
+async def test_add_message_persists_turn_id(store, project):
+    user, proj = project
+    conv = await store.create_conversation(proj.id, user.id, "agent-a")
+    msg = await store.add_message(conv.id, "assistant", "hello", turn_id="turn-9")
+    fetched = (await store.list_messages(conv.id))[-1]
+    assert fetched.turn_id == "turn-9"
+    assert msg.turn_id == "turn-9"
+
+
 async def test_add_message_does_not_leak_into_later_commit(store, project, monkeypatch):
     user, proj = project
     c = await store.create_conversation(proj.id, user.id, "weather-agent")

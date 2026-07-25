@@ -28,7 +28,7 @@ _DUMMY_HASH: bytes = bcrypt.hashpw(b"vystak-timing-equalizer", bcrypt.gensalt())
 # Bump when _SCHEMA changes in a way existing databases need migrating for.
 # _migrate() compares this against the `schema_version` row in `settings`
 # (absent == 1) and applies the matching upgrade steps.
-SCHEMA_VERSION: int = 3
+SCHEMA_VERSION: int = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL DEFAULT '',
     last_response_id TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    active_turn_id TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     response_id TEXT,
     parts TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    turn_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation
     ON messages (conversation_id, created_at);
@@ -143,11 +145,19 @@ class SqlitePanelStore:
             columns = {row["name"] async for row in cur}
         async with self.db.execute("PRAGMA table_info(users)") as cur:
             user_columns = {row["name"] async for row in cur}
+        async with self.db.execute("PRAGMA table_info(conversations)") as cur:
+            conv_columns = {row["name"] async for row in cur}
         async with self._write() as db:
             if "parts" not in columns:
                 await db.execute("ALTER TABLE messages ADD COLUMN parts TEXT")
             if "password_hash" not in user_columns:
                 await db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            if "active_turn_id" not in conv_columns:
+                await db.execute(
+                    "ALTER TABLE conversations ADD COLUMN active_turn_id TEXT"
+                )
+            if "turn_id" not in columns:
+                await db.execute("ALTER TABLE messages ADD COLUMN turn_id TEXT")
             # Inlined rather than calling set_setting(): set_setting()
             # acquires _write_lock itself, and this method already holds it
             # (we're inside the `async with self._write()` block above) —
@@ -598,6 +608,35 @@ class SqlitePanelStore:
             )
         return await self.get_conversation(conversation_id)
 
+    async def set_active_turn(self, conversation_id: str, turn_id: str) -> None:
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE conversations SET active_turn_id = ?, updated_at = ? "
+                "WHERE id = ?",
+                (turn_id, _now(), conversation_id),
+            )
+
+    async def clear_active_turn(self, conversation_id: str, turn_id: str) -> bool:
+        """Clear only while the active turn is still *turn_id*.
+
+        The compare-and-clear makes concurrent persisters safe: whichever
+        finishes second matches nothing and returns False.
+        """
+        async with self._write() as db:
+            cur = await db.execute(
+                "UPDATE conversations SET active_turn_id = NULL, updated_at = ? "
+                "WHERE id = ? AND active_turn_id = ?",
+                (_now(), conversation_id, turn_id),
+            )
+            return cur.rowcount > 0
+
+    async def list_active_turns(self) -> list[Conversation]:
+        async with self.db.execute(
+            "SELECT * FROM conversations WHERE active_turn_id IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [Conversation(**dict(r)) for r in rows]
+
     async def delete_conversation(self, conversation_id: str) -> None:
         # Multi-statement write — use the store's _write() helper so a
         # mid-sequence failure rolls back instead of leaving pending
@@ -620,6 +659,7 @@ class SqlitePanelStore:
         *,
         response_id: str | None = None,
         parts: list[dict] | None = None,
+        turn_id: str | None = None,
     ) -> PanelMessage:
         # `content` stays the source of truth for message text; `parts` is
         # strictly additive (e.g. tool-call detail for replay) and never
@@ -632,17 +672,19 @@ class SqlitePanelStore:
             response_id=response_id,
             created_at=_now(),
             parts=parts,
+            turn_id=turn_id,
         )
         # Insert + bump in one transaction via _write() (Task 4): a message
         # must never persist without its conversation's updated_at bump.
         async with self._write() as db:
             await db.execute(
                 "INSERT INTO messages "
-                "(id, conversation_id, role, content, response_id, parts, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(id, conversation_id, role, content, response_id, parts, "
+                " created_at, turn_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (msg.id, msg.conversation_id, msg.role, msg.content,
                  msg.response_id, json.dumps(parts) if parts is not None else None,
-                 msg.created_at),
+                 msg.created_at, msg.turn_id),
             )
             await db.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",

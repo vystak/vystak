@@ -33,6 +33,7 @@ class Conversation(BaseModel):
     last_response_id: str | None = None
     created_at: str
     updated_at: str
+    active_turn_id: str | None = None
 
 
 class PanelMessage(BaseModel):
@@ -43,3 +44,4 @@ class PanelMessage(BaseModel):
     response_id: str | None = None
     created_at: str
     parts: list[dict] | None = None
+    turn_id: str | None = None
