@@ -24,6 +24,10 @@ class UserPatchIn(BaseModel):
     status: str | None = None
 
 
+class PasswordSetIn(BaseModel):
+    password: str
+
+
 def build_users_router(rt: PanelChannelRuntime, admin_user) -> APIRouter:
     router = APIRouter(prefix="/api/users")
 
@@ -65,5 +69,16 @@ def build_users_router(rt: PanelChannelRuntime, admin_user) -> APIRouter:
                 status_code=409, detail="cannot remove the last administrator"
             )
         return {"user": user.model_dump()}
+
+    @router.put("/{user_id}/password", status_code=204)
+    async def set_password(
+        user_id: str, body: PasswordSetIn, _: PanelUser = Depends(admin_user)
+    ) -> None:
+        if len(body.password) < 8:
+            raise HTTPException(
+                status_code=422, detail="password must be at least 8 characters"
+            )
+        if not await rt.panel_store.set_user_password(user_id, body.password):
+            raise HTTPException(status_code=404, detail="unknown user")
 
     return router

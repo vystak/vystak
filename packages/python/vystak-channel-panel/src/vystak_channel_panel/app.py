@@ -23,6 +23,11 @@ class SetupIn(BaseModel):
     image: str = ""
 
 
+class VerifyIn(BaseModel):
+    email: str
+    password: str
+
+
 def build_app(rt: PanelChannelRuntime) -> FastAPI:
     app = FastAPI(title="vystak-channel-panel")
     instrument_app(
@@ -113,6 +118,13 @@ def build_app(rt: PanelChannelRuntime) -> FastAPI:
                 status_code=409, detail="setup already completed"
             ) from None
         return {"user": user.model_dump()}
+
+    @app.post("/api/auth/verify")
+    async def verify_password(
+        body: VerifyIn, _: None = Depends(service_auth)
+    ) -> dict:
+        user = await rt.panel_store.verify_user_password(body.email, body.password)
+        return {"ok": user is not None, "user": user.model_dump() if user else None}
 
     from vystak_channel_panel.routes_registry import mount_routes
 
