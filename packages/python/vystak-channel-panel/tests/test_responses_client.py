@@ -98,6 +98,147 @@ async def test_previous_response_id_forwarded():
     assert captured["project_id"] == "p1"
 
 
+async def test_tool_call_then_result_yields_typed_events():
+    body = _sse_body(
+        {"type": "response.output_text.delta", "delta": "Let me check. "},
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "call_1",
+                "call_id": "call_1",
+                "name": "get_weather",
+                "arguments": "",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "call_id": "call_1",
+            "delta": '{"city": "Kyiv"}',
+        },
+        {
+            "type": "response.function_call_arguments.done",
+            "call_id": "call_1",
+            "arguments": '{"city": "Kyiv"}',
+        },
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": '{"tempC": 21}',
+            },
+        },
+        {"type": "response.completed", "response": {"id": "resp_1"}},
+        "[DONE]",
+    )
+    client = ResponsesClient(http_client=_mock_client(body))
+    events = await _collect(client)
+    assert [e.type for e in events] == [
+        "token", "tool_call", "tool_result", "done",
+    ]
+    tool_call = events[1]
+    assert tool_call.tool_call_id == "call_1"
+    assert tool_call.tool_name == "get_weather"
+    assert tool_call.arguments == '{"city": "Kyiv"}'
+    tool_result = events[2]
+    assert tool_result.tool_call_id == "call_1"
+    assert tool_result.output == '{"tempC": 21}'
+    assert tool_result.is_error is False
+
+
+async def test_tool_result_with_error_flag_sets_is_error():
+    body = _sse_body(
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "boom",
+                "error": True,
+            },
+        },
+        "[DONE]",
+    )
+    client = ResponsesClient(http_client=_mock_client(body))
+    events = await _collect(client)
+    assert events == [
+        PanelStreamEvent(
+            type="tool_result", tool_call_id="call_1", output="boom", is_error=True,
+        )
+    ]
+
+
+async def test_function_call_arguments_delta_accumulates():
+    """Multiple delta chunks must be concatenated onto the pending call so
+    the tool_call event's arguments are complete by the time it is yielded
+    — even if the terminating `.done` event itself carries no (or an empty)
+    arguments field, which a real incremental-argument emitter could do."""
+    body = _sse_body(
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "call_1",
+                "call_id": "call_1",
+                "name": "get_weather",
+                "arguments": "",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "call_id": "call_1",
+            "delta": '{"city": ',
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "call_id": "call_1",
+            "delta": '"Kyiv"}',
+        },
+        {
+            "type": "response.function_call_arguments.done",
+            "call_id": "call_1",
+            "arguments": "",
+        },
+        "[DONE]",
+    )
+    client = ResponsesClient(http_client=_mock_client(body))
+    events = await _collect(client)
+    assert events == [
+        PanelStreamEvent(
+            type="tool_call",
+            tool_call_id="call_1",
+            tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        )
+    ]
+
+
+async def test_tool_events_ignored_when_call_id_missing_from_pending():
+    """A function_call_arguments.done with no matching output_item.added
+    (malformed/unexpected stream) must not crash the parser — it degrades
+    to an empty tool_name and whatever arguments the event itself carries,
+    same as today's silent-ignore posture for unknown event shapes."""
+    body = _sse_body(
+        {
+            "type": "response.function_call_arguments.done",
+            "call_id": "call_orphan",
+            "arguments": '{"x": 1}',
+        },
+        "[DONE]",
+    )
+    client = ResponsesClient(http_client=_mock_client(body))
+    events = await _collect(client)
+    assert events == [
+        PanelStreamEvent(
+            type="tool_call",
+            tool_call_id="call_orphan",
+            tool_name="",
+            arguments='{"x": 1}',
+        )
+    ]
+
+
 def test_agent_base_url_strips_a2a():
     assert agent_base_url({"address": "http://x:8000/a2a"}) == "http://x:8000"
     assert agent_base_url({"address": "http://x:8000"}) == "http://x:8000"

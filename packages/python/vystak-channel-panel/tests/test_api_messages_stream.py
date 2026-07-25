@@ -1,8 +1,15 @@
 """Streaming message endpoint — fake ResponsesClient, no network."""
 
 import json
+from pathlib import Path
 
 from vystak_channel_panel.responses_client import PanelStreamEvent
+
+FIXTURE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "packages" / "typescript" / "vystak-panel" / "tests" / "fixtures"
+    / "panel-sse.txt"
+)
 
 
 def as_user(email: str) -> dict:
@@ -241,6 +248,272 @@ async def test_dropped_connection_persists_partial_text(api, panel_rt):
         ("user", "hello?"),
         ("assistant", "partial"),
     ]
+
+
+async def test_tool_call_persists_and_forwards_on_done(api, panel_rt):
+    """Done branch: a completed tool call between two bursts of text must be
+    forwarded live as typed SSE and persisted as ordered `parts` sitting
+    between the two text parts — not merged or reordered — while `content`
+    keeps carrying only the flattened text, unaffected by the tool call."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="Let me check. "),
+        PanelStreamEvent(
+            type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        ),
+        PanelStreamEvent(
+            type="tool_result", tool_call_id="call_1",
+            output='{"tempC": 21}', is_error=False,
+        ),
+        PanelStreamEvent(type="token", text="It's 21C."),
+        PanelStreamEvent(type="done", response_id="resp_42"),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "weather?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == [
+        "delta", "tool_call", "tool_result", "delta", "done",
+    ]
+    assert events[1] == {
+        "type": "tool_call", "tool_call_id": "call_1",
+        "tool_name": "get_weather", "arguments": '{"city": "Kyiv"}',
+    }
+    assert events[2] == {
+        "type": "tool_result", "tool_call_id": "call_1",
+        "output": '{"tempC": 21}', "is_error": False,
+    }
+
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["content"] == "Let me check. It's 21C."
+    assert assistant["parts"] == [
+        {"type": "text", "text": "Let me check. "},
+        {
+            "type": "tool", "tool_call_id": "call_1", "tool_name": "get_weather",
+            "input": '{"city": "Kyiv"}', "output": '{"tempC": 21}',
+            "is_error": False,
+        },
+        {"type": "text", "text": "It's 21C."},
+    ]
+
+
+async def test_tool_call_persists_on_error_branch(api, panel_rt):
+    """Error branch: the same completed tool call must survive a mid-stream
+    error alongside the text, not just the text (see the module-level note
+    on the `error` branch in routes_messages.py — this is the failure mode
+    it was written to prevent, now extended to tool parts)."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="Checking. "),
+        PanelStreamEvent(
+            type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        ),
+        PanelStreamEvent(
+            type="tool_result", tool_call_id="call_1",
+            output='{"tempC": 21}', is_error=False,
+        ),
+        PanelStreamEvent(type="error", text="agent unreachable: boom"),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "weather?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == [
+        "delta", "tool_call", "tool_result", "error",
+    ]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"] == "Checking. "
+    assert assistant["parts"] == [
+        {"type": "text", "text": "Checking. "},
+        {
+            "type": "tool", "tool_call_id": "call_1", "tool_name": "get_weather",
+            "input": '{"city": "Kyiv"}', "output": '{"tempC": 21}',
+            "is_error": False,
+        },
+    ]
+
+
+async def test_tool_call_persists_on_truncated_stream(api, panel_rt):
+    """Post-loop truncated-stream branch: the agent stream ends with only
+    `data: [DONE]` (no response.completed/failed), so ResponsesClient
+    yields no terminal event — the completed tool call must still survive,
+    not just the text (see the truncated-stream test above)."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="Checking. "),
+        PanelStreamEvent(
+            type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        ),
+        PanelStreamEvent(
+            type="tool_result", tool_call_id="call_1",
+            output='{"tempC": 21}', is_error=False,
+        ),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "weather?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == [
+        "delta", "tool_call", "tool_result", "done",
+    ]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["content"] == "Checking. "
+    assert assistant["parts"] == [
+        {"type": "text", "text": "Checking. "},
+        {
+            "type": "tool", "tool_call_id": "call_1", "tool_name": "get_weather",
+            "input": '{"city": "Kyiv"}', "output": '{"tempC": 21}',
+            "is_error": False,
+        },
+    ]
+
+
+async def test_tool_call_persists_on_dropped_connection(api, panel_rt):
+    """Outer-exception branch: the agent connection drops mid-stream (an
+    exception escapes stream_message rather than an `error` event being
+    yielded) — the completed tool call must still survive, not just the
+    text (see test_dropped_connection_persists_partial_text above)."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClientRaisesMidStream(
+        [
+            PanelStreamEvent(type="token", text="Checking. "),
+            PanelStreamEvent(
+                type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+                arguments='{"city": "Kyiv"}',
+            ),
+            PanelStreamEvent(
+                type="tool_result", tool_call_id="call_1",
+                output='{"tempC": 21}', is_error=False,
+            ),
+        ],
+        RuntimeError("connection reset"),
+    )
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "weather?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == [
+        "delta", "tool_call", "tool_result", "error",
+    ]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["content"] == "Checking. "
+    assert assistant["parts"] == [
+        {"type": "text", "text": "Checking. "},
+        {
+            "type": "tool", "tool_call_id": "call_1", "tool_name": "get_weather",
+            "input": '{"city": "Kyiv"}', "output": '{"tempC": 21}',
+            "is_error": False,
+        },
+    ]
+
+
+async def test_orphaned_tool_call_is_dropped_from_parts(api, panel_rt):
+    """A tool_call with no matching tool_result before the stream ends (the
+    agent errors mid-call) is a state Task 5's replay contract has no shape
+    for, so it is deliberately dropped from persisted `parts` rather than
+    persisted half-finished with invented placeholder output. Pinning this
+    so the drop reads as a decision, not a bug found later."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="Checking. "),
+        PanelStreamEvent(
+            type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        ),
+        PanelStreamEvent(type="error", text="agent unreachable: boom"),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "weather?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == ["delta", "tool_call", "error"]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assistant = msgs[-1]
+    assert assistant["content"] == "Checking. "
+    assert assistant["parts"] == [{"type": "text", "text": "Checking. "}]
+
+
+async def test_panel_sse_matches_cross_language_fixture(api, panel_rt, monkeypatch):
+    """Pin the panel's SSE byte format against a fixture shared with the
+    TypeScript side (`packages/typescript/vystak-panel/tests/fixtures/
+    panel-sse.txt` — Task 4 consumes the same file from stream.test.ts).
+    Nothing else pins this cross-language contract: change the Python
+    format and no test on either side goes red without this.
+
+    The assistant message id is the only nondeterministic value in the
+    stream — add_message() assigns it via store._new_id(). Exactly two
+    _new_id() calls happen during this POST (the user message, then the
+    assistant message); update_conversation() does not call it. Patching a
+    two-value queue after _ready()'s own setup calls makes the id, and so
+    the whole byte sequence, reproducible.
+    """
+    owner, pid, cid = await _ready(api)
+
+    import vystak_channel_panel.store as store_module
+
+    fixed_ids = iter(["fixture-user-msg", "fixture-asst-msg"])
+    monkeypatch.setattr(store_module, "_new_id", lambda: next(fixed_ids))
+
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="Let me check "),
+        PanelStreamEvent(type="token", text="the weather."),
+        PanelStreamEvent(
+            type="tool_call", tool_call_id="call_1", tool_name="get_weather",
+            arguments='{"city": "Kyiv"}',
+        ),
+        PanelStreamEvent(
+            type="tool_result", tool_call_id="call_1",
+            output='{"tempC": 21, "conditions": "clear"}', is_error=False,
+        ),
+        PanelStreamEvent(type="token", text="It's 21"),
+        PanelStreamEvent(type="token", text="°C and clear."),
+        PanelStreamEvent(type="done", response_id="resp_fixture_1"),
+    ])
+
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "What is the weather in Kyiv?"},
+        headers=as_user(owner),
+    )
+    assert resp.text == FIXTURE_PATH.read_text()
 
 
 async def test_empty_response_id_does_not_clobber_last_response_id(api, panel_rt):

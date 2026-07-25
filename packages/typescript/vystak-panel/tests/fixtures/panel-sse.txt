@@ -1,0 +1,14 @@
+data: {"type": "delta", "text": "Let me check "}
+
+data: {"type": "delta", "text": "the weather."}
+
+data: {"type": "tool_call", "tool_call_id": "call_1", "tool_name": "get_weather", "arguments": "{\"city\": \"Kyiv\"}"}
+
+data: {"type": "tool_result", "tool_call_id": "call_1", "output": "{\"tempC\": 21, \"conditions\": \"clear\"}", "is_error": false}
+
+data: {"type": "delta", "text": "It's 21"}
+
+data: {"type": "delta", "text": "\u00b0C and clear."}
+
+data: {"type": "done", "message_id": "fixture-asst-msg", "response_id": "resp_fixture_1", "title": "What is the weather in Kyiv?"}
+

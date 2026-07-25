@@ -11,9 +11,14 @@ from pydantic import BaseModel
 
 
 class PanelStreamEvent(BaseModel):
-    type: Literal["token", "done", "error"]
+    type: Literal["token", "done", "error", "tool_call", "tool_result"]
     text: str = ""
     response_id: str = ""
+    tool_call_id: str = ""
+    tool_name: str = ""
+    arguments: str = ""
+    output: str = ""
+    is_error: bool = False
 
 
 def agent_base_url(route_entry: dict | str) -> str:
@@ -68,6 +73,11 @@ class ResponsesClient:
         client = self._http_client or httpx.AsyncClient(timeout=self._timeout)
         owns_client = self._http_client is None
         closing = False
+        # Keyed by call_id: holds the tool name from the `function_call`
+        # output_item.added event and accumulates the arguments string from
+        # each function_call_arguments.delta, so it is complete by the time
+        # function_call_arguments.done yields the tool_call event.
+        pending_calls: dict[str, dict] = {}
         try:
             async with client.stream(
                 "POST", f"{base_url.rstrip('/')}/v1/responses", json=body,
@@ -93,6 +103,46 @@ class ResponsesClient:
                         if event_type == "response.output_text.delta":
                             yield PanelStreamEvent(
                                 type="token", text=data.get("delta", "")
+                            )
+                        elif event_type == "response.output_item.added":
+                            item = data.get("item") or {}
+                            item_type = item.get("type")
+                            if item_type == "function_call":
+                                call_id = item.get("call_id") or item.get("id") or ""
+                                if call_id:
+                                    pending_calls[call_id] = {
+                                        "tool_name": item.get("name", ""),
+                                        "arguments": "",
+                                    }
+                            elif item_type == "function_call_output":
+                                yield PanelStreamEvent(
+                                    type="tool_result",
+                                    tool_call_id=item.get("call_id", ""),
+                                    output=item.get("output", ""),
+                                    is_error=bool(item.get("error", False)),
+                                )
+                        elif event_type == "response.function_call_arguments.delta":
+                            pending = pending_calls.get(data.get("call_id", ""))
+                            if pending is not None:
+                                pending["arguments"] += data.get("delta", "")
+                        elif event_type == "response.function_call_arguments.done":
+                            call_id = data.get("call_id", "")
+                            pending = pending_calls.pop(call_id, None)
+                            if pending is not None:
+                                tool_name = pending["tool_name"]
+                                arguments = pending["arguments"]
+                            else:
+                                # No matching output_item.added was seen for
+                                # this call_id — fall back to whatever this
+                                # event itself carries rather than dropping
+                                # the tool call entirely.
+                                tool_name = ""
+                                arguments = data.get("arguments", "")
+                            yield PanelStreamEvent(
+                                type="tool_call",
+                                tool_call_id=call_id,
+                                tool_name=tool_name,
+                                arguments=arguments,
                             )
                         elif event_type == "response.completed":
                             yield PanelStreamEvent(
