@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -47,13 +48,16 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
             raise HTTPException(
                 status_code=503, detail=f"agent not routed: {conv.agent_name}"
             )
-        base_url = agent_base_url(route_entry)
 
         await rt.panel_store.add_message(conv_id, "user", text)
         title = conv.title
         if not title:
             title = text[:_TITLE_MAX]
             await rt.panel_store.update_conversation(conv_id, title=title)
+
+        if rt.nats_client is not None:
+            return await _post_message_nats(rt, conv, conv_id, text, user, title)
+        base_url = agent_base_url(route_entry)
 
         async def gen():
             acc = TurnAccumulator()
@@ -150,4 +154,81 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
+    @router.get("/{conv_id}/stream")
+    async def resume_stream(conv_id: str, user: PanelUser = Depends(current_user)):
+        conv = await require_conversation_access(rt, conv_id, user)
+        if rt.nats_client is None or not conv.active_turn_id:
+            return Response(status_code=204)
+        route_entry = rt.routes.get(conv.agent_name)
+        if route_entry is None:
+            raise HTTPException(
+                status_code=503, detail=f"agent not routed: {conv.agent_name}"
+            )
+        subject = rt.nats_client.turn_subject_for(
+            route_entry, conv.id, conv.active_turn_id
+        )
+        gen = _proxy_turn(rt, subject, conv.active_turn_id, conv.title)
+        return StreamingResponse(gen, media_type="text/event-stream")
+
     return router
+
+
+async def _post_message_nats(rt, conv, conv_id: str, text: str, user, title: str):
+    """The NATS-transport POST path: start a detached turn on the agent's
+    JetStream subject and proxy it back as SSE. Persistence for this turn is
+    owned entirely by the background persister (`rt.spawn_persister`), not by
+    this request — any number of browser tabs can attach/detach from the
+    same turn via this route or the GET resume endpoint without duplicating
+    writes."""
+    route_entry = rt.routes.get(conv.agent_name)
+    turn_id = uuid.uuid4().hex
+    await rt.panel_store.set_active_turn(conv_id, turn_id)
+    try:
+        subject = await rt.nats_client.start_turn(
+            route_entry, text,
+            conv_id=conv_id, turn_id=turn_id,
+            previous_response_id=conv.last_response_id,
+            user_id=user.id, project_id=conv.project_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as an SSE error frame
+        logger.exception("createDetached failed conv=%s", conv_id)
+        await rt.panel_store.clear_active_turn(conv_id, turn_id)
+        # `exc` is bound by `except ... as exc` and Python implicitly deletes
+        # it once this block exits. err_gen() only *creates* the generator
+        # here — its body runs later, when the ASGI server iterates it,
+        # after this function has already returned. A closure over `exc`
+        # itself would hit an UnboundLocalError at that point; capture the
+        # message as a plain string instead.
+        message = f"agent unreachable: {exc}"
+
+        async def err_gen():
+            yield _sse({"type": "error", "message": message})
+
+        return StreamingResponse(err_gen(), media_type="text/event-stream")
+
+    rt.spawn_persister(conv_id, turn_id, subject)
+    gen = _proxy_turn(rt, subject, turn_id, title)
+    return StreamingResponse(gen, media_type="text/event-stream")
+
+
+async def _proxy_turn(rt, subject: str, turn_id: str, title: str | None):
+    """Browser-facing SSE proxy over a turn's JetStream subject. Read-only:
+    persistence belongs to the persister task, so any number of these can
+    attach or vanish without consequence."""
+    try:
+        async for seq, ev in rt.nats_client.stream_turn_events(subject):
+            if ev.type == "done":
+                yield _sse({
+                    "type": "done", "turn_id": turn_id, "seq": seq,
+                    "response_id": ev.response_id, "title": title,
+                })
+                return
+            frame = browser_frame(ev)
+            frame["turn_id"] = turn_id
+            frame["seq"] = seq
+            yield _sse(frame)
+            if ev.type == "error":
+                return
+    except Exception as exc:  # noqa: BLE001 — stream must not raise
+        logger.exception("turn proxy failed subject=%s", subject)
+        yield _sse({"type": "error", "message": str(exc), "turn_id": turn_id})

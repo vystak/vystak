@@ -616,3 +616,115 @@ async def test_stream_unknown_conversation_404(api):
     # satisfy) — see test_unknown_conversation_404 in
     # test_api_conversations.py for the precedent.
     assert resp.json()["detail"] == "unknown conversation"
+
+
+class FakePanelNatsClient:
+    """Mirrors PanelNatsClient's public surface without touching JetStream."""
+
+    idle_timeout_s = 120.0
+
+    def __init__(self):
+        self.started: list[dict] = []
+        self.events = [
+            (0, PanelStreamEvent(type="token", text="hi")),
+            (1, PanelStreamEvent(type="done", response_id="resp_1")),
+        ]
+
+    @staticmethod
+    def turn_subject_for(route_entry, conv_id, turn_id):
+        return f"base.streams.{conv_id}.{turn_id}"
+
+    async def start_turn(self, route_entry, text, **kw):
+        self.started.append({"text": text, **kw})
+        return f"base.streams.{kw['conv_id']}.{kw['turn_id']}"
+
+    async def stream_turn_events(self, subject):
+        for seq, ev in self.events:
+            yield seq, ev
+
+
+class FakePanelNatsClientStartTurnFails(FakePanelNatsClient):
+    async def start_turn(self, route_entry, text, **kw):
+        raise RuntimeError("boom")
+
+
+async def test_post_message_nats_start_turn_failure_clears_active_turn(api, panel_rt):
+    """`start_turn` raising (e.g. agent unreachable) must clear the active
+    turn it just set and surface exactly one `error` frame — regression
+    guard for a real bug found in review: an `except ... as exc` binding
+    whose value was read from a closure invoked after the except block (and
+    the function) had already returned, which raises UnboundLocalError
+    instead of reaching the browser at all."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.nats_client = FakePanelNatsClientStartTurnFails()
+
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "hello"},
+        headers=as_user(owner),
+    )
+    assert resp.status_code == 200
+    frames = _parse_sse(resp.text)
+    assert len(frames) == 1
+    assert frames[0]["type"] == "error"
+    assert "agent unreachable" in frames[0]["message"]
+
+    conv = (
+        await api.get(
+            f"/api/projects/{pid}/conversations", headers=as_user(owner)
+        )
+    ).json()["conversations"][0]
+    assert conv["active_turn_id"] is None
+
+
+async def test_post_message_nats_path_streams_and_marks_active_turn(api, panel_rt):
+    owner, pid, cid = await _ready(api)
+    panel_rt.nats_client = FakePanelNatsClient()
+    panel_rt.turn_tasks = {}
+    panel_rt.spawn_persister = lambda *a, **k: None  # persister covered by test_turn_worker
+
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "hello"},
+        headers=as_user(owner),
+    )
+    assert resp.status_code == 200
+    frames = _parse_sse(resp.text)
+    assert frames[0]["type"] == "delta"
+    assert frames[0]["text"] == "hi"
+    assert frames[0]["seq"] == 0
+    assert frames[0]["turn_id"]  # generated uuid hex — non-empty is enough
+    assert frames[-1]["type"] == "done"
+    assert frames[-1]["response_id"] == "resp_1"
+    assert panel_rt.nats_client.started[0]["conv_id"] == cid
+
+
+async def test_resume_endpoint_204_when_no_active_turn(api, panel_rt):
+    owner, pid, cid = await _ready(api)
+    panel_rt.nats_client = FakePanelNatsClient()
+    resp = await api.get(
+        f"/api/conversations/{cid}/stream", headers=as_user(owner)
+    )
+    assert resp.status_code == 204
+
+
+async def test_resume_endpoint_replays_active_turn(api, panel_rt):
+    owner, pid, cid = await _ready(api)
+    panel_rt.nats_client = FakePanelNatsClient()
+    # mark the turn active the way the POST path would
+    await panel_rt.panel_store.set_active_turn(cid, "turnZ")
+    resp = await api.get(
+        f"/api/conversations/{cid}/stream", headers=as_user(owner)
+    )
+    assert resp.status_code == 200
+    frames = _parse_sse(resp.text)
+    assert frames[0]["type"] == "delta" and frames[0]["turn_id"] == "turnZ"
+
+
+async def test_resume_endpoint_204_on_http_transport(api, panel_rt):
+    owner, pid, cid = await _ready(api)
+    panel_rt.nats_client = None
+    resp = await api.get(
+        f"/api/conversations/{cid}/stream", headers=as_user(owner)
+    )
+    assert resp.status_code == 204
