@@ -67,43 +67,56 @@ class ResponsesClient:
         }
         client = self._http_client or httpx.AsyncClient(timeout=self._timeout)
         owns_client = self._http_client is None
+        closing = False
         try:
             async with client.stream(
                 "POST", f"{base_url.rstrip('/')}/v1/responses", json=body,
                 timeout=self._timeout,
             ) as resp:
-                if resp.status_code != 200:
-                    yield PanelStreamEvent(
-                        type="error", text=f"agent returned {resp.status_code}"
-                    )
-                    return
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
+                try:
+                    if resp.status_code != 200:
+                        yield PanelStreamEvent(
+                            type="error", text=f"agent returned {resp.status_code}"
+                        )
                         return
-                    try:
-                        data = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    event_type = data.get("type", "")
-                    if event_type == "response.output_text.delta":
-                        yield PanelStreamEvent(
-                            type="token", text=data.get("delta", "")
-                        )
-                    elif event_type == "response.completed":
-                        yield PanelStreamEvent(
-                            type="done",
-                            response_id=data.get("response", {}).get("id", ""),
-                        )
-                    elif event_type == "response.failed":
-                        err = (
-                            data.get("response", {}).get("error", {})
-                            .get("message", "agent stream failed")
-                        )
-                        yield PanelStreamEvent(type="error", text=err)
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        event_type = data.get("type", "")
+                        if event_type == "response.output_text.delta":
+                            yield PanelStreamEvent(
+                                type="token", text=data.get("delta", "")
+                            )
+                        elif event_type == "response.completed":
+                            yield PanelStreamEvent(
+                                type="done",
+                                response_id=data.get("response", {}).get("id", ""),
+                            )
+                        elif event_type == "response.failed":
+                            err = (
+                                data.get("response", {}).get("error", {})
+                                .get("message", "agent stream failed")
+                            )
+                            yield PanelStreamEvent(type="error", text=err)
+                except GeneratorExit:
+                    # Consumer abandoned the stream (e.g. browser disconnect).
+                    # Flag it so a close-time transport error below can't try
+                    # to yield an error event while we're being closed.
+                    closing = True
+                    raise
         except httpx.HTTPError as exc:
+            if closing:
+                # __aexit__ raised while GeneratorExit was propagating; it
+                # replaced GeneratorExit as the in-flight exception. Yielding
+                # here would raise "async generator ignored GeneratorExit".
+                return
             yield PanelStreamEvent(type="error", text=f"agent unreachable: {exc}")
         finally:
             if owns_client:
