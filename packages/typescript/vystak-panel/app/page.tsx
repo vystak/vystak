@@ -1,3 +1,12 @@
-export default function Home() {
-  return <main style={{ padding: 24 }}>Vystak Panel</main>;
+import { redirect } from 'next/navigation';
+import { auth } from '@/auth';
+import { getBootstrap } from '@/lib/panel';
+
+export default async function Home() {
+  const session = await auth();
+  const email = session?.user?.email?.toLowerCase();
+  if (!email) redirect('/signin');
+  const bootstrap = await getBootstrap(email);
+  if (!bootstrap.user || !bootstrap.default_project_id) redirect('/signin');
+  redirect(`/p/${bootstrap.default_project_id}`);
 }
