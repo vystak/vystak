@@ -20,6 +20,8 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Part, Task, TaskState, TaskStatus
 
+from _vystak.runtime.content import flatten_content
+
 
 class LangGraphExecutor(AgentExecutor):
     """Drives a LangGraph compiled graph from the a2a-sdk task lifecycle."""
@@ -65,7 +67,7 @@ class LangGraphExecutor(AgentExecutor):
                 ev_type = ev.get("event")
                 if ev_type == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
-                    delta = _flatten_content(
+                    delta = flatten_content(
                         getattr(chunk, "content", "") if chunk is not None else ""
                     )
                     if delta:
@@ -95,7 +97,7 @@ class LangGraphExecutor(AgentExecutor):
 
             snapshot = await self._graph.aget_state(config)
             messages = (snapshot.values or {}).get("messages") or []
-            final_text = _flatten_content(
+            final_text = flatten_content(
                 messages[-1].content if messages else ""
             )
             # Fall back to the streamed accumulation if the snapshot is empty
@@ -127,23 +129,3 @@ def _extract_user_text(message: Any) -> str:
         if isinstance(text, str):
             out.append(text)
     return "".join(out)
-
-
-def _flatten_content(content: Any) -> str:
-    """Flatten LangChain message content into a plain string.
-
-    Anthropic extended-thinking returns content as a list of typed blocks
-    [{"type": "thinking", ...}, {"type": "text", ...}, ...]. The A2A wire
-    expects a string, so concatenate `text` blocks and drop thinking/tool_use.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        out: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                out.append(str(block.get("text", "")))
-            elif isinstance(block, str):
-                out.append(block)
-        return "".join(out)
-    return str(content)
