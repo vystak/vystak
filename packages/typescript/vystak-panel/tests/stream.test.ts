@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { panelStreamToUIChunks } from '../lib/stream';
 
@@ -5,6 +7,16 @@ function sseBody(...payloads: (object | string)[]): ReadableStream<Uint8Array> {
   const text = payloads
     .map(p => `data: ${typeof p === 'string' ? p : JSON.stringify(p)}\n\n`)
     .join('');
+  return new Blob([text]).stream() as ReadableStream<Uint8Array>;
+}
+
+// Shared cross-language fixture (Task 3 also asserts this file byte-for-byte
+// on the Python side) — pins the panel SSE wire format so the two languages
+// can't silently drift apart.
+const FIXTURE_PATH = fileURLToPath(new URL('./fixtures/panel-sse.txt', import.meta.url));
+
+function fixtureBody(): ReadableStream<Uint8Array> {
+  const text = readFileSync(FIXTURE_PATH, 'utf-8');
   return new Blob([text]).stream() as ReadableStream<Uint8Array>;
 }
 
@@ -90,5 +102,135 @@ describe('panelStreamToUIChunks', () => {
       c => typeof c === 'object' && c !== null && (c as { type?: string }).type === 'text-end',
     ).length;
     expect(textEndCount).toBe(1);
+  });
+
+  it('maps the shared panel-sse fixture to the exact chunk sequence', async () => {
+    const chunks = await collect(panelStreamToUIChunks(fixtureBody()));
+    expect(chunks).toEqual([
+      { type: 'start' },
+      { type: 'text-start', id: 'panel-text' },
+      { type: 'text-delta', id: 'panel-text', delta: 'Let me check ' },
+      { type: 'text-delta', id: 'panel-text', delta: 'the weather.' },
+      { type: 'text-end', id: 'panel-text' },
+      {
+        type: 'tool-input-start',
+        toolCallId: 'call_1',
+        toolName: 'get_weather',
+        dynamic: true,
+      },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'call_1',
+        toolName: 'get_weather',
+        input: { city: 'Kyiv' },
+        dynamic: true,
+      },
+      {
+        type: 'tool-output-available',
+        toolCallId: 'call_1',
+        output: '{"tempC": 21, "conditions": "clear"}',
+        dynamic: true,
+      },
+      { type: 'text-start', id: 'panel-text-2' },
+      { type: 'text-delta', id: 'panel-text-2', delta: "It's 21" },
+      { type: 'text-delta', id: 'panel-text-2', delta: '°C and clear.' },
+      { type: 'text-end', id: 'panel-text-2' },
+      { type: 'finish' },
+    ]);
+  });
+
+  it('closes the open text part before a tool call and opens a fresh one when text resumes', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          { type: 'delta', text: 'A' },
+          {
+            type: 'tool_call',
+            tool_call_id: 'c1',
+            tool_name: 'foo',
+            arguments: '{"x": 1}',
+          },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'ok', is_error: false },
+          { type: 'delta', text: 'B' },
+          { type: 'done', message_id: 'm1', response_id: 'r1', title: 'T' },
+        ),
+      ),
+    );
+    expect(chunks).toEqual([
+      { type: 'start' },
+      { type: 'text-start', id: 'panel-text' },
+      { type: 'text-delta', id: 'panel-text', delta: 'A' },
+      { type: 'text-end', id: 'panel-text' },
+      { type: 'tool-input-start', toolCallId: 'c1', toolName: 'foo', dynamic: true },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'c1',
+        toolName: 'foo',
+        input: { x: 1 },
+        dynamic: true,
+      },
+      { type: 'tool-output-available', toolCallId: 'c1', output: 'ok', dynamic: true },
+      { type: 'text-start', id: 'panel-text-2' },
+      { type: 'text-delta', id: 'panel-text-2', delta: 'B' },
+      { type: 'text-end', id: 'panel-text-2' },
+      { type: 'finish' },
+    ]);
+    // The two text parts must have distinct ids, and no tool chunk may sit
+    // between a text-start and its matching text-end.
+    const textStartIds = chunks
+      .filter((c): c is { type: string; id: string } => (c as { type?: string }).type === 'text-start')
+      .map(c => c.id);
+    expect(new Set(textStartIds).size).toBe(textStartIds.length);
+    expect(textStartIds).toEqual(['panel-text', 'panel-text-2']);
+  });
+
+  it('emits tool-output-error with errorText when is_error is true', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          {
+            type: 'tool_call',
+            tool_call_id: 'c1',
+            tool_name: 'foo',
+            arguments: '{}',
+          },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'boom', is_error: true },
+          { type: 'done', message_id: 'm1', response_id: 'r1', title: 'T' },
+        ),
+      ),
+    );
+    expect(chunks).toContainEqual({
+      type: 'tool-output-error',
+      toolCallId: 'c1',
+      errorText: 'boom',
+      dynamic: true,
+    });
+    expect(chunks).not.toContainEqual(
+      expect.objectContaining({ type: 'tool-output-available' }),
+    );
+  });
+
+  it('passes non-JSON arguments through as a raw string without throwing', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          {
+            type: 'tool_call',
+            tool_call_id: 'c1',
+            tool_name: 'foo',
+            arguments: 'not valid json{',
+          },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'ok', is_error: false },
+          { type: 'done', message_id: 'm1', response_id: 'r1', title: 'T' },
+        ),
+      ),
+    );
+    expect(chunks).toContainEqual({
+      type: 'tool-input-available',
+      toolCallId: 'c1',
+      toolName: 'foo',
+      input: 'not valid json{',
+      dynamic: true,
+    });
   });
 });
