@@ -131,6 +131,42 @@ async def test_agent_error_keeps_user_message(api, panel_rt):
     assert [(m["role"]) for m in msgs] == ["user"]
 
 
+async def test_agent_error_after_deltas_persists_partial_text(api, panel_rt):
+    """Mid-stream error arriving after some deltas must not discard the text
+    the user already watched stream in — the same failure mode the
+    truncated-stream branch below it was written to prevent, but reached via
+    the error path instead of a silently-ended stream."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClient([
+        PanelStreamEvent(type="token", text="par"),
+        PanelStreamEvent(type="token", text="tial"),
+        PanelStreamEvent(type="error", text="agent unreachable: boom"),
+    ])
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "hello?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == ["delta", "delta", "error"]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assert [(m["role"], m["content"]) for m in msgs] == [
+        ("user", "hello?"),
+        ("assistant", "partial"),
+    ]
+    # No response id was confirmed — last_response_id must stay untouched.
+    conv = (
+        await api.get(
+            f"/api/projects/{pid}/conversations", headers=as_user(owner)
+        )
+    ).json()["conversations"][0]
+    assert conv["last_response_id"] is None
+
+
 async def test_truncated_stream_still_persists_streamed_text(api, panel_rt):
     """Agent stream ends with no terminal event (only `data: [DONE]`).
     The text the user already watched stream must not vanish on reload."""

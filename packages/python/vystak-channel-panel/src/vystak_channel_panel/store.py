@@ -80,6 +80,7 @@ class SqlitePanelStore:
         self._db_path = str(db_path)
         self._db: aiosqlite.Connection | None = None
         self._setup_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         self._db = await aiosqlite.connect(self._db_path)
@@ -99,18 +100,35 @@ class SqlitePanelStore:
 
     @asynccontextmanager
     async def _write(self) -> AsyncIterator[aiosqlite.Connection]:
-        """Commit a multi-statement write, rolling back if any statement fails.
+        """Run a write under an exclusive lock, committing on success and
+        rolling back on any failure — including cancellation.
 
-        aiosqlite uses deferred transactions: without the rollback, a write
-        that raises midway leaves earlier statements pending, and the next
-        unrelated commit() adopts them.
+        aiosqlite queues every call onto one worker thread against one
+        shared connection, and uses deferred transactions: without a lock,
+        another coroutine's `_write()` block could interleave between two
+        `await db.execute()` calls here and commit() early, making this
+        block's pending statements durable before it's done — so a later
+        failure in *this* block can no longer be rolled back. Every mutating
+        method in this store — single- or multi-statement — routes through
+        `_write()`, so once the store is serving traffic, `commit()`/
+        `rollback()` never happen outside this lock and no unrelated write
+        can adopt another's pending statements. (The one exception is the
+        initial schema-creation commit in `connect()`, which runs once
+        before the store accepts any calls, so nothing can interleave with
+        it.)
+
+        Catches `BaseException`, not `Exception`: `asyncio.CancelledError`
+        and `GeneratorExit` are `BaseException` subclasses, and Starlette
+        cancels the response task on client disconnect — a cancelled write
+        must roll back too, not leave statements pending.
         """
-        try:
-            yield self.db
-            await self.db.commit()
-        except Exception:
-            await self.db.rollback()
-            raise
+        async with self._write_lock:
+            try:
+                yield self.db
+                await self.db.commit()
+            except BaseException:
+                await self.db.rollback()
+                raise
 
     # --- users ------------------------------------------------------------
 
@@ -130,13 +148,13 @@ class SqlitePanelStore:
             role=role,
             created_at=_now(),
         )
-        await self.db.execute(
-            "INSERT INTO users (id, email, name, image, role, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user.id, user.email, user.name, user.image, user.role, user.status,
-             user.created_at),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO users (id, email, name, image, role, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user.id, user.email, user.name, user.image, user.role, user.status,
+                 user.created_at),
+            )
         return user
 
     async def get_user_by_email(self, email: str) -> PanelUser | None:
@@ -163,12 +181,12 @@ class SqlitePanelStore:
     async def update_user(
         self, user_id: str, *, role: str | None = None, status: str | None = None
     ) -> PanelUser | None:
-        await self.db.execute(
-            "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
-            "WHERE id = ?",
-            (role, status, user_id),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
+                "WHERE id = ?",
+                (role, status, user_id),
+            )
         return await self.get_user(user_id)
 
     async def update_user_guarded(
@@ -186,22 +204,25 @@ class SqlitePanelStore:
         two concurrent demotions of different admins would each see a
         sufficient count and together drop the panel to zero admins.
         """
-        cur = await self.db.execute(
-            "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
-            "WHERE id = ? "
-            "AND ( "
-            "  (COALESCE(?, role) = 'admin' AND COALESCE(?, status) = 'active') "
-            "  OR EXISTS ( "
-            "       SELECT 1 FROM users o "
-            "        WHERE o.id <> users.id "
-            "          AND o.role = 'admin' "
-            "          AND o.status = 'active' "
-            "     ) "
-            ")",
-            (role, status, user_id, role, status),
-        )
-        rowcount = cur.rowcount
-        await self.db.commit()
+        async with self._write() as db:
+            cur = await db.execute(
+                "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
+                "WHERE id = ? "
+                "AND ( "
+                "  (COALESCE(?, role) = 'admin' AND COALESCE(?, status) = 'active') "
+                "  OR EXISTS ( "
+                "       SELECT 1 FROM users o "
+                "        WHERE o.id <> users.id "
+                "          AND o.role = 'admin' "
+                "          AND o.status = 'active' "
+                "     ) "
+                ")",
+                (role, status, user_id, role, status),
+            )
+            rowcount = cur.rowcount
+        # Read happens outside the _write() block: get_user() does not
+        # acquire _write_lock, but keeping it out keeps this method's shape
+        # consistent with the other guarded-write + read methods.
         if rowcount == 0:
             user = await self.get_user(user_id)
             return (None, False) if user is None else (user, False)
@@ -271,12 +292,12 @@ class SqlitePanelStore:
         return row["value"] if row else None
 
     async def set_setting(self, key: str, value: str) -> None:
-        await self.db.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
 
     # --- projects ---------------------------------------------------------
 
@@ -290,13 +311,13 @@ class SqlitePanelStore:
             is_default=is_default,
             created_at=_now(),
         )
-        await self.db.execute(
-            "INSERT INTO projects (id, name, owner_id, is_default, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (project.id, project.name, project.owner_id,
-             int(project.is_default), project.created_at),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO projects (id, name, owner_id, is_default, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (project.id, project.name, project.owner_id,
+                 int(project.is_default), project.created_at),
+            )
         return project
 
     async def get_project(self, project_id: str) -> Project | None:
@@ -339,19 +360,19 @@ class SqlitePanelStore:
             await db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
     async def add_member(self, project_id: str, user_id: str) -> None:
-        await self.db.execute(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id) "
-            "VALUES (?, ?)",
-            (project_id, user_id),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO project_members (project_id, user_id) "
+                "VALUES (?, ?)",
+                (project_id, user_id),
+            )
 
     async def remove_member(self, project_id: str, user_id: str) -> None:
-        await self.db.execute(
-            "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
-            (project_id, user_id),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
+                (project_id, user_id),
+            )
 
     async def list_members(self, project_id: str) -> list[PanelUser]:
         async with self.db.execute(
@@ -409,14 +430,14 @@ class SqlitePanelStore:
             created_at=now,
             updated_at=now,
         )
-        await self.db.execute(
-            "INSERT INTO conversations "
-            "(id, project_id, creator_id, agent_name, title, last_response_id, "
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (conv.id, conv.project_id, conv.creator_id, conv.agent_name,
-             conv.title, conv.last_response_id, conv.created_at, conv.updated_at),
-        )
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO conversations "
+                "(id, project_id, creator_id, agent_name, title, last_response_id, "
+                " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (conv.id, conv.project_id, conv.creator_id, conv.agent_name,
+                 conv.title, conv.last_response_id, conv.created_at, conv.updated_at),
+            )
         return conv
 
     async def get_conversation(self, conversation_id: str) -> Conversation | None:
@@ -442,18 +463,17 @@ class SqlitePanelStore:
         title: str | None = None,
         last_response_id: str | None = None,
     ) -> Conversation | None:
-        # Single statement: a multi-statement partial update that raises
-        # midway leaves an uncommitted write the next unrelated commit()
-        # would silently adopt (see the update_user fix in Task 3).
         # COALESCE preserves the partial-update contract — a None argument
-        # leaves that column unchanged.
-        await self.db.execute(
-            "UPDATE conversations SET title = COALESCE(?, title), "
-            "last_response_id = COALESCE(?, last_response_id), updated_at = ? "
-            "WHERE id = ?",
-            (title, last_response_id, _now(), conversation_id),
-        )
-        await self.db.commit()
+        # leaves that column unchanged. Routed through _write() (Task 4)
+        # like every other mutating method, so this commit() can't land
+        # inside another caller's pending _write() block.
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE conversations SET title = COALESCE(?, title), "
+                "last_response_id = COALESCE(?, last_response_id), updated_at = ? "
+                "WHERE id = ?",
+                (title, last_response_id, _now(), conversation_id),
+            )
         return await self.get_conversation(conversation_id)
 
     async def delete_conversation(self, conversation_id: str) -> None:

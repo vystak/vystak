@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from vystak.providers.base import DeployPlan, FileBundle
 from vystak.schema.agent import Agent
 from vystak.schema.common import VaultMode, WorkspaceType
@@ -293,6 +294,14 @@ class TestAzureChannelPlan:
         plan = provider.plan_channel(channel, current_hash="old-hash")
         assert "Update" in plan.actions[0]
 
+    def test_plan_channel_panel_refused(self):
+        from vystak.schema.common import ChannelType
+
+        provider = AzureProvider()
+        channel = _make_channel(channel_type=ChannelType.PANEL)
+        with pytest.raises(NotImplementedError, match="Docker-only"):
+            provider.plan_channel(channel, current_hash=None)
+
 
 class TestAzureChannelApply:
     @patch("vystak_provider_azure.provider.ProvisionGraph")
@@ -385,6 +394,21 @@ class TestAzureChannelApply:
         result = provider.apply_channel(plan, channel, resolved_routes={})
         assert result.success is False
         assert "No plugin registered" in result.message
+
+    def test_apply_channel_panel_refused(self):
+        from vystak.schema.common import ChannelType
+
+        provider = AzureProvider()
+        channel = _make_channel(channel_type=ChannelType.PANEL)
+        plan = DeployPlan(
+            agent_name="panel",
+            actions=["Create"],
+            current_hash=None,
+            target_hash="h",
+            changes={},
+        )
+        with pytest.raises(NotImplementedError, match="Docker-only"):
+            provider.apply_channel(plan, channel, resolved_routes={})
 
 
 class TestAzureChannelAppNaming:

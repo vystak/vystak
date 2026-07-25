@@ -90,6 +90,18 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                         })
                     elif ev.type == "error":
                         done_seen = True
+                        if parts:
+                            # Same failure mode the truncated-stream branch
+                            # below guards against: the user already watched
+                            # this text stream in, so it must survive a
+                            # reload even though the turn ended in error.
+                            # No response_id — none was confirmed, and
+                            # last_response_id is intentionally left
+                            # untouched (the panel never replays history to
+                            # the agent; it relies on previous_response_id).
+                            await rt.panel_store.add_message(
+                                conv_id, "assistant", "".join(parts),
+                            )
                         yield _sse({"type": "error", "message": ev.text})
                 if not done_seen and parts:
                     # Truncated agent stream: `data: [DONE]` arrived with no

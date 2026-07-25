@@ -31,6 +31,7 @@ from vystak.providers.base import (
 from vystak.provisioning import ProvisionGraph
 from vystak.schema.agent import Agent
 from vystak.schema.channel import Channel
+from vystak.schema.common import ChannelType
 from vystak.schema.vault import Vault
 from vystak_provider_docker.secrets import get_resource_password
 
@@ -48,6 +49,23 @@ from vystak_provider_azure.nodes import (
     SecretSyncNode,
     UserAssignedIdentityNode,
 )
+
+
+def _reject_panel_channel(channel: Channel) -> None:
+    """Panel is Docker-only in v1: it needs a persistent volume for its
+    SQLite system of record (users, projects, conversations), and Azure
+    Container Apps has no equivalent — a bundled container would crash-loop
+    on import (no vystak_channel_panel plugin registered for Azure), and
+    even if it were bundled, the database would be wiped on every restart.
+    Refuse loudly at plan/apply time rather than deploying a container that
+    fails in either of those two silent ways.
+    """
+    if channel.type == ChannelType.PANEL:
+        raise NotImplementedError(
+            "panel channel is Docker-only in v1: it requires a persistent "
+            "volume for its SQLite system of record, which Azure Container "
+            "Apps does not provide"
+        )
 
 
 class AzureProvider(PlatformProvider):
@@ -1124,6 +1142,7 @@ class AzureProvider(PlatformProvider):
         return None
 
     def plan_channel(self, channel: Channel, current_hash: str | None) -> DeployPlan:
+        _reject_panel_channel(channel)
         # Generate build artifacts with empty routes — routes are deploy-time
         # state, not part of the artifact identity. Dockerfile/requirements +
         # channel_config.json changes still bump the hash via this path.
@@ -1169,6 +1188,7 @@ class AzureProvider(PlatformProvider):
         channel: Channel,
         resolved_routes: dict[str, dict[str, str]],
     ) -> DeployResult:
+        _reject_panel_channel(channel)
         try:
             plugin = get_plugin(channel.type)
         except KeyError as e:

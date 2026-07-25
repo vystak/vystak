@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import type { UIMessage } from 'ai';
 import { auth } from '@/auth';
 import { Chat } from '@/components/chat';
-import { listConversations, listMessages } from '@/lib/panel';
+import { getBootstrap, listConversations, listMessages } from '@/lib/panel';
 
 export default async function ConversationPage({
   params,
@@ -13,6 +13,8 @@ export default async function ConversationPage({
   const session = await auth();
   const email = session?.user?.email?.toLowerCase();
   if (!email) redirect('/signin');
+  const bootstrap = await getBootstrap(email);
+  if (!bootstrap.user) redirect('/signin?error=AccessDenied');
 
   const [{ conversations }, { messages }] = await Promise.all([
     listConversations(email, projectId),
