@@ -37,7 +37,7 @@
 
 **Interfaces:**
 - Consumes: `ChannelPlugin`, `FileBundle` from `vystak.providers.base`; `Channel`, `ChannelType`.
-- Produces: `ChannelType.PANEL`; `PanelChannelPlugin` (registered on import); `PanelChannelConfig(port: int = 8100, db_path: str = "/data/panel.db")`; bundle files `Dockerfile`, `requirements.txt`, `channel_config.json`, `routes.json`; entrypoint `python -m vystak_channel_panel`.
+- Produces: `ChannelType.PANEL`; `PanelChannelPlugin` (registered on import); `DEFAULT_DB_PATH = "/data/panel.db"`; `PanelChannelConfig(port: int = 8080, db_path: str = DEFAULT_DB_PATH)`; bundle files `Dockerfile`, `requirements.txt`, `channel_config.json`, `routes.json`; entrypoint `python -m vystak_channel_panel`.
 
 - [ ] **Step 1: Add enum member**
 
@@ -381,6 +381,7 @@ git commit -m "feat(panel): ChannelType.PANEL + vystak-channel-panel plugin skel
 - Modify: `packages/python/vystak-cli/src/vystak_cli/cli.py:8-10`
 - Modify: `packages/python/vystak-cli/pyproject.toml:28-30` and `:56-58`
 - Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/nodes/channel.py:118-129` and `:180-186`
+- Modify: `packages/python/vystak-provider-docker/src/vystak_provider_docker/provider.py` (`destroy_channel` — the `delete_channel_data` volume-removal condition must cover PANEL as well as SLACK, matching the creation condition above)
 - Modify: `.github/workflows/release.yml:76-79`
 
 **Interfaces:**
@@ -760,14 +761,16 @@ class SqlitePanelStore:
     async def update_user(
         self, user_id: str, *, role: str | None = None, status: str | None = None
     ) -> PanelUser | None:
-        if role is not None:
-            await self.db.execute(
-                "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
-            )
-        if status is not None:
-            await self.db.execute(
-                "UPDATE users SET status = ? WHERE id = ?", (status, user_id)
-            )
+        # One statement, not two conditional ones: a partial update that
+        # raises midway (e.g. a CHECK violation on the second column) leaves
+        # the first write uncommitted but pending, and the next unrelated
+        # commit() silently adopts it. COALESCE keeps the same contract —
+        # a None argument leaves that column unchanged.
+        await self.db.execute(
+            "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
+            "WHERE id = ?",
+            (role, status, user_id),
+        )
         await self.db.commit()
         return await self.get_user(user_id)
 
@@ -1180,31 +1183,31 @@ Append to `SqlitePanelStore`:
         title: str | None = None,
         last_response_id: str | None = None,
     ) -> Conversation | None:
-        if title is not None:
-            await self.db.execute(
-                "UPDATE conversations SET title = ? WHERE id = ?",
-                (title, conversation_id),
-            )
-        if last_response_id is not None:
-            await self.db.execute(
-                "UPDATE conversations SET last_response_id = ? WHERE id = ?",
-                (last_response_id, conversation_id),
-            )
+        # Single statement: a multi-statement partial update that raises
+        # midway leaves an uncommitted write the next unrelated commit()
+        # would silently adopt (see the update_user fix in Task 3).
+        # COALESCE preserves the partial-update contract — a None argument
+        # leaves that column unchanged.
         await self.db.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (_now(), conversation_id),
+            "UPDATE conversations SET title = COALESCE(?, title), "
+            "last_response_id = COALESCE(?, last_response_id), updated_at = ? "
+            "WHERE id = ?",
+            (title, last_response_id, _now(), conversation_id),
         )
         await self.db.commit()
         return await self.get_conversation(conversation_id)
 
     async def delete_conversation(self, conversation_id: str) -> None:
-        await self.db.execute(
-            "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
-        )
-        await self.db.execute(
-            "DELETE FROM conversations WHERE id = ?", (conversation_id,)
-        )
-        await self.db.commit()
+        # Multi-statement write — use the store's _write() helper so a
+        # mid-sequence failure rolls back instead of leaving pending
+        # statements for the next unrelated commit() to adopt (Task 4).
+        async with self._write() as db:
+            await db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
+            )
+            await db.execute(
+                "DELETE FROM conversations WHERE id = ?", (conversation_id,)
+            )
 
     # --- messages ---------------------------------------------------------
 
@@ -1224,18 +1227,20 @@ Append to `SqlitePanelStore`:
             response_id=response_id,
             created_at=_now(),
         )
-        await self.db.execute(
-            "INSERT INTO messages "
-            "(id, conversation_id, role, content, response_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (msg.id, msg.conversation_id, msg.role, msg.content,
-             msg.response_id, msg.created_at),
-        )
-        await self.db.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (msg.created_at, conversation_id),
-        )
-        await self.db.commit()
+        # Insert + bump in one transaction via _write() (Task 4): a message
+        # must never persist without its conversation's updated_at bump.
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO messages "
+                "(id, conversation_id, role, content, response_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (msg.id, msg.conversation_id, msg.role, msg.content,
+                 msg.response_id, msg.created_at),
+            )
+            await db.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (msg.created_at, conversation_id),
+            )
         return msg
 
     async def list_messages(self, conversation_id: str) -> list[PanelMessage]:
@@ -1719,6 +1724,7 @@ from fastapi import FastAPI
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.types import AgentReply, InboundEvent, SkipEvent
 
+from vystak_channel_panel.plugin import DEFAULT_DB_PATH
 from vystak_channel_panel.responses_client import ResponsesClient
 from vystak_channel_panel.store import SqlitePanelStore
 
@@ -1744,7 +1750,7 @@ class PanelChannelRuntime(ChannelRuntime):
     ) -> None:
         super().__init__(**kw)
         self.panel_store = panel_store or SqlitePanelStore(
-            self.config.get("db_path", "/data/panel.db")
+            self.config.get("db_path", DEFAULT_DB_PATH)
         )
         self.responses_client = responses_client or ResponsesClient()
         self._app: FastAPI | None = None
