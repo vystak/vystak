@@ -28,6 +28,11 @@ async function json<T>(user: string | null, path: string, init?: RequestInit): P
   return (await resp.json()) as T;
 }
 
+async function ok(user: string | null, path: string, init?: RequestInit): Promise<void> {
+  const resp = await panelFetch(user, path, init);
+  if (!resp.ok) throw new Error(`panel API ${path} -> ${resp.status}`);
+}
+
 export const getBootstrap = (email: string) =>
   json<Bootstrap>(email, '/api/bootstrap');
 
@@ -50,19 +55,19 @@ export const createProject = (email: string, name: string) =>
   });
 
 export const deleteProject = (email: string, id: string) =>
-  panelFetch(email, `/api/projects/${id}`, { method: 'DELETE' });
+  ok(email, `/api/projects/${id}`, { method: 'DELETE' });
 
 export const listMembers = (email: string, id: string) =>
   json<{ members: PanelUser[] }>(email, `/api/projects/${id}/members`);
 
 export const addMember = (email: string, id: string, memberEmail: string) =>
-  panelFetch(email, `/api/projects/${id}/members`, {
+  ok(email, `/api/projects/${id}/members`, {
     method: 'POST',
     body: JSON.stringify({ email: memberEmail }),
   });
 
 export const removeMember = (email: string, id: string, userId: string) =>
-  panelFetch(email, `/api/projects/${id}/members/${userId}`, {
+  ok(email, `/api/projects/${id}/members/${userId}`, {
     method: 'DELETE',
   });
 
@@ -70,7 +75,7 @@ export const listUsers = (email: string) =>
   json<{ users: PanelUser[] }>(email, '/api/users');
 
 export const addUser = (email: string, newEmail: string, role: string) =>
-  panelFetch(email, '/api/users', {
+  ok(email, '/api/users', {
     method: 'POST',
     body: JSON.stringify({ email: newEmail, role }),
   });
@@ -80,7 +85,7 @@ export const patchUser = (
   userId: string,
   patch: { role?: string; status?: string },
 ) =>
-  panelFetch(email, `/api/users/${userId}`, {
+  ok(email, `/api/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
@@ -103,7 +108,7 @@ export const createConversation = (
   );
 
 export const deleteConversation = (email: string, convId: string) =>
-  panelFetch(email, `/api/conversations/${convId}`, { method: 'DELETE' });
+  ok(email, `/api/conversations/${convId}`, { method: 'DELETE' });
 
 export const listMessages = (email: string, convId: string) =>
   json<{ messages: PanelMessage[] }>(

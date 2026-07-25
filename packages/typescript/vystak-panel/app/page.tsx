@@ -7,6 +7,7 @@ export default async function Home() {
   const email = session?.user?.email?.toLowerCase();
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
-  if (!bootstrap.user || !bootstrap.default_project_id) redirect('/signin');
+  if (!bootstrap.user) redirect('/signin?error=AccessDenied');
+  if (!bootstrap.default_project_id) redirect('/signin');
   redirect(`/p/${bootstrap.default_project_id}`);
 }

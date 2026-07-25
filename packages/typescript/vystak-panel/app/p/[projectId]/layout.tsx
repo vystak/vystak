@@ -15,7 +15,7 @@ export default async function ProjectLayout({
   const email = session?.user?.email?.toLowerCase();
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
-  if (!bootstrap.user) redirect('/signin');
+  if (!bootstrap.user) redirect('/signin?error=AccessDenied');
   const { projects } = await listProjects(email);
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>

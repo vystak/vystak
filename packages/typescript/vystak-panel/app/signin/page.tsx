@@ -6,9 +6,9 @@ export default async function SignInPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const session = await auth();
-  if (session?.user?.email) redirect('/');
   const { error } = await searchParams;
+  const session = await auth();
+  if (session?.user?.email && !error) redirect('/');
   return (
     <main style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
       <form
