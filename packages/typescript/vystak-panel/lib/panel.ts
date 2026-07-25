@@ -132,6 +132,9 @@ export const streamConversationMessage = (
     body: JSON.stringify({ text }),
   });
 
+export const resumeConversationStream = (email: string, convId: string) =>
+  panelFetch(email, `/api/conversations/${convId}/stream`);
+
 export const setUserPassword = (email: string, userId: string, password: string) =>
   ok(email, `/api/users/${userId}/password`, {
     method: 'PUT',

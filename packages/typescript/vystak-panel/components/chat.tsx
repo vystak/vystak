@@ -40,6 +40,7 @@ export function Chat({
   const { messages, sendMessage, status, error, clearError, stop } = useChat({
     id: conversationId,
     messages: initialMessages,
+    resume: true,
     transport: new DefaultChatTransport({
       api: '/api/chat',
       prepareSendMessagesRequest({ messages }) {
