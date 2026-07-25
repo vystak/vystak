@@ -52,8 +52,8 @@ def _make_node(client, channel: Channel) -> DockerChannelNode:
     return DockerChannelNode(client, channel, code, target_hash="testhash")
 
 
-class TestSlackStateVolumeMount:
-    """DockerChannelNode mounts a named state volume at /data for Slack channels."""
+class TestChannelStateVolumeMount:
+    """DockerChannelNode mounts a named state volume at /data for Slack and panel channels."""
 
     def test_slack_channel_mounts_state_volume(self, tmp_path, monkeypatch):
         """containers.run is called with the state volume bound to /data."""
@@ -163,6 +163,43 @@ class TestSlackStateVolumeMount:
         )
         assert volumes[state_volume_name]["bind"] == "/data"
         assert volumes[state_volume_name]["mode"] == "rw"
+
+    def test_panel_channel_bundles_source_module(self, tmp_path, monkeypatch):
+        """The PANEL branch of the bundle-modules switch actually copies
+        vystak_channel_panel's source — not just that some copytree call
+        happened (shutil.copytree is patched everywhere else in this file,
+        so a missing elif branch would still leave provision() succeeding
+        and the volume assertions passing)."""
+        monkeypatch.chdir(tmp_path)
+
+        import docker as _docker
+
+        client = MagicMock()
+        channel = _make_channel(ChannelType.PANEL, name="panel-main")
+
+        new_container = MagicMock()
+        new_container.ports = {"8080/tcp": [{"HostPort": "8080"}]}
+        client.containers.get.side_effect = [
+            _docker.errors.NotFound("x"),
+            new_container,
+        ]
+
+        client.volumes.get.return_value = MagicMock()
+
+        node = _make_node(client, channel)
+        network_mock = MagicMock()
+        network_mock.name = "vystak-net"
+        context = {"network": MagicMock(info={"network": network_mock})}
+
+        with patch("shutil.copytree") as copytree:
+            result = node.provision(context)
+
+        assert result.success, result.error
+
+        copied = [str(call.args[0]) for call in copytree.call_args_list]
+        assert any(p.endswith("vystak_channel_panel") for p in copied), (
+            f"Expected vystak_channel_panel source to be bundled. Copied: {copied}"
+        )
 
     def test_non_slack_channel_does_not_mount_state_volume(self, tmp_path, monkeypatch):
         """API-type channels do NOT get the state volume."""
