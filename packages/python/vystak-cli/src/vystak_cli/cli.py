@@ -7,6 +7,7 @@ import click
 # so ruff's SIM/I rules don't re-order or flag them.
 import vystak_channel_chat  # noqa: F401 — registers ChannelType.CHAT plugin
 import vystak_channel_discord  # noqa: F401 — registers ChannelType.DISCORD plugin
+import vystak_channel_panel  # noqa: F401 — registers ChannelType.PANEL plugin
 import vystak_channel_slack  # noqa: F401 — registers ChannelType.SLACK plugin
 
 from vystak_cli import __version__

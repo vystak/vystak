@@ -81,11 +81,13 @@ jobs:
                      vystak-provider-docker \
                      vystak-cli \
                      vystak-provider-azure \
-                     vystak-chat; do
-            # Projects new to PyPI (provider-azure, chat until their first
-            # successful publish) go LAST: the "429 Too many new projects"
-            # daily cap aborts the loop, and existing projects placed after
-            # a new one would be skipped (bit v0.2.0 and v0.3.0).
+                     vystak-chat \
+                     vystak-channel-panel; do
+            # Projects new to PyPI (provider-azure, chat, channel-panel
+            # until each has its first successful publish) go LAST: the
+            # "429 Too many new projects" daily cap aborts the loop, and
+            # existing projects placed after a new one would be skipped
+            # (bit v0.2.0 and v0.3.0).
             rm -rf dist
             uv build --package "$pkg"
             # --check-url makes reruns idempotent: files already on PyPI

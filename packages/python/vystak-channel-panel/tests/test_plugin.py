@@ -89,3 +89,27 @@ class TestAutoRegistration:
 
         plugin = get_plugin(ChannelType.PANEL)
         assert isinstance(plugin, PanelChannelPlugin)
+
+
+class TestCliRegistration:
+    def test_cli_import_registers_panel_plugin(self):
+        """Importing the CLI must register the panel plugin. Runs in a fresh
+        interpreter: in-process, this test module's own top-level import of
+        vystak_channel_panel would have already registered it, hiding a
+        missing side-effect import in cli.py."""
+        import subprocess
+        import sys
+
+        code = (
+            "import vystak_cli.cli;"
+            "from vystak.channels import get_plugin;"
+            "from vystak.schema.common import ChannelType;"
+            "print(type(get_plugin(ChannelType.PANEL)).__name__)"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert out.stdout.strip() == "PanelChannelPlugin"

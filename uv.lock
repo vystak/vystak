@@ -3181,6 +3181,7 @@ dependencies = [
     { name = "vystak" },
     { name = "vystak-channel-chat" },
     { name = "vystak-channel-discord" },
+    { name = "vystak-channel-panel" },
     { name = "vystak-channel-slack" },
     { name = "vystak-provider-docker" },
 ]
@@ -3191,6 +3192,7 @@ requires-dist = [
     { name = "vystak", editable = "packages/python/vystak" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },
+    { name = "vystak-channel-panel", editable = "packages/python/vystak-channel-panel" },
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
     { name = "vystak-provider-docker", editable = "packages/python/vystak-provider-docker" },
 ]

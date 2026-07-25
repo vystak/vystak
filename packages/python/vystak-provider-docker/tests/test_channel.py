@@ -127,6 +127,43 @@ class TestSlackStateVolumeMount:
         assert result.success, result.error
         client.volumes.create.assert_called_once_with(name="vystak-slack-main-state")
 
+    def test_panel_channel_mounts_state_volume(self, tmp_path, monkeypatch):
+        """Panel channels get the same /data state volume as Slack (panel.db)."""
+        monkeypatch.chdir(tmp_path)
+
+        import docker as _docker
+
+        client = MagicMock()
+        channel = _make_channel(ChannelType.PANEL, name="panel-main")
+
+        new_container = MagicMock()
+        new_container.ports = {"8080/tcp": [{"HostPort": "8080"}]}
+        client.containers.get.side_effect = [
+            _docker.errors.NotFound("x"),
+            new_container,
+        ]
+
+        client.volumes.get.return_value = MagicMock()
+
+        node = _make_node(client, channel)
+        network_mock = MagicMock()
+        network_mock.name = "vystak-net"
+        context = {"network": MagicMock(info={"network": network_mock})}
+
+        with patch("shutil.copytree"):
+            result = node.provision(context)
+
+        assert result.success, result.error
+
+        _, run_kwargs = client.containers.run.call_args
+        volumes = run_kwargs.get("volumes", {})
+        state_volume_name = "vystak-panel-main-state"
+        assert state_volume_name in volumes, (
+            f"Expected '{state_volume_name}' in volumes dict. Got: {list(volumes.keys())}"
+        )
+        assert volumes[state_volume_name]["bind"] == "/data"
+        assert volumes[state_volume_name]["mode"] == "rw"
+
     def test_non_slack_channel_does_not_mount_state_volume(self, tmp_path, monkeypatch):
         """API-type channels do NOT get the state volume."""
         monkeypatch.chdir(tmp_path)

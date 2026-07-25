@@ -127,6 +127,10 @@ class DockerChannelNode(Provisionable):
                 import vystak_channel_discord
 
                 _bundle_mods.append(vystak_channel_discord)
+            elif self._channel.type == ChannelType.PANEL:
+                import vystak_channel_panel
+
+                _bundle_mods.append(vystak_channel_panel)
 
             for _mod in _bundle_mods:
                 _src = Path(_mod.__file__).parent
@@ -173,11 +177,12 @@ class DockerChannelNode(Provisionable):
                     "mode": "ro",
                 }
 
-            # Slack channels get a named state volume at /data so that the
-            # SQLite runtime bindings database (channel-state.db) persists
-            # across container restarts. The volume is created lazily on
-            # first provision if it doesn't already exist.
-            if self._channel.type == ChannelType.SLACK:
+            # Slack and panel channels get a named state volume at /data so
+            # that their SQLite state database (Slack: channel-state.db;
+            # panel: panel.db) persists across container restarts. The
+            # volume is created lazily on first provision if it doesn't
+            # already exist.
+            if self._channel.type in (ChannelType.SLACK, ChannelType.PANEL):
                 state_volume_name = f"vystak-{self._channel.name}-state"
                 try:
                     self._client.volumes.get(state_volume_name)
