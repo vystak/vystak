@@ -57,9 +57,13 @@ async def test_create_list_rename_delete(api):
 
 async def test_messages_history_visibility(api):
     owner, pid = await _ready(api)
-    await api.post(
+    # Assert the invite lands: if it silently failed, the 403 below would come
+    # from current_user's "not invited" check instead of project access, and
+    # this test would stop pinning conversation authorization at all.
+    invited = await api.post(
         "/api/users", json={"email": "s@example.com"}, headers=as_user(owner)
     )
+    assert invited.status_code == 200
     cid = (
         await api.post(
             f"/api/projects/{pid}/conversations",
