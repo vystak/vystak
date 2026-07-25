@@ -35,13 +35,18 @@ default HTTP transport the panel keeps its current direct-streaming behavior
 
 ### 1. Durable stream backbone (vystak-transport-nats)
 
-- **JetStream stream:** one per platform, name `vystak-streams`, subjects
-  `vystak.{ns}.streams.>`, file storage, limits retention, `max_age` ≈ 1h.
-  Provisioned lazily via idempotent `js.add_stream()` from whichever side
-  touches it first (agent publisher or panel subscriber). The Docker/Azure
-  NATS provisioning nodes must start the broker with JetStream enabled
-  (`-js` + store dir on the existing volume).
-- **Turn subjects:** `vystak.{ns}.streams.{conversation_id}.{turn_id}`.
+- **JetStream stream:** one per `{prefix}.{ns}` base, name
+  `{prefix}-{ns}-streams` (dots → dashes; JetStream stream names cannot
+  contain dots), subjects `{prefix}.{ns}.streams.>`, file storage, limits
+  retention, `max_age` ≈ 1h. Provisioned lazily via idempotent
+  `add_stream`/`update_stream` from whichever side touches it first (agent
+  publisher or panel subscriber). The Docker NATS node already starts the
+  broker with JetStream enabled (`-js -sd /data` on the `vystak-nats-data`
+  volume) — no provider change needed. Azure has no NATS provisioning node,
+  so NATS panels on Azure are out of scope.
+- **Turn subjects:** `{prefix}.{ns}.streams.{conversation_id}.{turn_id}`,
+  where the `{prefix}.{ns}` base is derived from the agent's tasks subject
+  in `routes.json` (everything before `.agents.`).
 - **Event envelope:** each published message is `{seq, event}`. `seq` is an
   explicit 0-based counter assigned by the agent (JetStream's stream sequence
   is global, not per-subject). `event` is the exact OpenAI Responses SSE
@@ -63,25 +68,37 @@ wholesale on reconnect — the same thing it does on page load.
 
 ### 2. Agent side (template runtime)
 
-New `_vystak/runtime/transport_dispatcher.py` implementing
-`ServerDispatcherProtocol`; `app_factory.py` startup runs
-`transport.serve(name, dispatcher)` when `VYSTAK_TRANSPORT_TYPE == "nats"`,
-**replacing** `maybe_build_bridge()` / `NatsHttpBridge`. (They cannot coexist:
-both would join the same queue group and split messages randomly.)
+**Amended 2026-07-25 during planning.** The original design replaced
+`NatsHttpBridge` with a `ServerDispatcher` + `Transport.serve()`. That is not
+implementable today: agent images pip-install `vystak` **from PyPI** (bare
+`vystak` in `_vystak/requirements.txt`) and do not install
+`vystak-transport-nats` at all — new transport-package code cannot reach
+agent containers until published, which would make the feature untestable in
+release tests. Channel images, by contrast, bundle local package source, so
+new `vystak-transport-nats` client code works in the panel immediately.
 
-- `dispatch_a2a` — reuse the bridge's mechanism: POST the raw envelope to
-  `http://localhost:{port}/a2a`, return the body. Existing NATS deployments
-  see unchanged behavior.
-- `dispatch_responses_create` / `dispatch_responses_get` — call the existing
-  `openai/responses.py` handlers directly (fixes the currently-dead
-  `responses/create` over NATS as a side effect).
-- `dispatch_responses_create_detached` — new **optional** method on
-  `ServerDispatcherProtocol` (vystak core): validate, ack, spawn the detached
-  publishing task (drive `_stream_iterator`, wrap each event as `{seq, event}`,
-  `js.publish()` to the turn subject; terminal event on completion or failure).
-- `dispatch_a2a_stream` / `dispatch_responses_create_stream` — delegate to the
-  same handlers over the existing inbox-reply routing in
-  `NatsTransport._handle_inbound`, making the transport's client half honest.
+Instead, the agent side **extends `NatsHttpBridge`** (template-owned code,
+consistent with its documented thin-proxy design; the bridge remains the
+single queue-group subscriber). New method routing in `_forward`:
+
+- `responses/create` — POST the request body (stream forced off) to
+  `http://localhost:{port}/v1/responses`, reply with the JSON result (fixes
+  the currently-dead `responses/create` over NATS as a side effect).
+- `responses/get` — GET `http://localhost:{port}/v1/responses/{id}`, reply
+  with the result (`null` on 404).
+- `responses/createDetached` — validate (`request`, `turn_id`,
+  `stream_subject` required), publish the ack reply immediately, then spawn a
+  tracked background task: ensure the JetStream stream exists (plain
+  `nats-py`, already a template dependency), POST `/v1/responses` with
+  `stream: true` over localhost, parse the SSE lines, publish each event as
+  `{seq, event}` to `stream_subject` via `js.publish()`; on any failure
+  publish a synthesized `response.failed` terminal event.
+- Everything else — existing raw-envelope forwarding to `/a2a`, unchanged.
+
+The subject/stream naming helpers are duplicated in the template (it cannot
+import `vystak_transport_nats`) with keep-in-sync comments on both copies —
+same precedent as the skill-digest rules. `dispatch_a2a_stream` /
+`dispatch_responses_create_stream` inbox streaming stays out of scope.
 
 ### 3. Panel channel (Python)
 
@@ -139,9 +156,14 @@ both would join the same queue group and split messages randomly.)
 
 - Unit: dispatcher (seq'd publishes, terminal events on success/failure),
   panel persister accumulator, store migration, transport-selection branch.
-- Release (`release_integration`, Docker): deploy panel + NATS, start a turn,
-  drop the SSE connection mid-stream, reconnect via the resume endpoint,
-  assert the full text arrives and exactly one assistant row is persisted.
+- Release (`release_integration`, Docker): deploy panel + NATS with sentinel
+  credentials, start a turn and drop the SSE connection immediately. The
+  agent turn fails at the LLM call (sentinel key) and publishes its terminal
+  event to JetStream regardless — assert the panel's detached persister still
+  writes exactly one assistant row (with `turn_id`), clears
+  `active_turn_id`, and the resume endpoint then returns 204. Mid-stream
+  replay itself is covered by unit tests (a live-LLM replay assertion would
+  be racy: a failed turn can complete before the resume request lands).
 
 ## Example (definition of done)
 
