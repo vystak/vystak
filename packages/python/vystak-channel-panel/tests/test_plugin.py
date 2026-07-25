@@ -110,6 +110,9 @@ class TestCliRegistration:
             [sys.executable, "-c", code],
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
+        # check=False + explicit assert: CalledProcessError renders only the
+        # exit code, hiding the registry KeyError that explains the failure.
+        assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == "PanelChannelPlugin"
