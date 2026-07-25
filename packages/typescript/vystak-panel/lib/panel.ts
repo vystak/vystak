@@ -110,6 +110,12 @@ export const createConversation = (
 export const deleteConversation = (email: string, convId: string) =>
   ok(email, `/api/conversations/${convId}`, { method: 'DELETE' });
 
+export const renameConversation = (email: string, convId: string, title: string) =>
+  ok(email, `/api/conversations/${convId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+
 export const listMessages = (email: string, convId: string) =>
   json<{ messages: PanelMessage[] }>(
     email,

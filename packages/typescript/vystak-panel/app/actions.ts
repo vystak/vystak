@@ -2,15 +2,17 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
+import { auth, signOut } from '@/auth';
 import {
   addMember,
   addUser,
   createConversation,
   createProject,
   deleteConversation,
+  deleteProject,
   patchUser,
   removeMember,
+  renameConversation,
 } from '@/lib/panel';
 
 async function requireEmail(): Promise<string> {
@@ -45,7 +47,7 @@ export async function deleteConversationAction(
 ) {
   const email = await requireEmail();
   await deleteConversation(email, convId);
-  revalidatePath(`/p/${projectId}`);
+  redirect(`/p/${projectId}`);
 }
 
 export async function addMemberAction(projectId: string, formData: FormData) {
@@ -73,4 +75,26 @@ export async function setUserStatusAction(userId: string, status: string) {
   const email = await requireEmail();
   await patchUser(email, userId, { status });
   revalidatePath('/admin/users');
+}
+
+export async function renameConversationAction(
+  projectId: string,
+  convId: string,
+  formData: FormData,
+) {
+  const email = await requireEmail();
+  const title = String(formData.get('title') ?? '').trim();
+  if (!title) return;
+  await renameConversation(email, convId, title);
+  revalidatePath(`/p/${projectId}`);
+}
+
+export async function deleteProjectAction(projectId: string) {
+  const email = await requireEmail();
+  await deleteProject(email, projectId);
+  redirect('/');
+}
+
+export async function signOutAction() {
+  await signOut({ redirectTo: '/signin' });
 }
