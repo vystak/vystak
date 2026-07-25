@@ -1679,6 +1679,7 @@ async def test_setup_creates_admin_and_closes(api):
     resp = await api.post(
         "/api/setup",
         json={"email": "First@Example.com", "name": "First", "image": ""},
+        headers=as_user("First@Example.com"),
     )
     assert resp.status_code == 200
     assert resp.json()["user"]["role"] == "admin"
@@ -1686,14 +1687,18 @@ async def test_setup_creates_admin_and_closes(api):
 
     # second setup attempt is rejected
     again = await api.post(
-        "/api/setup", json={"email": "second@example.com", "name": "", "image": ""}
+        "/api/setup",
+        json={"email": "second@example.com", "name": "", "image": ""},
+        headers=as_user("second@example.com"),
     )
     assert again.status_code == 409
 
 
 async def test_bootstrap_known_user_gets_default_project(api):
     await api.post(
-        "/api/setup", json={"email": "a@example.com", "name": "A", "image": ""}
+        "/api/setup",
+        json={"email": "a@example.com", "name": "A", "image": ""},
+        headers=as_user("a@example.com"),
     )
     resp = await api.get("/api/bootstrap", headers=as_user("a@example.com"))
     body = resp.json()
@@ -1707,7 +1712,9 @@ async def test_bootstrap_known_user_gets_default_project(api):
 
 async def test_bootstrap_unknown_user_after_setup(api):
     await api.post(
-        "/api/setup", json={"email": "a@example.com", "name": "A", "image": ""}
+        "/api/setup",
+        json={"email": "a@example.com", "name": "A", "image": ""},
+        headers=as_user("a@example.com"),
     )
     resp = await api.get("/api/bootstrap", headers=as_user("stranger@example.com"))
     body = resp.json()
@@ -2029,7 +2036,11 @@ def as_user(email: str) -> dict:
 
 
 async def _setup_admin(api, email="admin@example.com"):
-    await api.post("/api/setup", json={"email": email, "name": "A", "image": ""})
+    await api.post(
+        "/api/setup",
+        json={"email": email, "name": "A", "image": ""},
+        headers=as_user(email),
+    )
     return email
 
 
@@ -2211,7 +2222,9 @@ def as_user(email: str) -> dict:
 
 async def _two_users(api):
     await api.post(
-        "/api/setup", json={"email": "owner@example.com", "name": "O", "image": ""}
+        "/api/setup",
+        json={"email": "owner@example.com", "name": "O", "image": ""},
+        headers=as_user("owner@example.com"),
     )
     await api.post(
         "/api/users", json={"email": "guest@example.com"},
@@ -2483,7 +2496,9 @@ def as_user(email: str) -> dict:
 
 async def _ready(api):
     await api.post(
-        "/api/setup", json={"email": "o@example.com", "name": "O", "image": ""}
+        "/api/setup",
+        json={"email": "o@example.com", "name": "O", "image": ""},
+        headers=as_user("o@example.com"),
     )
     boot = await api.get("/api/bootstrap", headers=as_user("o@example.com"))
     return "o@example.com", boot.json()["default_project_id"]
@@ -2747,7 +2762,9 @@ def _parse_sse(payload: str) -> list[dict]:
 
 async def _ready(api):
     await api.post(
-        "/api/setup", json={"email": "o@example.com", "name": "O", "image": ""}
+        "/api/setup",
+        json={"email": "o@example.com", "name": "O", "image": ""},
+        headers=as_user("o@example.com"),
     )
     boot = await api.get("/api/bootstrap", headers=as_user("o@example.com"))
     pid = boot.json()["default_project_id"]
