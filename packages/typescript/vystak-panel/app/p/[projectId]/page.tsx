@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
+import { Members } from '@/components/members';
 import { NewConversation } from '@/components/new-conversation';
-import { getBootstrap, listConversations } from '@/lib/panel';
+import { getBootstrap, listConversations, listMembers } from '@/lib/panel';
 
 export default async function ProjectPage({
   params,
@@ -15,7 +16,10 @@ export default async function ProjectPage({
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
   if (!bootstrap.user) redirect('/signin?error=AccessDenied');
-  const { conversations } = await listConversations(email, projectId);
+  const [{ conversations }, { members }] = await Promise.all([
+    listConversations(email, projectId),
+    listMembers(email, projectId),
+  ]);
   return (
     <div>
       <NewConversation projectId={projectId} agents={bootstrap.agents} />
@@ -29,6 +33,7 @@ export default async function ProjectPage({
           </li>
         ))}
       </ul>
+      <Members projectId={projectId} members={members} />
     </div>
   );
 }
