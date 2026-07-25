@@ -212,7 +212,7 @@ function ConversationItem({
               <Badge variant="outline" className="px-1 py-0 text-[10px]">
                 {c.agent_name}
               </Badge>
-              {relativeTime(c.updated_at)}
+              <span suppressHydrationWarning>{relativeTime(c.updated_at)}</span>
             </span>
           </div>
         </Link>
@@ -239,6 +239,7 @@ function ConversationItem({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Rename conversation</DialogTitle>
+            <DialogDescription>Give this conversation a new name.</DialogDescription>
           </DialogHeader>
           <form
             action={async fd => {
@@ -311,7 +312,7 @@ function UserMenu({ user }: { user: PanelUser }) {
               <MonitorIcon /> System
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => signOutAction()}>
+            <DropdownMenuItem onSelect={() => void signOutAction()}>
               <LogOutIcon /> Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -73,4 +73,3 @@ export interface Bootstrap {
   agents: string[];
   default_project_id: string | null;
 }
-

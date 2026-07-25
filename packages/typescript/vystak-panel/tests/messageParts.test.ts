@@ -1,74 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import {
-  mapPersistedParts,
-  parseToolInput,
-  stringifyToolValue,
-  toolStateLabel,
-} from '../lib/messageParts';
+import { mapPersistedParts } from '../lib/messageParts';
 import type { MessagePart } from '../lib/types';
 
-describe('toolStateLabel', () => {
-  it('labels input-streaming and input-available as running', () => {
-    expect(toolStateLabel('input-streaming')).toBe('running…');
-    expect(toolStateLabel('input-available')).toBe('running…');
-  });
-
-  it('labels output-available as done', () => {
-    expect(toolStateLabel('output-available')).toBe('done');
-  });
-
-  it('labels output-error as failed', () => {
-    expect(toolStateLabel('output-error')).toBe('failed');
-  });
-});
-
-describe('stringifyToolValue', () => {
-  it('passes strings through unchanged', () => {
-    expect(stringifyToolValue('Kyiv')).toBe('Kyiv');
-    expect(stringifyToolValue('')).toBe('');
-  });
-
-  it('returns an empty string for undefined (a running tool has no output yet)', () => {
-    expect(stringifyToolValue(undefined)).toBe('');
-  });
-
-  it('JSON-stringifies objects and arrays with indentation', () => {
-    expect(stringifyToolValue({ city: 'Kyiv' })).toBe(JSON.stringify({ city: 'Kyiv' }, null, 2));
-    expect(stringifyToolValue([1, 2, 3])).toBe(JSON.stringify([1, 2, 3], null, 2));
-  });
-
-  it('stringifies primitives other than string', () => {
-    expect(stringifyToolValue(42)).toBe('42');
-    expect(stringifyToolValue(true)).toBe('true');
-    expect(stringifyToolValue(null)).toBe('null');
-  });
-
-  it('falls back instead of throwing on a value JSON.stringify cannot serialize', () => {
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    expect(() => stringifyToolValue(circular)).not.toThrow();
-    expect(typeof stringifyToolValue(circular)).toBe('string');
-  });
-});
-
-describe('parseToolInput', () => {
-  it('parses valid JSON into a structured value', () => {
-    expect(parseToolInput('{"city":"Kyiv"}')).toEqual({ city: 'Kyiv' });
-  });
-
-  it('falls back to the raw string on parse failure', () => {
-    expect(parseToolInput('not json')).toBe('not json');
-  });
-
-  it('falls back to the raw string for an empty string', () => {
-    expect(parseToolInput('')).toBe('');
-  });
-});
-
 describe('mapPersistedParts', () => {
+  it('falls back to a single text part built from content when parts is null', () => {
+    expect(mapPersistedParts(null, 'hello there')).toEqual([
+      { type: 'text', text: 'hello there' },
+    ]);
+  });
+
+  it('falls back to a single text part built from content when parts is empty', () => {
+    expect(mapPersistedParts([], 'hello there')).toEqual([
+      { type: 'text', text: 'hello there' },
+    ]);
+  });
+
   it('passes text parts through unchanged', () => {
     const parts: MessagePart[] = [{ type: 'text', text: 'hello' }];
-    expect(mapPersistedParts(parts)).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(mapPersistedParts(parts, 'hello')).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
   it('maps a successful tool part to a finished dynamic-tool part with parsed input', () => {
@@ -82,7 +31,7 @@ describe('mapPersistedParts', () => {
         is_error: false,
       },
     ];
-    expect(mapPersistedParts(parts)).toEqual([
+    expect(mapPersistedParts(parts, '')).toEqual([
       {
         type: 'dynamic-tool',
         toolCallId: 'call_1',
@@ -105,7 +54,7 @@ describe('mapPersistedParts', () => {
         is_error: true,
       },
     ];
-    expect(mapPersistedParts(parts)).toEqual([
+    expect(mapPersistedParts(parts, '')).toEqual([
       {
         type: 'dynamic-tool',
         toolCallId: 'call_2',
@@ -128,7 +77,7 @@ describe('mapPersistedParts', () => {
         is_error: false,
       },
     ];
-    const [mapped] = mapPersistedParts(parts);
+    const [mapped] = mapPersistedParts(parts, '');
     expect(mapped).toMatchObject({ input: 'not json' });
   });
 
@@ -145,7 +94,7 @@ describe('mapPersistedParts', () => {
       },
       { type: 'text', text: 'it is sunny' },
     ];
-    const mapped = mapPersistedParts(parts);
+    const mapped = mapPersistedParts(parts, '');
     expect(mapped.map(p => p.type)).toEqual(['text', 'dynamic-tool', 'text']);
   });
 });

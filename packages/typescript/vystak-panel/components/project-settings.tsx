@@ -43,7 +43,7 @@ export function ProjectSettings({
               key={m.id}
               className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm"
             >
-              <span className="truncate">{m.email}</span>
+              <span className="min-w-0 flex-1 truncate">{m.email}</span>
               <ConfirmAction
                 action={removeMemberAction.bind(null, projectId, m.id)}
                 title="Remove member?"

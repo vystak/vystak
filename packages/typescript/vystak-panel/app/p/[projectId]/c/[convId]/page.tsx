@@ -6,41 +6,13 @@ import { ConversationTitle } from '@/components/conversation-title';
 import { PageHeader } from '@/components/page-header';
 import { ProjectSettings } from '@/components/project-settings';
 import { Badge } from '@/components/ui/badge';
-import { safeParseJson } from '@/lib/format';
+import { mapPersistedParts } from '@/lib/messageParts';
 import {
   getBootstrap,
   listConversations,
   listMembers,
   listMessages,
 } from '@/lib/panel';
-import type { MessagePart } from '@/lib/types';
-
-type UIPart = UIMessage['parts'][number];
-
-function toUIParts(parts: MessagePart[] | null | undefined, content: string): UIPart[] {
-  if (!parts?.length) return [{ type: 'text', text: content }];
-  return parts.map<UIPart>(p => {
-    if (p.type === 'text') return { type: 'text', text: p.text };
-    if (p.is_error) {
-      return {
-        type: 'dynamic-tool',
-        toolCallId: p.tool_call_id,
-        toolName: p.tool_name,
-        state: 'output-error',
-        input: safeParseJson(p.input),
-        errorText: p.output,
-      };
-    }
-    return {
-      type: 'dynamic-tool',
-      toolCallId: p.tool_call_id,
-      toolName: p.tool_name,
-      state: 'output-available',
-      input: safeParseJson(p.input),
-      output: p.output,
-    };
-  });
-}
 
 export default async function ConversationPage({
   params,
@@ -65,7 +37,7 @@ export default async function ConversationPage({
   const initialMessages: UIMessage[] = messages.map(m => ({
     id: m.id,
     role: m.role,
-    parts: toUIParts(m.parts, m.content),
+    parts: mapPersistedParts(m.parts, m.content),
   }));
 
   return (

@@ -84,15 +84,9 @@ export function Chat({
                           <ToolInput input={part.input} />
                           <ToolOutput
                             output={
-                              part.state === 'output-available' ? (
-                                <MessageResponse>
-                                  {'```json\n' +
-                                    (typeof part.output === 'string'
-                                      ? part.output
-                                      : String(part.output)) +
-                                    '\n```'}
-                                </MessageResponse>
-                              ) : undefined
+                              part.state === 'output-available'
+                                ? part.output
+                                : undefined
                             }
                             errorText={
                               part.state === 'output-error'
@@ -135,7 +129,7 @@ export function Chat({
               stop();
               return;
             }
-            const text = message.text?.trim() ?? input.trim();
+            const text = (message.text ?? '').trim();
             if (!text) return;
             sendMessage({ text });
             setInput('');
@@ -149,7 +143,7 @@ export function Chat({
               setInput(e.target.value);
             }}
           />
-          <PromptInputSubmit status={status} />
+          <PromptInputSubmit status={status} disabled={!busy && !input.trim()} />
         </PromptInput>
       </div>
     </div>
