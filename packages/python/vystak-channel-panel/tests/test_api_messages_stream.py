@@ -26,6 +26,25 @@ class FakeResponsesClient:
             yield ev
 
 
+class FakeResponsesClientRaisesMidStream:
+    def __init__(self, events, exc, capture=None):
+        self._events = events
+        self._exc = exc
+        self.capture = capture if capture is not None else {}
+
+    async def stream_message(
+        self, base_url, text, *, previous_response_id, user_id=None, project_id=None
+    ):
+        self.capture.update(
+            base_url=base_url, text=text,
+            previous_response_id=previous_response_id,
+            user_id=user_id, project_id=project_id,
+        )
+        for ev in self._events:
+            yield ev
+        raise self._exc
+
+
 def _parse_sse(payload: str) -> list[dict]:
     out = []
     for line in payload.splitlines():
@@ -181,6 +200,38 @@ async def test_truncated_stream_still_persists_streamed_text(api, panel_rt):
         headers=as_user(owner),
     )
     assert [e["type"] for e in _parse_sse(resp.text)] == ["delta", "delta", "done"]
+    msgs = (
+        await api.get(
+            f"/api/conversations/{cid}/messages", headers=as_user(owner)
+        )
+    ).json()["messages"]
+    assert [(m["role"], m["content"]) for m in msgs] == [
+        ("user", "hello?"),
+        ("assistant", "partial"),
+    ]
+
+
+async def test_dropped_connection_persists_partial_text(api, panel_rt):
+    """Agent connection drops mid-stream — an exception escapes
+    stream_message rather than an `error` event being yielded. The text
+    the user already watched stream in must survive a reload, the same
+    failure mode the `error` branch above guards against, but reached via
+    the outer exception handler instead."""
+    owner, pid, cid = await _ready(api)
+    panel_rt.responses_client = FakeResponsesClientRaisesMidStream(
+        [
+            PanelStreamEvent(type="token", text="par"),
+            PanelStreamEvent(type="token", text="tial"),
+        ],
+        RuntimeError("connection reset"),
+    )
+    resp = await api.post(
+        f"/api/conversations/{cid}/messages",
+        json={"text": "hello?"},
+        headers=as_user(owner),
+    )
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == ["delta", "delta", "error"]
     msgs = (
         await api.get(
             f"/api/conversations/{cid}/messages", headers=as_user(owner)

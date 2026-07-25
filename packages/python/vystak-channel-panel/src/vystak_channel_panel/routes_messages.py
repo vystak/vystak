@@ -121,6 +121,22 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                     })
             except Exception as exc:  # noqa: BLE001 — stream must not raise
                 logger.exception("panel stream failed for conv=%s", conv_id)
+                if parts:
+                    # Same failure mode the `error` branch above guards
+                    # against: the user already watched this text stream
+                    # in, so it must survive a reload even though the
+                    # connection dropped outright rather than surfacing an
+                    # `error` event. No response_id — none was confirmed,
+                    # and last_response_id is intentionally left untouched.
+                    try:
+                        await rt.panel_store.add_message(
+                            conv_id, "assistant", "".join(parts),
+                        )
+                    except Exception:  # noqa: BLE001 — last line of defence
+                        logger.exception(
+                            "failed to persist partial text for conv=%s",
+                            conv_id,
+                        )
                 yield _sse({"type": "error", "message": str(exc)})
 
         return StreamingResponse(gen(), media_type="text/event-stream")
