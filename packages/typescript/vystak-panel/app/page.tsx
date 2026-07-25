@@ -8,6 +8,6 @@ export default async function Home() {
   if (!email) redirect('/signin');
   const bootstrap = await getBootstrap(email);
   if (!bootstrap.user) redirect('/signin?error=AccessDenied');
-  if (!bootstrap.default_project_id) redirect('/signin');
+  if (!bootstrap.default_project_id) redirect('/signin?error=AccessDenied');
   redirect(`/p/${bootstrap.default_project_id}`);
 }

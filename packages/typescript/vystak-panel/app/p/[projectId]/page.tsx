@@ -13,10 +13,9 @@ export default async function ProjectPage({
   const session = await auth();
   const email = session?.user?.email?.toLowerCase();
   if (!email) redirect('/signin');
-  const [bootstrap, { conversations }] = await Promise.all([
-    getBootstrap(email),
-    listConversations(email, projectId),
-  ]);
+  const bootstrap = await getBootstrap(email);
+  if (!bootstrap.user) redirect('/signin?error=AccessDenied');
+  const { conversations } = await listConversations(email, projectId);
   return (
     <div>
       <NewConversation projectId={projectId} agents={bootstrap.agents} />
