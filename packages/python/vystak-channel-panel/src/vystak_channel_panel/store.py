@@ -11,7 +11,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from vystak_channel_panel.models import PanelUser, Project
+from vystak_channel_panel.models import Conversation, PanelMessage, PanelUser, Project
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -301,3 +301,119 @@ class SqlitePanelStore:
             if winner is None:
                 raise
             return winner
+
+    # --- conversations ----------------------------------------------------
+
+    async def create_conversation(
+        self, project_id: str, creator_id: str, agent_name: str, *, title: str = ""
+    ) -> Conversation:
+        now = _now()
+        conv = Conversation(
+            id=_new_id(),
+            project_id=project_id,
+            creator_id=creator_id,
+            agent_name=agent_name,
+            title=title,
+            created_at=now,
+            updated_at=now,
+        )
+        await self.db.execute(
+            "INSERT INTO conversations "
+            "(id, project_id, creator_id, agent_name, title, last_response_id, "
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (conv.id, conv.project_id, conv.creator_id, conv.agent_name,
+             conv.title, conv.last_response_id, conv.created_at, conv.updated_at),
+        )
+        await self.db.commit()
+        return conv
+
+    async def get_conversation(self, conversation_id: str) -> Conversation | None:
+        async with self.db.execute(
+            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return Conversation(**dict(row)) if row else None
+
+    async def list_conversations(self, project_id: str) -> list[Conversation]:
+        async with self.db.execute(
+            "SELECT * FROM conversations WHERE project_id = ? "
+            "ORDER BY updated_at DESC",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [Conversation(**dict(r)) for r in rows]
+
+    async def update_conversation(
+        self,
+        conversation_id: str,
+        *,
+        title: str | None = None,
+        last_response_id: str | None = None,
+    ) -> Conversation | None:
+        # Single statement: a multi-statement partial update that raises
+        # midway leaves an uncommitted write the next unrelated commit()
+        # would silently adopt (see the update_user fix in Task 3).
+        # COALESCE preserves the partial-update contract — a None argument
+        # leaves that column unchanged.
+        await self.db.execute(
+            "UPDATE conversations SET title = COALESCE(?, title), "
+            "last_response_id = COALESCE(?, last_response_id), updated_at = ? "
+            "WHERE id = ?",
+            (title, last_response_id, _now(), conversation_id),
+        )
+        await self.db.commit()
+        return await self.get_conversation(conversation_id)
+
+    async def delete_conversation(self, conversation_id: str) -> None:
+        # Multi-statement write — use the store's _write() helper so a
+        # mid-sequence failure rolls back instead of leaving pending
+        # statements for the next unrelated commit() to adopt (Task 4).
+        async with self._write() as db:
+            await db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
+            )
+            await db.execute(
+                "DELETE FROM conversations WHERE id = ?", (conversation_id,)
+            )
+
+    # --- messages ---------------------------------------------------------
+
+    async def add_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        *,
+        response_id: str | None = None,
+    ) -> PanelMessage:
+        msg = PanelMessage(
+            id=_new_id(),
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            response_id=response_id,
+            created_at=_now(),
+        )
+        # Insert + bump in one transaction via _write() (Task 4): a message
+        # must never persist without its conversation's updated_at bump.
+        async with self._write() as db:
+            await db.execute(
+                "INSERT INTO messages "
+                "(id, conversation_id, role, content, response_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (msg.id, msg.conversation_id, msg.role, msg.content,
+                 msg.response_id, msg.created_at),
+            )
+            await db.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (msg.created_at, conversation_id),
+            )
+        return msg
+
+    async def list_messages(self, conversation_id: str) -> list[PanelMessage]:
+        async with self.db.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            (conversation_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [PanelMessage(**dict(r)) for r in rows]

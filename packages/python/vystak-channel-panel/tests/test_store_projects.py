@@ -139,7 +139,6 @@ async def test_failed_delete_project_does_not_leak_into_later_commit(
         assert (await cur.fetchone())["n"] == 1
 
 
-@pytest.mark.skip(reason="conversations land in next task")
 async def test_delete_project_cascades(store, users):
     a, b = users
     p = await store.create_project("Doomed", a.id)
