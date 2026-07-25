@@ -11,16 +11,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user }) {
       const email = user.email?.toLowerCase();
       if (!email) return false;
-      let bootstrap;
+      let decision;
       try {
-        bootstrap = await getBootstrap(email);
+        // evaluateSignIn is inside the try too: a 200 response carrying a
+        // null/malformed body would otherwise throw here and get rewrapped
+        // as AccessDenied — the same wrong "not invited" screen.
+        decision = evaluateSignIn(await getBootstrap(email));
       } catch {
         // The channel is unreachable or erroring. Letting this throw would be
         // rewrapped as AccessDenied and render "not invited", which is both
         // wrong and alarming — redirect with a distinguishable code instead.
         return '/signin?error=PanelUnavailable';
       }
-      const decision = evaluateSignIn(bootstrap);
       if (decision === 'setup') {
         try {
           await setupAdmin({

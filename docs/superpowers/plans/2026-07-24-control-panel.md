@@ -3699,17 +3699,38 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user }) {
       const email = user.email?.toLowerCase();
       if (!email) return false;
-      const bootstrap = await getBootstrap(email);
-      const decision = evaluateSignIn(bootstrap);
+      let decision;
+      try {
+        // evaluateSignIn is inside the try too: a 200 response carrying a
+        // null/malformed body would otherwise throw here and get rewrapped
+        // as AccessDenied — the same wrong "not invited" screen.
+        decision = evaluateSignIn(await getBootstrap(email));
+      } catch {
+        // @auth/core rewraps ANY throw from this callback as AccessDenied,
+        // which renders "not invited" — wrong and alarming when the real
+        // cause is the channel being down. A returned string redirects.
+        return '/signin?error=PanelUnavailable';
+      }
       if (decision === 'setup') {
-        await setupAdmin({
-          email,
-          name: user.name ?? '',
-          image: user.image ?? '',
-        });
+        try {
+          await setupAdmin({
+            email,
+            name: user.name ?? '',
+            image: user.image ?? '',
+          });
+        } catch {
+          return '/signin?error=PanelUnavailable';
+        }
         return true;
       }
       return decision === 'allow';
+    },
+    async jwt({ token }) {
+      // Authorization used the lowercased email; the token would otherwise
+      // carry Google's original casing, so session.user.email (the identity
+      // every later channel call sends) could diverge from what was checked.
+      if (token.email) token.email = token.email.toLowerCase();
+      return token;
     },
   },
 });
