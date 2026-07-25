@@ -12,6 +12,7 @@ members = [
     "vystak",
     "vystak-channel-chat",
     "vystak-channel-discord",
+    "vystak-channel-panel",
     "vystak-channel-runtime",
     "vystak-channel-slack",
     "vystak-chat",
@@ -3076,6 +3077,20 @@ requires-dist = [
 ]
 
 [[package]]
+name = "vystak-channel-panel"
+source = { editable = "packages/python/vystak-channel-panel" }
+dependencies = [
+    { name = "vystak" },
+    { name = "vystak-channel-runtime" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "vystak", editable = "packages/python/vystak" },
+    { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
+]
+
+[[package]]
 name = "vystak-channel-runtime"
 source = { editable = "packages/python/vystak-channel-runtime" }
 dependencies = [
@@ -3396,6 +3411,7 @@ dev = [
     { name = "vystak" },
     { name = "vystak-channel-chat" },
     { name = "vystak-channel-discord" },
+    { name = "vystak-channel-panel" },
     { name = "vystak-channel-runtime" },
     { name = "vystak-channel-slack" },
     { name = "vystak-chat" },
@@ -3425,6 +3441,7 @@ dev = [
     { name = "vystak", editable = "packages/python/vystak" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },
+    { name = "vystak-channel-panel", editable = "packages/python/vystak-channel-panel" },
     { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
     { name = "vystak-channel-slack", editable = "packages/python/vystak-channel-slack" },
     { name = "vystak-chat", editable = "packages/python/vystak-chat" },

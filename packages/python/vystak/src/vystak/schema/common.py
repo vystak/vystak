@@ -26,6 +26,7 @@ class ChannelType(StrEnum):
     CRON = "cron"
     WIDGET = "widget"
     CHAT = "chat"
+    PANEL = "panel"
 
 
 class McpTransport(StrEnum):
