@@ -56,3 +56,33 @@ async def test_settings_round_trip(store):
     await store.set_setting("k", "v")
     await store.set_setting("k", "v2")
     assert await store.get_setting("k") == "v2"
+
+
+async def test_claim_setup_admin_creates_admin_and_default_project(store):
+    user = await store.claim_setup_admin("Admin@Example.com", name="Ada")
+    assert user.role == "admin"
+    assert user.email == "admin@example.com"  # normalized lowercase
+    assert await store.get_setting("setup_complete") == "1"
+    projects = await store.list_projects_for_user(user.id)
+    assert len(projects) == 1
+    assert projects[0].name == "Personal"
+    assert projects[0].is_default is True
+
+
+async def test_claim_setup_admin_is_single_flight(store):
+    first = await store.claim_setup_admin("a@example.com", name="A")
+    assert first.role == "admin"
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.claim_setup_admin("b@example.com", name="B")
+    assert await store.count_users() == 1
+
+
+async def test_failed_claim_setup_admin_does_not_leak_into_later_commit(store):
+    first = await store.claim_setup_admin("a@example.com", name="A")
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.claim_setup_admin("b@example.com", name="B")
+    # An unrelated later write must not silently adopt the failed claim's
+    # pending user/project rows (see the update_user fix in Task 3).
+    await store.create_user("c@example.com")
+    assert await store.count_users() == 2
+    assert len(await store.list_projects_for_user(first.id)) == 1
