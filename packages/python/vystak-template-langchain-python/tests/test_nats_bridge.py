@@ -43,6 +43,7 @@ def test_maybe_build_bridge_uses_explicit_subject(monkeypatch):
     assert bridge is not None
     assert bridge._subject == "explicit.subject"
     assert bridge._local_url == "http://localhost:9000/a2a"
+    assert bridge._local_base == "http://localhost:9000"
     assert bridge._queue_group == "agents.hero"
 
 
@@ -118,12 +119,18 @@ async def test_bridge_forwards_envelope_to_local_a2a(monkeypatch):
             posted_body.append(content)
             return httpx.Response(
                 200,
-                content=json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": "rpc-1",
-                    "result": {"status": {"state": "completed",
-                                          "message": {"parts": [{"text": "pong"}]}}},
-                }).encode(),
+                content=json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "rpc-1",
+                        "result": {
+                            "status": {
+                                "state": "completed",
+                                "message": {"parts": [{"text": "pong"}]},
+                            }
+                        },
+                    }
+                ).encode(),
             )
 
         async def aclose(self) -> None:
@@ -139,13 +146,14 @@ async def test_bridge_forwards_envelope_to_local_a2a(monkeypatch):
     )
     await bridge.start()
 
-    envelope = json.dumps({
-        "jsonrpc": "2.0",
-        "id": "rpc-1",
-        "method": "message/send",
-        "params": {"message": {"role": "user", "messageId": "m1",
-                               "parts": [{"text": "hi"}]}},
-    }).encode()
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "method": "message/send",
+            "params": {"message": {"role": "user", "messageId": "m1", "parts": [{"text": "hi"}]}},
+        }
+    ).encode()
     msg = _FakeMsg(data=envelope, reply="_INBOX.abc")
 
     await bridge._forward(msg)
@@ -195,8 +203,9 @@ async def test_bridge_returns_jsonrpc_error_on_local_http_failure(monkeypatch):
     )
     await bridge.start()
 
-    envelope = json.dumps({"jsonrpc": "2.0", "id": "rpc-9",
-                           "method": "message/send", "params": {}}).encode()
+    envelope = json.dumps(
+        {"jsonrpc": "2.0", "id": "rpc-9", "method": "message/send", "params": {}}
+    ).encode()
     await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.xyz"))
 
     assert len(fake_nc.published) == 1
@@ -276,8 +285,9 @@ async def test_bridge_silently_drops_when_no_reply_subject(monkeypatch):
         local_url="http://localhost:8000/a2a",
     )
     await bridge.start()
-    envelope = json.dumps({"jsonrpc": "2.0", "id": "rpc-9",
-                           "method": "message/send", "params": {}}).encode()
+    envelope = json.dumps(
+        {"jsonrpc": "2.0", "id": "rpc-9", "method": "message/send", "params": {}}
+    ).encode()
     await bridge._forward(_FakeMsg(data=envelope, reply=""))
 
     # No reply inbox → bridge must not attempt a publish (would crash with
@@ -322,10 +332,13 @@ async def test_bridge_propagates_traceparent_to_local_a2a(monkeypatch):
             captured_headers.append(dict(headers))
             return httpx.Response(
                 200,
-                content=json.dumps({
-                    "jsonrpc": "2.0", "id": "x",
-                    "result": {"status": {"message": {"parts": [{"text": "ok"}]}}},
-                }).encode(),
+                content=json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "x",
+                        "result": {"status": {"message": {"parts": [{"text": "ok"}]}}},
+                    }
+                ).encode(),
             )
 
         async def aclose(self) -> None:
@@ -342,17 +355,21 @@ async def test_bridge_propagates_traceparent_to_local_a2a(monkeypatch):
     await bridge.start()
 
     upstream_tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-    envelope = json.dumps({
-        "jsonrpc": "2.0", "id": "rpc-1", "method": "message/send",
-        "params": {
-            "message": {
-                "role": "user",
-                "messageId": "m1",
-                "parts": [{"text": "hi"}],
-                "metadata": {"traceparent": upstream_tp},
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": "m1",
+                    "parts": [{"text": "hi"}],
+                    "metadata": {"traceparent": upstream_tp},
+                },
             },
-        },
-    }).encode()
+        }
+    ).encode()
 
     await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.abc"))
 
@@ -367,3 +384,82 @@ async def test_bridge_propagates_traceparent_to_local_a2a(monkeypatch):
 
     await bridge.stop()
     provider.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Responses-API proxying (responses/create, responses/get)
+# ---------------------------------------------------------------------------
+
+
+def _bridge_with_mock_http(handler: Any) -> tuple[NatsHttpBridge, _FakeNatsClient]:
+    """Build a bridge with a fake NATS client and a mocked local HTTP client,
+    bypassing bridge.start() (no real NATS connect needed for these tests)."""
+    bridge = NatsHttpBridge(
+        nats_url="nats://ignored:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+        local_base="http://localhost:8000",
+    )
+    fake_nc = _FakeNatsClient()
+    bridge._nc = fake_nc
+    bridge._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return bridge, fake_nc
+
+
+@pytest.mark.asyncio
+async def test_responses_create_proxies_to_local_v1_responses():
+    """responses/create → POST /v1/responses (forced non-stream) → JSON-RPC result."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "resp_1", "status": "completed"})
+
+    bridge, fake_nc = _bridge_with_mock_http(handler)
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "42",
+            "method": "responses/create",
+            "params": {"request": {"input": "hi", "stream": True}},
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r1"))
+
+    assert seen["url"] == "http://localhost:8000/v1/responses"
+    assert seen["body"]["stream"] is False  # forced non-stream
+
+    assert len(fake_nc.published) == 1
+    reply_subject, payload = fake_nc.published[0]
+    reply = json.loads(payload)
+    assert reply_subject == "_INBOX.r1"
+    assert reply["id"] == "42"
+    assert reply["result"]["id"] == "resp_1"
+
+
+@pytest.mark.asyncio
+async def test_responses_get_proxies_and_maps_404_to_null_result():
+    """responses/get → GET /v1/responses/{id}; 404 maps to result: null."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://localhost:8000/v1/responses/resp_x"
+        return httpx.Response(404, json={"detail": "not found"})
+
+    bridge, fake_nc = _bridge_with_mock_http(handler)
+    envelope = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "43",
+            "method": "responses/get",
+            "params": {"response_id": "resp_x"},
+        }
+    ).encode()
+    await bridge._forward(_FakeMsg(data=envelope, reply="_INBOX.r1"))
+
+    assert len(fake_nc.published) == 1
+    _, payload = fake_nc.published[0]
+    reply = json.loads(payload)
+    assert reply["id"] == "43"
+    assert reply["result"] is None

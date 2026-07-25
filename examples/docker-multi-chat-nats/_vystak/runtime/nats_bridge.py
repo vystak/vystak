@@ -51,11 +51,17 @@ class NatsHttpBridge:
         subject: str,
         queue_group: str,
         local_url: str,
+        local_base: str = "",
     ) -> None:
         self._nats_url = nats_url
         self._subject = subject
         self._queue_group = queue_group
         self._local_url = local_url
+        # Base URL of the local FastAPI app (no path), used for the
+        # Responses-API proxy routes below. Falls back to deriving it from
+        # local_url (the /a2a URL) so existing callers that only pass
+        # local_url keep working.
+        self._local_base = local_base or local_url.removesuffix("/a2a")
         self._nc: Any = None
         self._sub: Any = None
         self._http: httpx.AsyncClient | None = None
@@ -70,7 +76,10 @@ class NatsHttpBridge:
 
         logger.info(
             "nats_bridge.start url=%s subject=%s queue=%s local=%s",
-            self._nats_url, self._subject, self._queue_group, self._local_url,
+            self._nats_url,
+            self._subject,
+            self._queue_group,
+            self._local_url,
         )
         self._nc = await nats.connect(self._nats_url)
         # Localhost loopback HTTP client. Re-used across requests to
@@ -101,22 +110,35 @@ class NatsHttpBridge:
             body = msg.data
             if not body:
                 await self._publish_error_async(
-                    reply_subject, code=-32700, message="empty payload",
+                    reply_subject,
+                    code=-32700,
+                    message="empty payload",
                 )
                 return
             try:
                 envelope = json.loads(body)
             except json.JSONDecodeError as e:
                 await self._publish_error_async(
-                    reply_subject, code=-32700, message=f"parse error: {e}",
+                    reply_subject,
+                    code=-32700,
+                    message=f"parse error: {e}",
                 )
                 return
             request_id = envelope.get("id")
             method = envelope.get("method", "?")
             logger.debug(
                 "nats_bridge.inbound method=%s id=%s bytes=%d",
-                method, request_id, len(body),
+                method,
+                request_id,
+                len(body),
             )
+
+            if method == "responses/create":
+                await self._handle_responses_create(envelope, reply_subject)
+                return
+            if method == "responses/get":
+                await self._handle_responses_get(envelope, reply_subject)
+                return
 
             # Extract the upstream W3C traceparent (if any) so the local
             # /a2a call continues the same trace. The publisher
@@ -137,7 +159,9 @@ class NatsHttpBridge:
             logger.exception("nats_bridge.unhandled")
             # Last-ditch: best-effort error publish without re-raising.
             await self._publish_error_async(
-                reply_subject, code=-32603, message="bridge internal error",
+                reply_subject,
+                code=-32603,
+                message="bridge internal error",
             )
 
     async def _forward_with_trace_context(
@@ -206,10 +230,14 @@ class NatsHttpBridge:
                 assert self._http is not None  # set by start()
                 try:
                     resp = await self._http.post(
-                        self._local_url, content=body, headers=headers,
+                        self._local_url,
+                        content=body,
+                        headers=headers,
                     )
                 except (
-                    httpx.ConnectError, httpx.ReadTimeout, httpx.HTTPError,
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.HTTPError,
                 ) as e:
                     logger.exception("nats_bridge.local_http_error")
                     await self._publish_error_async(
@@ -240,6 +268,60 @@ class NatsHttpBridge:
                 except Exception:  # noqa: BLE001
                     pass
 
+    async def _handle_responses_create(self, envelope: dict[str, Any], reply_subject: str) -> None:
+        """Proxy responses/create to the local /v1/responses (non-stream).
+
+        Streaming is not supported over the NATS bridge (single-reply
+        JSON-RPC only), so the outbound request is forced to
+        ``stream: False`` regardless of what the caller asked for.
+        """
+        request = dict((envelope.get("params") or {}).get("request") or {})
+        request["stream"] = False
+        assert self._http is not None  # set by start()
+        try:
+            resp = await self._http.post(f"{self._local_base}/v1/responses", json=request)
+            resp.raise_for_status()
+            result = resp.json()
+        except Exception as e:  # noqa: BLE001 — reply with JSON-RPC error, never raise
+            await self._publish_error_async(
+                reply_subject,
+                code=-32603,
+                message=f"responses/create failed: {e}",
+                request_id=envelope.get("id"),
+            )
+            return
+        reply = {"jsonrpc": "2.0", "id": envelope.get("id"), "result": result}
+        if reply_subject:
+            await self._nc.publish(reply_subject, json.dumps(reply).encode())
+
+    async def _handle_responses_get(self, envelope: dict[str, Any], reply_subject: str) -> None:
+        """Proxy responses/get to the local GET /v1/responses/{id}.
+
+        A 404 from the local endpoint (unknown response id) maps to a
+        successful JSON-RPC reply with ``result: null`` rather than an
+        error — "not found" is a valid answer for this lookup.
+        """
+        response_id = (envelope.get("params") or {}).get("response_id") or ""
+        assert self._http is not None  # set by start()
+        result: Any = None
+        try:
+            resp = await self._http.get(f"{self._local_base}/v1/responses/{response_id}")
+            if resp.status_code == 200:
+                result = resp.json()
+            elif resp.status_code != 404:
+                resp.raise_for_status()
+        except Exception as e:  # noqa: BLE001
+            await self._publish_error_async(
+                reply_subject,
+                code=-32603,
+                message=f"responses/get failed: {e}",
+                request_id=envelope.get("id"),
+            )
+            return
+        reply = {"jsonrpc": "2.0", "id": envelope.get("id"), "result": result}
+        if reply_subject:
+            await self._nc.publish(reply_subject, json.dumps(reply).encode())
+
     async def _publish_error_async(
         self,
         reply_subject: str,
@@ -253,7 +335,9 @@ class NatsHttpBridge:
         if not reply_subject or self._nc is None:
             return
         payload = self._error_envelope_bytes(
-            request_id=request_id, code=code, message=message,
+            request_id=request_id,
+            code=code,
+            message=message,
         )
         try:
             await self._nc.publish(reply_subject, payload)
@@ -328,6 +412,7 @@ def maybe_build_bridge(agent: Any, port: int) -> NatsHttpBridge | None:
         subject=subject,
         queue_group=queue_group,
         local_url=local_url,
+        local_base=f"http://localhost:{port}",
     )
 
 
