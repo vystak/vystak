@@ -15,6 +15,7 @@ httpx>=0.28
 pydantic>=2.0
 pyyaml>=6.0
 aiosqlite>=0.20
+bcrypt>=4.0
 asyncpg>=0.29
 nats-py>=2.6
 croniter>=2.0
