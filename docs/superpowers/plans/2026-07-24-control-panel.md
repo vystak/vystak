@@ -1905,14 +1905,30 @@ def build_app(rt: "PanelChannelRuntime") -> FastAPI:
         }
 
     @app.post("/api/setup")
-    async def setup(body: SetupIn, _: None = Depends(service_auth)) -> dict:
-        if await rt.panel_store.count_users() > 0:
-            raise HTTPException(status_code=409, detail="setup already completed")
-        user = await rt.panel_store.create_user(
-            body.email, name=body.name, image=body.image, role="admin"
-        )
-        await rt.panel_store.ensure_default_project(user.id)
-        await rt.panel_store.set_setting("setup_complete", "1")
+    async def setup(
+        request: Request, body: SetupIn, _: None = Depends(service_auth)
+    ) -> dict:
+        # The UI backend asserts the Google-verified email in the header; the
+        # body must not be able to disagree with it.
+        if acting_email(request) != body.email.strip().lower():
+            raise HTTPException(
+                status_code=400, detail="X-Panel-User must match the body email"
+            )
+        # Atomic single-flight claim. A count-then-create check is NOT enough:
+        # two concurrent requests with different emails both pass the count
+        # (users.email UNIQUE does not collide) and both become admin —
+        # reproduced during Task 7's review. claim_setup_admin inserts the
+        # 'setup_complete' settings row under its primary key inside one
+        # _write() transaction along with the user and default project, so a
+        # second caller raises IntegrityError and nothing partial persists.
+        try:
+            user = await rt.panel_store.claim_setup_admin(
+                body.email, name=body.name, image=body.image
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409, detail="setup already completed"
+            ) from None
         return {"user": user.model_dump()}
 
     from vystak_channel_panel.routes_registry import mount_routes
@@ -3350,8 +3366,11 @@ async function json<T>(user: string | null, path: string, init?: RequestInit): P
 export const getBootstrap = (email: string) =>
   json<Bootstrap>(email, '/api/bootstrap');
 
+// The channel requires X-Panel-User on /api/setup and rejects a body email
+// that disagrees with it, so the acting email is sent as the user here — it
+// must not be null.
 export const setupAdmin = (body: { email: string; name: string; image: string }) =>
-  json<{ user: PanelUser }>(null, '/api/setup', {
+  json<{ user: PanelUser }>(body.email, '/api/setup', {
     method: 'POST',
     body: JSON.stringify(body),
   });
