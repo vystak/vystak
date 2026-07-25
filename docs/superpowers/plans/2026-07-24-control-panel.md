@@ -3570,6 +3570,18 @@ export function panelStreamToUIChunks(
           for (const line of lines) handleLine(line.trim());
         }
         if (buffer.trim()) handleLine(buffer.trim());
+      } catch (err) {
+        // A transport-level failure (dropped connection, dead channel) never
+        // produces an SSE line, so without this the finally below would emit
+        // a clean finish and the user would see truncated text as complete.
+        if (textOpen) {
+          controller.enqueue({ type: 'text-end', id: TEXT_ID });
+          textOpen = false;
+        }
+        controller.enqueue({
+          type: 'error',
+          errorText: err instanceof Error ? err.message : 'stream failed',
+        });
       } finally {
         if (textOpen) controller.enqueue({ type: 'text-end', id: TEXT_ID });
         controller.enqueue({ type: 'finish' });
