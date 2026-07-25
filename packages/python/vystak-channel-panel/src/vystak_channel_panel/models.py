@@ -41,3 +41,4 @@ class PanelMessage(BaseModel):
     content: str
     response_id: str | None = None
     created_at: str
+    parts: list[dict] | None = None

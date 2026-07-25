@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import uuid
 from collections.abc import AsyncIterator
@@ -13,6 +14,11 @@ from pathlib import Path
 import aiosqlite
 
 from vystak_channel_panel.models import Conversation, PanelMessage, PanelUser, Project
+
+# Bump when _SCHEMA changes in a way existing databases need migrating for.
+# _migrate() compares this against the `schema_version` row in `settings`
+# (absent == 1) and applies the matching upgrade steps.
+SCHEMA_VERSION: int = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -54,6 +60,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     response_id TEXT,
+    parts TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation
@@ -87,6 +94,38 @@ class SqlitePanelStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+        await self._migrate()
+
+    async def _migrate(self) -> None:
+        """Bring an existing database up to SCHEMA_VERSION in place.
+
+        `executescript(_SCHEMA)` in connect() is `CREATE TABLE IF NOT
+        EXISTS` only — it never alters a table that already exists, so a
+        pre-existing `/data` volume (e.g. the live `vystak-panel-state`
+        volume) would otherwise never gain a new column. This runs once per
+        connect(), after schema creation, and is a no-op once the database
+        is already current.
+
+        Guarded two ways, since a live volume with real data exists:
+        the `schema_version` row in `settings` (the durable, cross-restart
+        record) AND an actual `PRAGMA table_info(messages)` check before
+        the ALTER TABLE — so this can't fail with "duplicate column" if the
+        version row and the on-disk shape ever disagree.
+        """
+        raw = await self.get_setting("schema_version")
+        version = int(raw) if raw is not None else 1
+        if version >= SCHEMA_VERSION:
+            return
+        async with self.db.execute("PRAGMA table_info(messages)") as cur:
+            columns = {row["name"] async for row in cur}
+        async with self._write() as db:
+            if "parts" not in columns:
+                await db.execute("ALTER TABLE messages ADD COLUMN parts TEXT")
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("schema_version", str(SCHEMA_VERSION)),
+            )
 
     async def close(self) -> None:
         if self._db is not None:
@@ -497,7 +536,11 @@ class SqlitePanelStore:
         content: str,
         *,
         response_id: str | None = None,
+        parts: list[dict] | None = None,
     ) -> PanelMessage:
+        # `content` stays the source of truth for message text; `parts` is
+        # strictly additive (e.g. tool-call detail for replay) and never
+        # replaces it.
         msg = PanelMessage(
             id=_new_id(),
             conversation_id=conversation_id,
@@ -505,16 +548,18 @@ class SqlitePanelStore:
             content=content,
             response_id=response_id,
             created_at=_now(),
+            parts=parts,
         )
         # Insert + bump in one transaction via _write() (Task 4): a message
         # must never persist without its conversation's updated_at bump.
         async with self._write() as db:
             await db.execute(
                 "INSERT INTO messages "
-                "(id, conversation_id, role, content, response_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, conversation_id, role, content, response_id, parts, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (msg.id, msg.conversation_id, msg.role, msg.content,
-                 msg.response_id, msg.created_at),
+                 msg.response_id, json.dumps(parts) if parts is not None else None,
+                 msg.created_at),
             )
             await db.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -528,4 +573,11 @@ class SqlitePanelStore:
             (conversation_id,),
         ) as cur:
             rows = await cur.fetchall()
-        return [PanelMessage(**dict(r)) for r in rows]
+        return [self._message_from_row(r) for r in rows]
+
+    @staticmethod
+    def _message_from_row(row) -> PanelMessage:
+        d = dict(row)
+        raw_parts = d.get("parts")
+        d["parts"] = json.loads(raw_parts) if raw_parts is not None else None
+        return PanelMessage(**d)
