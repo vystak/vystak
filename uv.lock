@@ -3153,6 +3153,7 @@ dependencies = [
     { name = "bcrypt" },
     { name = "vystak" },
     { name = "vystak-channel-runtime" },
+    { name = "vystak-transport-nats" },
 ]
 
 [package.metadata]
@@ -3160,6 +3161,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0" },
     { name = "vystak", editable = "packages/python/vystak" },
     { name = "vystak-channel-runtime", editable = "packages/python/vystak-channel-runtime" },
+    { name = "vystak-transport-nats", editable = "packages/python/vystak-transport-nats" },
 ]
 
 [[package]]
