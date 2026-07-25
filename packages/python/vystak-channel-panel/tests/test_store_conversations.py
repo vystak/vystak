@@ -80,6 +80,31 @@ async def test_delete_conversation_cascades(store, project):
     assert await store.list_messages(c.id) == []
 
 
+async def test_list_messages_survives_malformed_parts_json(store, project, caplog):
+    """A malformed `parts` value must not take out the whole conversation's
+    history with a json.JSONDecodeError — degrade to parts=None and log a
+    warning instead."""
+    user, proj = project
+    c = await store.create_conversation(proj.id, user.id, "weather-agent")
+    m = await store.add_message(c.id, "user", "hi", parts=[{"type": "text"}])
+
+    # Corrupt the stored parts column directly — simulates a torn write or
+    # hand-edited row, not something reachable through add_message's own
+    # json.dumps().
+    async with store._write() as db:
+        await db.execute(
+            "UPDATE messages SET parts = ? WHERE id = ?",
+            ("{not valid json", m.id),
+        )
+
+    with caplog.at_level("WARNING"):
+        msgs = await store.list_messages(c.id)
+
+    assert len(msgs) == 1
+    assert msgs[0].parts is None
+    assert any("parts" in rec.message for rec in caplog.records)
+
+
 async def test_add_message_does_not_leak_into_later_commit(store, project, monkeypatch):
     user, proj = project
     c = await store.create_conversation(proj.id, user.id, "weather-agent")

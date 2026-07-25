@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import uuid
 from collections.abc import AsyncIterator
@@ -14,6 +15,8 @@ from pathlib import Path
 import aiosqlite
 
 from vystak_channel_panel.models import Conversation, PanelMessage, PanelUser, Project
+
+logger = logging.getLogger(__name__)
 
 # Bump when _SCHEMA changes in a way existing databases need migrating for.
 # _migrate() compares this against the `schema_version` row in `settings`
@@ -116,11 +119,28 @@ class SqlitePanelStore:
         version = int(raw) if raw is not None else 1
         if version >= SCHEMA_VERSION:
             return
+        # sqlite3 opens its implicit transaction lazily, before the first
+        # DML statement — DDL such as ALTER TABLE runs and commits
+        # independently of it. So the ALTER TABLE below is NOT covered by
+        # this method's `_write()` block: it autocommits the instant it
+        # runs, regardless of whether the `schema_version` write that
+        # follows succeeds. A crash between the two leaves a torn state
+        # (column added, version not yet bumped) — re-entry safety comes
+        # from the `PRAGMA table_info` column check below, not from block
+        # atomicity. Do not remove this check as "redundant" with the
+        # `_write()` wrapper; doing so reintroduces a `duplicate column
+        # name` failure on the next connect() after a crash in that window.
         async with self.db.execute("PRAGMA table_info(messages)") as cur:
             columns = {row["name"] async for row in cur}
         async with self._write() as db:
             if "parts" not in columns:
                 await db.execute("ALTER TABLE messages ADD COLUMN parts TEXT")
+            # Inlined rather than calling set_setting(): set_setting()
+            # acquires _write_lock itself, and this method already holds it
+            # (we're inside the `async with self._write()` block above) —
+            # asyncio.Lock is not reentrant, so calling set_setting() here
+            # would deadlock at startup. Keep this inlined if you're tempted
+            # to DRY it up.
             await db.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -579,5 +599,19 @@ class SqlitePanelStore:
     def _message_from_row(row) -> PanelMessage:
         d = dict(row)
         raw_parts = d.get("parts")
-        d["parts"] = json.loads(raw_parts) if raw_parts is not None else None
+        if raw_parts is None:
+            d["parts"] = None
+        else:
+            try:
+                d["parts"] = json.loads(raw_parts)
+            except json.JSONDecodeError:
+                # A malformed `parts` value must not take out the entire
+                # conversation's message history — degrade to None (the
+                # same shape as "no parts recorded") and log rather than
+                # raise.
+                logger.warning(
+                    "message %s has malformed parts JSON; treating as None",
+                    d.get("id"),
+                )
+                d["parts"] = None
         return PanelMessage(**d)

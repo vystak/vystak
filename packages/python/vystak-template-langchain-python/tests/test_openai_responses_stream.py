@@ -265,6 +265,65 @@ async def test_streaming_tool_call_serializes_non_string_input_and_output(fake_a
 
 
 @pytest.mark.asyncio
+async def test_streaming_tool_error_emits_terminating_error_output(fake_agent):
+    """LangChain emits on_tool_error (not on_tool_end) when a tool raises.
+    Without handling it, the function_call start event has no terminating
+    output event, so a consumer can never tell the call finished — the
+    control-panel UI would render it as perpetually running. The error must
+    still terminate the call: a function_call_output item, marked error=True,
+    sharing the same run_id-derived call_id, with the exception serialized
+    defensively (the raw value is an exception instance, not a string)."""
+    events = [
+        {
+            "event": "on_tool_start",
+            "run_id": "run-err-1",
+            "name": "get_weather",
+            "data": {"input": {"city": "Nowhere"}},
+        },
+        {
+            "event": "on_tool_error",
+            "run_id": "run-err-1",
+            "name": "get_weather",
+            "data": {"error": ValueError("boom"), "input": {"city": "Nowhere"}},
+        },
+    ]
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
+    body = {"model": "vystak/weather", "input": "weather nowhere", "stream": True, "store": True}
+
+    frames = []
+    async for f in await h.create(body):
+        frames.append(f)
+    parsed = _parse_sse(frames)
+
+    # The start events (function_call added + arguments delta/done) still fire.
+    added_start = next(
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added" and p["item"]["type"] == "function_call"
+    )
+    assert added_start["item"]["call_id"] == "run-err-1"
+
+    # Exactly one terminating output event for this call, marked as an error.
+    output_items = [
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added"
+        and p["item"].get("type") == "function_call_output"
+    ]
+    assert len(output_items) == 1
+    error_item = output_items[0]["item"]
+    assert error_item["call_id"] == "run-err-1"
+    assert error_item["error"] is True
+    # Plain text, not JSON-quoted: consumers like vystak-chat/chat.py render
+    # `output` as raw text, so `'"boom"'` would show literal quote marks.
+    assert error_item["output"] == "boom"
+
+    # The stream still completes normally afterward.
+    assert "response.completed" in [p["type"] for p in parsed]
+    assert frames[-1].strip() == "data: [DONE]"
+
+
+@pytest.mark.asyncio
 async def test_streaming_without_tool_events_matches_baseline_shape(fake_agent):
     """Additive guarantee: a stream with no tool events must keep exactly
     the pre-existing event sequence and per-event key set (captured in

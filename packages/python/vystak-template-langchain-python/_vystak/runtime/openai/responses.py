@@ -137,6 +137,39 @@ class ResponsesHandler:
                                 "output": output,
                             },
                         })
+                elif ev_type == "on_tool_error":
+                    # LangChain emits on_tool_error instead of on_tool_end
+                    # when a tool raises. Without a terminating output event
+                    # here, the function_call start emitted above would have
+                    # no matching end — a consumer (e.g. the control-panel
+                    # UI) can never learn the call finished and renders it as
+                    # perpetually running. Emit the same function_call_output
+                    # shape as on_tool_end, marked as an error, so existing
+                    # consumers that ignore the extra key still see the call
+                    # terminate. `data["error"]` is an exception instance,
+                    # not a string. Stringify it before handing it to the
+                    # same defensive serializer used for tool output: an
+                    # exception isn't `str` or `list`, so without this it
+                    # falls to _serialize_tool_payload's json.dumps(...,
+                    # default=str) branch, which wraps the message in extra
+                    # JSON quotes (`'"boom"'`) — consumers like
+                    # vystak-chat/chat.py render `output` as raw text, so
+                    # that would show literal quote characters.
+                    call_id = str(ev.get("run_id") or "")
+                    if call_id:
+                        raw_error = ev.get("data", {}).get("error", "")
+                        if isinstance(raw_error, BaseException):
+                            raw_error = str(raw_error)
+                        output = _serialize_tool_payload(raw_error)
+                        yield _sse({
+                            "type": "response.output_item.added",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": output,
+                                "error": True,
+                            },
+                        })
         except Exception as e:  # noqa: BLE001
             yield _sse({
                 "type": "response.failed",
