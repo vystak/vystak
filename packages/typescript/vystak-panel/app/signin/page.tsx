@@ -25,10 +25,15 @@ export default async function SignInPage({
             add your email.
           </p>
         )}
-        {error && error !== 'AccessDenied' && (
+        {error === 'PanelUnavailable' && (
           <p style={{ color: 'crimson' }}>
-            Sign-in failed. The control panel API may be unavailable — try
-            again, or contact an administrator.
+            Could not reach the control panel API. Try again, or contact an
+            administrator.
+          </p>
+        )}
+        {error && error !== 'AccessDenied' && error !== 'PanelUnavailable' && (
+          <p style={{ color: 'crimson' }}>
+            Sign-in failed. Contact an administrator if this persists.
           </p>
         )}
         <button type="submit">Sign in with Google</button>
