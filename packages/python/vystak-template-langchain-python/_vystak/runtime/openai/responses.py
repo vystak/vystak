@@ -254,12 +254,21 @@ def _serialize_tool_payload(value: Any) -> str:
     of kwargs, and `output` is whatever the tool returned — which can itself
     be LangChain-style content (a list of typed blocks, e.g. extended
     thinking/tool-result shapes) if the tool returns multi-part content.
+    `output` also isn't the tool's raw return value on the `on_tool_end`
+    path: LangChain wraps it in a `ToolMessage`, whose repr (`content=...
+    name=... tool_call_id=...`) would otherwise leak onto the wire. Unwrap
+    any message-like object (anything exposing `.content`) before the rest
+    of this function runs, flattening its `.content` the same way as any
+    other LangChain content shape. Plain values (str/dict/list/numbers)
+    don't have a `.content` attribute, so this is a no-op for them.
     Try flatten_content first for the str/list-of-content-block shapes the
     rest of this runtime already contends with; fall back to json.dumps for
     arbitrary objects (dicts, numbers, custom types). A dict must never reach
     flatten_content directly — it falls through to `str(dict)`, which is a
     Python repr, not valid JSON.
     """
+    if hasattr(value, "content"):
+        value = value.content
     if isinstance(value, str):
         return value
     if isinstance(value, list):

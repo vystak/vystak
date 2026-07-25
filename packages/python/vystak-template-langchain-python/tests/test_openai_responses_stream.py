@@ -265,6 +265,151 @@ async def test_streaming_tool_call_serializes_non_string_input_and_output(fake_a
 
 
 @pytest.mark.asyncio
+async def test_streaming_tool_end_dict_output_unaffected_by_unwrap(fake_agent):
+    """Regression guard: a plain dict output (no `.content` attribute) must
+    keep serializing via json.dumps exactly as before — the ToolMessage
+    unwrap must be a no-op for values that are already plain."""
+    events = [
+        {
+            "event": "on_tool_end",
+            "run_id": "run-dict-1",
+            "name": "get_weather",
+            "data": {"output": {"temp_c": 24, "city": "Kyiv"}},
+        },
+    ]
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
+    body = {"model": "vystak/weather", "input": "weather in kyiv", "stream": True, "store": True}
+
+    frames = []
+    async for f in await h.create(body):
+        frames.append(f)
+    parsed = _parse_sse(frames)
+
+    output_item = next(
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added"
+        and p["item"].get("type") == "function_call_output"
+    )
+    assert json.loads(output_item["item"]["output"]) == {"temp_c": 24, "city": "Kyiv"}
+
+
+class _FakeToolMessage:
+    """Stub for LangChain's ToolMessage: exposes `.content` plus other
+    attributes whose repr would leak onto the wire if the object itself
+    were stringified instead of unwrapped."""
+
+    def __init__(self, content, *, name="get_weather", tool_call_id="call_1"):
+        self.content = content
+        self.name = name
+        self.tool_call_id = tool_call_id
+
+    def __repr__(self):  # pragma: no cover - only hit if the bug regresses
+        return f"content={self.content!r} name={self.name!r} tool_call_id={self.tool_call_id!r}"
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_end_unwraps_tool_message_content(fake_agent):
+    """on_tool_end's `data.output` is a ToolMessage object, not the tool's
+    raw return value — serializing it must use `.content`, not the object's
+    repr (which leaks `content=... name=... tool_call_id=...`)."""
+    events = [
+        {
+            "event": "on_tool_end",
+            "run_id": "run-msg-1",
+            "name": "get_weather",
+            "data": {
+                "output": _FakeToolMessage(
+                    "Kyiv: Thundery outbreaks in nearby, 24°C, humidity 40%, wind 6 km/h"
+                )
+            },
+        },
+    ]
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
+    body = {"model": "vystak/weather", "input": "weather in kyiv", "stream": True, "store": True}
+
+    frames = []
+    async for f in await h.create(body):
+        frames.append(f)
+    parsed = _parse_sse(frames)
+
+    output_item = next(
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added"
+        and p["item"].get("type") == "function_call_output"
+    )
+    output = output_item["item"]["output"]
+    assert output == "Kyiv: Thundery outbreaks in nearby, 24°C, humidity 40%, wind 6 km/h"
+    assert "content=" not in output
+    assert "tool_call_id=" not in output
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_end_unwraps_tool_message_list_content(fake_agent):
+    """ToolMessage.content can itself be a list of typed blocks (the same
+    shape flatten_content already handles elsewhere in this file)."""
+    events = [
+        {
+            "event": "on_tool_end",
+            "run_id": "run-msg-2",
+            "name": "search",
+            "data": {
+                "output": _FakeToolMessage(
+                    [{"type": "text", "text": "Sunny and warm"}]
+                )
+            },
+        },
+    ]
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
+    body = {"model": "vystak/weather", "input": "search weather", "stream": True, "store": True}
+
+    frames = []
+    async for f in await h.create(body):
+        frames.append(f)
+    parsed = _parse_sse(frames)
+
+    output_item = next(
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added"
+        and p["item"].get("type") == "function_call_output"
+    )
+    assert output_item["item"]["output"] == "Sunny and warm"
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_end_unwraps_tool_message_dict_content(fake_agent):
+    """Off-type for a real LangChain ToolMessage (whose `.content` is always
+    str or list-of-blocks), but the unwrap must still honor the "a dict must
+    never reach flatten_content directly" invariant documented on
+    _serialize_tool_payload — falling through to json.dumps, not str(dict)."""
+    events = [
+        {
+            "event": "on_tool_end",
+            "run_id": "run-msg-3",
+            "name": "get_weather",
+            "data": {"output": _FakeToolMessage({"temp_c": 24, "city": "Kyiv"})},
+        },
+    ]
+    h = ResponsesHandler(agent=fake_agent, graph=FakeStreamingGraph(events), store=None)
+    body = {"model": "vystak/weather", "input": "weather in kyiv", "stream": True, "store": True}
+
+    frames = []
+    async for f in await h.create(body):
+        frames.append(f)
+    parsed = _parse_sse(frames)
+
+    output_item = next(
+        p
+        for p in parsed
+        if p["type"] == "response.output_item.added"
+        and p["item"].get("type") == "function_call_output"
+    )
+    assert json.loads(output_item["item"]["output"]) == {"temp_c": 24, "city": "Kyiv"}
+
+
+@pytest.mark.asyncio
 async def test_streaming_tool_error_emits_terminating_error_output(fake_agent):
     """LangChain emits on_tool_error (not on_tool_end) when a tool raises.
     Without handling it, the function_call start event has no terminating
