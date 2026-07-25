@@ -4,6 +4,7 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useState } from 'react';
 import type { UIMessage } from 'ai';
+import { stringifyToolValue, toolStateLabel } from '@/lib/messageParts';
 
 export function Chat({
   conversationId,
@@ -39,15 +40,55 @@ export function Chat({
       {messages.map(message => (
         <div key={message.id} style={{ margin: '12px 0' }}>
           <strong>{message.role === 'user' ? 'You' : agentName}: </strong>
-          {message.parts.map((part, i) =>
-            part.type === 'text' ? (
-              <span key={i} style={{ whiteSpace: 'pre-wrap' }}>
-                {part.text}
-              </span>
-            ) : null,
-          )}
+          {message.parts.map((part, i) => {
+            if (part.type === 'text') {
+              return (
+                <span key={i} style={{ whiteSpace: 'pre-wrap' }}>
+                  {part.text}
+                </span>
+              );
+            }
+            if (part.type === 'dynamic-tool') {
+              let resultLine: string;
+              if (part.state === 'output-error') {
+                resultLine = `Error: ${stringifyToolValue(part.errorText)}`;
+              } else if (part.state === 'output-available') {
+                resultLine = `Result: ${stringifyToolValue(part.output)}`;
+              } else {
+                resultLine = 'Result: (pending)';
+              }
+              return (
+                <div
+                  key={i}
+                  style={{
+                    margin: '4px 0',
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    fontSize: 13,
+                  }}
+                >
+                  <span>
+                    tool: <strong>{part.toolName}</strong> — {toolStateLabel(part.state)}
+                  </span>
+                  <details>
+                    <summary>Details</summary>
+                    <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0' }}>
+                      Arguments: {stringifyToolValue(part.input)}
+                    </pre>
+                    <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0' }}>{resultLine}</pre>
+                  </details>
+                </div>
+              );
+            }
+            return null;
+          })}
         </div>
       ))}
+      {status === 'submitted' && (
+        <p>
+          <em>thinking…</em>
+        </p>
+      )}
       {error && (
         <p style={{ color: 'crimson' }}>
           Agent error: {error.message}{' '}
