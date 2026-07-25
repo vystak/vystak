@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Dual-language monorepo coordinated by `just`:
 
 - **Python workspace** (`uv`) — root `pyproject.toml` declares `packages/python/*` as workspace members. Python 3.11+.
-- **TypeScript workspace** (`pnpm`) — `pnpm-workspace.yaml` declares `packages/typescript/*` and `website/`. Node 20+. All TS packages are 3-line stubs; the entire implementation is Python.
+- **TypeScript workspace** (`pnpm`) — `pnpm-workspace.yaml` declares `packages/typescript/*` and `website/`. Node 20+. All TS packages are 3-line stubs except `vystak-panel`, a real Next.js app; the rest of the implementation is Python.
 
 The `Justfile` and lowercase `justfile` are duplicates — both work. Use `just <recipe>`.
 
@@ -195,6 +195,7 @@ Channels (each a `ChannelPlugin`, deployed as its own container):
 - **`vystak-channel-chat`** — OpenAI-compatible unified endpoint (`/v1/chat/completions`), routes by `model="vystak/<agent-name>"`. This replaced the old `vystak-gateway` router.
 - **`vystak-channel-slack`** — Slack Socket Mode runner (slack-bolt).
 - **`vystak-channel-discord`** — Discord Gateway runner (discord.py).
+- **`vystak-channel-panel`** — control-panel REST + SSE API (users, projects, conversations); consumed by the `vystak-panel` Next.js app.
 
 Transports: **`vystak-transport-http`** (no broker), **`vystak-transport-nats`** (JetStream; provisions broker + injects listener code into agent `server.py`).
 
@@ -263,7 +264,8 @@ Loading paths:
 `heartbeat-*`, `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
 `docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
 `docker-skills` / `docker-skills-slack` (folder skills), `mcp-files`,
-`memory-agent`, `sessions-postgres` / `docker-compaction` (sessions). When modifying core behavior, update or run the matching example
+`memory-agent`, `sessions-postgres` / `docker-compaction` (sessions),
+`docker-panel` (control panel). When modifying core behavior, update or run the matching example
 to verify end-to-end.
 
 **When implementing a specific feature, create (or update) an agents
@@ -302,4 +304,4 @@ This is a **public** repo. Every commit is indexable by credential-harvesting bo
 - Renamed from **AgentStack → Vystak** (commit history still shows `AgentStack` in older messages).
 - Legacy `.agentstack/` output path is retained in `.gitignore` alongside new `.vystak/`.
 - Releases: `just release <version>` tags `v<version>`; `.github/workflows/release.yml` publishes Python packages to PyPI (hand-maintained list — **update it when adding/removing packages**) then `pnpm -r publish` to npm. Deliberately unpublished: `vystak-template-langchain-python` (bundled into the `vystak-cli` wheel by its build hook).
-- TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented.
+- TS packages (`@vystak/core`, `vystak` CLI, `@vystak/adapter-mastra`, `@vystak/provider-docker`) are placeholder stubs — the TS port is not implemented. `vystak-panel` is the exception: a real Next.js app (control-panel UI), not part of the TS port.
