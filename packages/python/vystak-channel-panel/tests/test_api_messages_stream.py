@@ -696,7 +696,19 @@ async def test_post_message_nats_path_streams_and_marks_active_turn(api, panel_r
     assert frames[0]["turn_id"]  # generated uuid hex — non-empty is enough
     assert frames[-1]["type"] == "done"
     assert frames[-1]["response_id"] == "resp_1"
+    assert "message_id" not in frames[-1]  # persister owns the row, not this route
     assert panel_rt.nats_client.started[0]["conv_id"] == cid
+
+    # The turn must actually be marked active in the store (not just echoed
+    # in the frames) — spawn_persister is stubbed to a no-op above so
+    # nothing else would clear it, and this is the same invariant the GET
+    # resume endpoint and _resume_active_turns rely on.
+    conv = (
+        await api.get(
+            f"/api/projects/{pid}/conversations", headers=as_user(owner)
+        )
+    ).json()["conversations"][0]
+    assert conv["active_turn_id"] == frames[0]["turn_id"]
 
 
 async def test_resume_endpoint_204_when_no_active_turn(api, panel_rt):
