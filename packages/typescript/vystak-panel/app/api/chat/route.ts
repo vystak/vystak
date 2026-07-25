@@ -16,7 +16,12 @@ export async function POST(req: Request) {
     return new Response('conversationId and text required', { status: 400 });
   }
 
-  const upstream = await streamConversationMessage(email, conversationId, text);
+  let upstream: Response;
+  try {
+    upstream = await streamConversationMessage(email, conversationId, text);
+  } catch {
+    return new Response('panel channel unreachable', { status: 502 });
+  }
   if (!upstream.ok || !upstream.body) {
     return new Response(`panel channel error: ${upstream.status}`, {
       status: 502,

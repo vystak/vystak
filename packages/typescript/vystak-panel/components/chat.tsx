@@ -15,7 +15,7 @@ export function Chat({
   agentName: string;
 }) {
   const [input, setInput] = useState('');
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status, error, clearError } = useChat({
     id: conversationId,
     messages: initialMessages,
     transport: new DefaultChatTransport({
@@ -49,7 +49,12 @@ export function Chat({
         </div>
       ))}
       {error && (
-        <p style={{ color: 'crimson' }}>Agent error: {error.message}</p>
+        <p style={{ color: 'crimson' }}>
+          Agent error: {error.message}{' '}
+          <button type="button" onClick={() => clearError()}>
+            Dismiss
+          </button>
+        </p>
       )}
       <form
         onSubmit={e => {
@@ -61,7 +66,10 @@ export function Chat({
       >
         <input
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => {
+            if (error) clearError();
+            setInput(e.target.value);
+          }}
           placeholder="Message the agent…"
           style={{ width: '80%' }}
         />
