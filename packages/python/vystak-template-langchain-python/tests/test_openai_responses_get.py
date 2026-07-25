@@ -28,6 +28,35 @@ async def test_get_returns_stored_response(fake_agent):
 
 
 @pytest.mark.asyncio
+async def test_get_flattens_list_shaped_content(fake_agent):
+    """Regression: a stored assistant message's .content can be a list of
+    typed blocks (Anthropic extended-thinking) rather than a plain string."""
+
+    class ThinkingGraph:
+        async def aget_state(self, config):
+            class _Snapshot:
+                values = {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "thinking", "thinking": "hmm"},
+                                {"type": "text", "text": "stored"},
+                            ],
+                        }
+                    ]
+                }
+
+            return _Snapshot()
+
+    h = ResponsesHandler(agent=fake_agent, graph=ThinkingGraph(), store=None)
+    resp = await h.get("resp_abc")
+    text = resp["output"][0]["content"][0]["text"]
+    assert text == "stored"
+    assert isinstance(text, str)
+
+
+@pytest.mark.asyncio
 async def test_get_unknown_response_raises(fake_agent):
     class EmptyGraph:
         async def aget_state(self, config):

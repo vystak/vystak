@@ -4,6 +4,8 @@ import time
 import uuid
 from typing import Any
 
+from _vystak.runtime.content import flatten_content
+
 
 class ChatCompletionsHandler:
     """Stateless Chat Completions — no checkpointer, full message array per call."""
@@ -21,7 +23,8 @@ class ChatCompletionsHandler:
         result = await self.graph.ainvoke({"messages": messages}, config=config)
 
         last = result["messages"][-1]
-        content = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        raw_content = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        content = flatten_content(raw_content)
 
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",

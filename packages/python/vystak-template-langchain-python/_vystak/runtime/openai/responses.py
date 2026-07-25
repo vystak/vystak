@@ -4,6 +4,8 @@ import time
 import uuid
 from typing import Any
 
+from _vystak.runtime.content import flatten_content
+
 
 class ResponsesHandler:
     """OpenAI Responses API — stateful via previous_response_id (LangGraph thread_id)."""
@@ -25,7 +27,8 @@ class ResponsesHandler:
 
         result = await self.graph.ainvoke({"messages": messages}, config)
         last = result["messages"][-1]
-        content = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        raw_content = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        content = flatten_content(raw_content)
 
         return {
             "id": thread_id,
@@ -73,9 +76,10 @@ class ResponsesHandler:
                 if ev.get("event") == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
                     if isinstance(chunk, dict):
-                        text = chunk["content"]
+                        raw_text = chunk["content"]
                     else:
-                        text = getattr(chunk, "content", "")
+                        raw_text = getattr(chunk, "content", "")
+                    text = flatten_content(raw_text)
                     if text:
                         full_text.append(text)
                         yield _sse({
@@ -128,7 +132,8 @@ class ResponsesHandler:
             raise KeyError(f"Unknown response: {response_id}")
 
         last = messages[-1]
-        text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        raw_text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+        text = flatten_content(raw_text)
 
         return {
             "id": response_id,

@@ -58,6 +58,32 @@ async def test_create_with_previous_response_id_reuses_thread(fake_agent):
 
 
 @pytest.mark.asyncio
+async def test_create_non_streaming_flattens_list_shaped_content(fake_agent):
+    """Regression: Anthropic extended-thinking makes the final message's
+    .content a list of typed blocks rather than a plain string."""
+
+    class ThinkingGraph:
+        async def ainvoke(self, input, config):
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "hmm"},
+                            {"type": "text", "text": "pong"},
+                        ],
+                    }
+                ]
+            }
+
+    h = ResponsesHandler(agent=fake_agent, graph=ThinkingGraph(), store=None)
+    resp = await h.create({"model": "vystak/weather", "input": "ping", "store": True})
+    text = resp["output"][0]["content"][0]["text"]
+    assert text == "pong"
+    assert isinstance(text, str)
+
+
+@pytest.mark.asyncio
 async def test_create_input_accepts_string_or_message_array(handler):
     r1 = await handler.create({"model": "vystak/weather", "input": "ping", "store": True})
     r2 = await handler.create({

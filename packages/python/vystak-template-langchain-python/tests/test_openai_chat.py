@@ -38,6 +38,34 @@ async def test_create_includes_usage_block(handler):
 
 
 @pytest.mark.asyncio
+async def test_create_flattens_list_shaped_content(fake_agent):
+    """Regression: Anthropic extended-thinking makes the final message's
+    .content a list of typed blocks rather than a plain string."""
+
+    class ThinkingGraph:
+        async def ainvoke(self, input, config):
+            return {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "hmm"},
+                            {"type": "text", "text": "pong"},
+                        ],
+                    }
+                ]
+            }
+
+    handler = ChatCompletionsHandler(agent=fake_agent, graph=ThinkingGraph())
+    resp = await handler.create(
+        {"model": "vystak/weather", "messages": [{"role": "user", "content": "ping"}]}
+    )
+    content = resp["choices"][0]["message"]["content"]
+    assert content == "pong"
+    assert isinstance(content, str)
+
+
+@pytest.mark.asyncio
 async def test_create_uses_ephemeral_thread_id_per_call(fake_agent):
     """Stateless: each call gets a fresh thread_id so no state survives."""
     captured = []
