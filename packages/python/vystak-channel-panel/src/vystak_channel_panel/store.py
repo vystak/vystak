@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import uuid
 from collections.abc import AsyncIterator
@@ -78,6 +79,7 @@ class SqlitePanelStore:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._db: aiosqlite.Connection | None = None
+        self._setup_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         self._db = await aiosqlite.connect(self._db_path)
@@ -168,6 +170,60 @@ class SqlitePanelStore:
         )
         await self.db.commit()
         return await self.get_user(user_id)
+
+    async def claim_setup_admin(
+        self, email: str, *, name: str = "", image: str = ""
+    ) -> PanelUser:
+        """Atomically claim first-run setup: mark setup complete, create the
+        admin user, and create their default project — or do none of it.
+
+        Raises sqlite3.IntegrityError if setup was already claimed.
+
+        The durable guard is the `settings` primary key: a second INSERT of
+        the 'setup_complete' row fails, so only one caller can proceed even
+        across restarts. The in-process lock serializes concurrent requests
+        that share this store's single SQLite connection, where an
+        interleaved rollback would otherwise affect another caller's
+        pending statements.
+        """
+        async with self._setup_lock:
+            user = PanelUser(
+                id=_new_id(),
+                email=email.strip().lower(),
+                name=name,
+                image=image,
+                role="admin",
+                created_at=_now(),
+            )
+            project = Project(
+                id=_new_id(),
+                name="Personal",
+                owner_id=user.id,
+                is_default=True,
+                created_at=_now(),
+            )
+            async with self._write() as db:
+                # First: the durable, cross-restart guard. A duplicate claim
+                # fails here, before any user/project row is created.
+                await db.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?)",
+                    ("setup_complete", "1"),
+                )
+                await db.execute(
+                    "INSERT INTO users "
+                    "(id, email, name, image, role, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user.id, user.email, user.name, user.image, user.role,
+                     user.status, user.created_at),
+                )
+                await db.execute(
+                    "INSERT INTO projects "
+                    "(id, name, owner_id, is_default, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (project.id, project.name, project.owner_id,
+                     int(project.is_default), project.created_at),
+                )
+            return user
 
     # --- settings ---------------------------------------------------------
 

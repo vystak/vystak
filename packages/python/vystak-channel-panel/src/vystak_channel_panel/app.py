@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets as py_secrets
+import sqlite3
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -33,7 +34,13 @@ def build_app(rt: PanelChannelRuntime) -> FastAPI:
         expected = os.environ.get("PANEL_SERVICE_TOKEN", "")
         supplied = request.headers.get("authorization", "")
         token = supplied.removeprefix("Bearer ").strip()
-        if not expected or not py_secrets.compare_digest(token, expected):
+        # ASGI servers decode header bytes as latin-1, so a non-httpx client
+        # can present a non-ASCII Authorization header. compare_digest raises
+        # TypeError on non-ASCII str inputs; comparing utf-8 bytes keeps the
+        # check constant-time and fails closed instead of 500ing.
+        token_bytes = token.encode("utf-8", "replace")
+        expected_bytes = expected.encode("utf-8", "replace")
+        if not expected or not py_secrets.compare_digest(token_bytes, expected_bytes):
             raise HTTPException(status_code=401, detail="invalid service token")
 
     def acting_email(request: Request) -> str:
@@ -80,14 +87,31 @@ def build_app(rt: PanelChannelRuntime) -> FastAPI:
         }
 
     @app.post("/api/setup")
-    async def setup(body: SetupIn, _: None = Depends(service_auth)) -> dict:
+    async def setup(
+        request: Request, body: SetupIn, _: None = Depends(service_auth)
+    ) -> dict:
+        header_email = request.headers.get("x-panel-user", "").strip().lower()
+        body_email = body.email.strip().lower()
+        if not header_email:
+            raise HTTPException(
+                status_code=400, detail="missing X-Panel-User"
+            )
+        if header_email != body_email:
+            raise HTTPException(
+                status_code=400,
+                detail="X-Panel-User does not match setup email",
+            )
+        # Cheap fast path — the real guard is the atomic claim below.
         if await rt.panel_store.count_users() > 0:
             raise HTTPException(status_code=409, detail="setup already completed")
-        user = await rt.panel_store.create_user(
-            body.email, name=body.name, image=body.image, role="admin"
-        )
-        await rt.panel_store.ensure_default_project(user.id)
-        await rt.panel_store.set_setting("setup_complete", "1")
+        try:
+            user = await rt.panel_store.claim_setup_admin(
+                body.email, name=body.name, image=body.image
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409, detail="setup already completed"
+            ) from None
         return {"user": user.model_dump()}
 
     from vystak_channel_panel.routes_registry import mount_routes
