@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +30,8 @@ CREATE TABLE IF NOT EXISTS projects (
     is_default INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_one_default
+    ON projects (owner_id) WHERE is_default = 1;
 CREATE TABLE IF NOT EXISTS project_members (
     project_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -89,6 +94,21 @@ class SqlitePanelStore:
     def db(self) -> aiosqlite.Connection:
         assert self._db is not None, "store not connected"
         return self._db
+
+    @asynccontextmanager
+    async def _write(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Commit a multi-statement write, rolling back if any statement fails.
+
+        aiosqlite uses deferred transactions: without the rollback, a write
+        that raises midway leaves earlier statements pending, and the next
+        unrelated commit() adopts them.
+        """
+        try:
+            yield self.db
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
 
     # --- users ------------------------------------------------------------
 
@@ -212,19 +232,19 @@ class SqlitePanelStore:
         return [self._project_from_row(r) for r in rows]
 
     async def delete_project(self, project_id: str) -> None:
-        await self.db.execute(
-            "DELETE FROM messages WHERE conversation_id IN "
-            "(SELECT id FROM conversations WHERE project_id = ?)",
-            (project_id,),
-        )
-        await self.db.execute(
-            "DELETE FROM conversations WHERE project_id = ?", (project_id,)
-        )
-        await self.db.execute(
-            "DELETE FROM project_members WHERE project_id = ?", (project_id,)
-        )
-        await self.db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-        await self.db.commit()
+        async with self._write() as db:
+            await db.execute(
+                "DELETE FROM messages WHERE conversation_id IN "
+                "(SELECT id FROM conversations WHERE project_id = ?)",
+                (project_id,),
+            )
+            await db.execute(
+                "DELETE FROM conversations WHERE project_id = ?", (project_id,)
+            )
+            await db.execute(
+                "DELETE FROM project_members WHERE project_id = ?", (project_id,)
+            )
+            await db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
     async def add_member(self, project_id: str, user_id: str) -> None:
         await self.db.execute(
@@ -261,12 +281,23 @@ class SqlitePanelStore:
         ) as cur:
             return await cur.fetchone() is not None
 
-    async def ensure_default_project(self, user_id: str) -> Project:
+    async def _get_default_project(self, user_id: str) -> Project | None:
         async with self.db.execute(
             "SELECT * FROM projects WHERE owner_id = ? AND is_default = 1",
             (user_id,),
         ) as cur:
             row = await cur.fetchone()
-        if row:
-            return self._project_from_row(row)
-        return await self.create_project("Personal", user_id, is_default=True)
+        return self._project_from_row(row) if row else None
+
+    async def ensure_default_project(self, user_id: str) -> Project:
+        existing = await self._get_default_project(user_id)
+        if existing is not None:
+            return existing
+        try:
+            return await self.create_project("Personal", user_id, is_default=True)
+        except sqlite3.IntegrityError:
+            # Concurrent caller won; its row is the one default project.
+            winner = await self._get_default_project(user_id)
+            if winner is None:
+                raise
+            return winner
