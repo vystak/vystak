@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
+import bcrypt
 
 from vystak_channel_panel.models import Conversation, PanelMessage, PanelUser, Project
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Bump when _SCHEMA changes in a way existing databases need migrating for.
 # _migrate() compares this against the `schema_version` row in `settings`
 # (absent == 1) and applies the matching upgrade steps.
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS users (
     image TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deactivated')),
+    password_hash TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS projects (
@@ -132,9 +134,13 @@ class SqlitePanelStore:
         # name` failure on the next connect() after a crash in that window.
         async with self.db.execute("PRAGMA table_info(messages)") as cur:
             columns = {row["name"] async for row in cur}
+        async with self.db.execute("PRAGMA table_info(users)") as cur:
+            user_columns = {row["name"] async for row in cur}
         async with self._write() as db:
             if "parts" not in columns:
                 await db.execute("ALTER TABLE messages ADD COLUMN parts TEXT")
+            if "password_hash" not in user_columns:
+                await db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
             # Inlined rather than calling set_setting(): set_setting()
             # acquires _write_lock itself, and this method already holds it
             # (we're inside the `async with self._write()` block above) —
@@ -221,21 +227,28 @@ class SqlitePanelStore:
             "SELECT * FROM users WHERE email = ?", (email.strip().lower(),)
         ) as cur:
             row = await cur.fetchone()
-        return PanelUser(**dict(row)) if row else None
+        return self._user_from_row(row) if row else None
 
     async def get_user(self, user_id: str) -> PanelUser | None:
         async with self.db.execute(
             "SELECT * FROM users WHERE id = ?", (user_id,)
         ) as cur:
             row = await cur.fetchone()
-        return PanelUser(**dict(row)) if row else None
+        return self._user_from_row(row) if row else None
 
     async def list_users(self) -> list[PanelUser]:
         async with self.db.execute(
             "SELECT * FROM users ORDER BY created_at"
         ) as cur:
             rows = await cur.fetchall()
-        return [PanelUser(**dict(r)) for r in rows]
+        return [self._user_from_row(r) for r in rows]
+
+    @staticmethod
+    def _user_from_row(row) -> PanelUser:
+        d = dict(row)
+        # The hash never leaves the store layer: replaced by a derived flag.
+        d["has_password"] = d.pop("password_hash", None) is not None
+        return PanelUser(**d)
 
     async def update_user(
         self, user_id: str, *, role: str | None = None, status: str | None = None
@@ -341,6 +354,34 @@ class SqlitePanelStore:
                 )
             return user
 
+    async def set_user_password(self, user_id: str, password: str) -> bool:
+        hashed = await asyncio.to_thread(
+            bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
+        )
+        async with self._write() as db:
+            cur = await db.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hashed.decode("ascii"), user_id),
+            )
+            rowcount = cur.rowcount
+        return rowcount > 0
+
+    async def verify_user_password(self, email: str, password: str) -> PanelUser | None:
+        async with self.db.execute(
+            "SELECT * FROM users WHERE email = ?", (email.strip().lower(),)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        hashed = d.get("password_hash")
+        if hashed is None or d.get("status") != "active":
+            return None
+        ok = await asyncio.to_thread(
+            bcrypt.checkpw, password.encode("utf-8"), hashed.encode("ascii")
+        )
+        return self._user_from_row(row) if ok else None
+
     # --- settings ---------------------------------------------------------
 
     async def get_setting(self, key: str) -> str | None:
@@ -441,7 +482,7 @@ class SqlitePanelStore:
             (project_id,),
         ) as cur:
             rows = await cur.fetchall()
-        return [PanelUser(**dict(r)) for r in rows]
+        return [self._user_from_row(r) for r in rows]
 
     async def user_can_access_project(self, project_id: str, user_id: str) -> bool:
         async with self.db.execute(

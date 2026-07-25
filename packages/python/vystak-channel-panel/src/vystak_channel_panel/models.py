@@ -13,6 +13,7 @@ class PanelUser(BaseModel):
     role: str  # "admin" | "member"
     status: str = "active"  # "active" | "deactivated"
     created_at: str
+    has_password: bool = False
 
 
 class Project(BaseModel):

@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "vystak>=0.1.0",
     "vystak-channel-runtime>=0.1.0",
+    "bcrypt>=4.0",
 ]
 
 [project.urls]
