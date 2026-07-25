@@ -35,6 +35,10 @@ first admin still bootstraps via Google (or the channel API); after that, any
 admin can set passwords for other users from the admin Users page. Users can
 then sign in with email and password instead of Google.
 
+Password sign-in has no lockout or rate limiting; if the panel is exposed
+beyond a trusted network, front it with a reverse proxy that rate-limits
+`/signin`.
+
 ## Tear down
 
     vystak destroy

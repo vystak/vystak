@@ -103,7 +103,6 @@ export async function signOutAction() {
 export async function setUserPasswordAction(userId: string, formData: FormData) {
   const email = await requireEmail();
   const password = String(formData.get('password') ?? '');
-  if (password.length < 8) return;
   await setUserPassword(email, userId, password);
   revalidatePath('/admin/users');
 }

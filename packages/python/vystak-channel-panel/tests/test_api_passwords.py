@@ -131,3 +131,44 @@ async def test_list_users_includes_has_password(api):
     users = {u["email"]: u for u in resp.json()["users"]}
     assert users[member["email"]]["has_password"] is True
     assert users[admin]["has_password"] is False
+
+
+async def test_nul_password_rejected_on_set(api):
+    admin = await _setup_admin(api)
+    member = await _create_member(api, admin)
+
+    resp = await api.put(
+        f"/api/users/{member['id']}/password",
+        json={"password": "bad\x00pass-123"},
+        headers=as_user(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_too_long_password_rejected_on_set(api):
+    admin = await _setup_admin(api)
+    member = await _create_member(api, admin)
+
+    resp = await api.put(
+        f"/api/users/{member['id']}/password",
+        json={"password": "a" * 73},
+        headers=as_user(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_nul_password_on_verify_returns_ok_false_not_500(api):
+    admin = await _setup_admin(api)
+    member = await _create_member(api, admin)
+    await api.put(
+        f"/api/users/{member['id']}/password",
+        json={"password": "testpass-m-123"},
+        headers=as_user(admin),
+    )
+
+    resp = await api.post(
+        "/api/auth/verify",
+        json={"email": member["email"], "password": "bad\x00pass"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": False, "user": None}

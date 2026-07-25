@@ -73,3 +73,9 @@ async def test_verify_email_is_case_insensitive(store):
     user = await store.create_user("Alice@Example.com")
     await store.set_user_password(user.id, "testpass-alice-1")
     assert await store.verify_user_password("ALICE@example.com", "testpass-alice-1") is not None
+
+
+async def test_verify_with_nul_password_returns_none(store):
+    user = await store.create_user("alice@example.com")
+    await store.set_user_password(user.id, "testpass-alice-1")
+    assert await store.verify_user_password("alice@example.com", "bad\x00pass") is None

@@ -78,6 +78,14 @@ def build_users_router(rt: PanelChannelRuntime, admin_user) -> APIRouter:
             raise HTTPException(
                 status_code=422, detail="password must be at least 8 characters"
             )
+        if "\x00" in body.password:
+            raise HTTPException(
+                status_code=422, detail="password must not contain a NUL byte"
+            )
+        if len(body.password.encode("utf-8")) > 72:
+            raise HTTPException(
+                status_code=422, detail="password must be at most 72 bytes"
+            )
         if not await rt.panel_store.set_user_password(user_id, body.password):
             raise HTTPException(status_code=404, detail="unknown user")
 

@@ -19,6 +19,12 @@ from vystak_channel_panel.models import Conversation, PanelMessage, PanelUser, P
 
 logger = logging.getLogger(__name__)
 
+# Computed once so verify_user_password can burn an equivalent bcrypt
+# comparison on every failure path — without this, "unknown email" returns
+# ~100ms faster than "wrong password", a user-enumeration timing channel
+# reachable through the public sign-in form.
+_DUMMY_HASH: bytes = bcrypt.hashpw(b"vystak-timing-equalizer", bcrypt.gensalt())
+
 # Bump when _SCHEMA changes in a way existing databases need migrating for.
 # _migrate() compares this against the `schema_version` row in `settings`
 # (absent == 1) and applies the matching upgrade steps.
@@ -113,9 +119,10 @@ class SqlitePanelStore:
 
         Guarded two ways, since a live volume with real data exists:
         the `schema_version` row in `settings` (the durable, cross-restart
-        record) AND an actual `PRAGMA table_info(messages)` check before
-        the ALTER TABLE — so this can't fail with "duplicate column" if the
-        version row and the on-disk shape ever disagree.
+        record) AND actual `PRAGMA table_info(messages)` / `PRAGMA
+        table_info(users)` checks before the ALTER TABLE statements — so
+        this can't fail with "duplicate column" if the version row and the
+        on-disk shape ever disagree.
         """
         raw = await self.get_setting("schema_version")
         version = int(raw) if raw is not None else 1
@@ -367,15 +374,30 @@ class SqlitePanelStore:
         return rowcount > 0
 
     async def verify_user_password(self, email: str, password: str) -> PanelUser | None:
+        # bcrypt has no well-defined behavior for embedded NUL bytes across
+        # versions/backends; treat it as an immediate failure rather than
+        # risk a ValueError surfacing as a 500 on the public sign-in form.
+        # A dummy compare is skipped here too — burning it wouldn't equalize
+        # against anything (no known-real-user path takes this branch), so
+        # there is no timing signal to hide.
+        if "\x00" in password:
+            return None
         async with self.db.execute(
             "SELECT * FROM users WHERE email = ?", (email.strip().lower(),)
         ) as cur:
             row = await cur.fetchone()
         if row is None:
+            # Unknown email: burn a bcrypt comparison anyway so this branch
+            # costs the same as the wrong-password branch below — see
+            # _DUMMY_HASH.
+            await asyncio.to_thread(bcrypt.checkpw, password.encode("utf-8"), _DUMMY_HASH)
             return None
         d = dict(row)
         hashed = d.get("password_hash")
         if hashed is None or d.get("status") != "active":
+            # No password set, or account deactivated: same timing
+            # equalization as the unknown-email branch above.
+            await asyncio.to_thread(bcrypt.checkpw, password.encode("utf-8"), _DUMMY_HASH)
             return None
         ok = await asyncio.to_thread(
             bcrypt.checkpw, password.encode("utf-8"), hashed.encode("ascii")

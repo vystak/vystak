@@ -81,7 +81,7 @@ export default async function SignInPage({
               </AlertDescription>
             </Alert>
           )}
-          {error === 'CredentialsSignin' && (
+          {passwordAuthEnabled() && error === 'CredentialsSignin' && (
             <Alert variant="destructive">
               <AlertCircleIcon />
               <AlertTitle>Sign-in failed</AlertTitle>
@@ -89,9 +89,9 @@ export default async function SignInPage({
             </Alert>
           )}
           {error &&
-            !['AccessDenied', 'PanelUnavailable', 'CredentialsSignin'].includes(
-              error,
-            ) && (
+            !['AccessDenied', 'PanelUnavailable',
+              ...(passwordAuthEnabled() ? ['CredentialsSignin'] : []),
+            ].includes(error) && (
               <Alert variant="destructive">
                 <AlertCircleIcon />
                 <AlertTitle>Sign-in failed</AlertTitle>
