@@ -288,6 +288,54 @@ class NatsTransport(Transport):
             latency_ms,
         )
 
+    async def nats_connection(self) -> NATSClient:
+        """Public accessor for the lazily-connected NATS client.
+
+        Panel-side consumers need the raw client for JetStream subscribe
+        on turn subjects; keeping one connection per transport instance.
+        """
+        return await self._connect()
+
+    async def create_response_detached(
+        self,
+        agent: AgentRef,
+        request: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        turn_id: str,
+        stream_subject: str,
+        timeout: float,
+    ) -> dict[str, Any]:
+        """Fire a detached Responses turn.
+
+        The agent acks immediately and then publishes ``{seq, event}``
+        chunks to *stream_subject* on JetStream, decoupled from this caller.
+        """
+        nc = await self._connect()
+        subject = self.resolve_address(agent.canonical_name)
+        payload = self._build_envelope_for_method(
+            "responses/createDetached",
+            {"request": request, "turn_id": turn_id, "stream_subject": stream_subject},
+            metadata,
+        )
+        logger.info(
+            "tx responses/createDetached subject=%s turn=%s stream=%s",
+            subject, turn_id, stream_subject,
+        )
+        try:
+            reply = await nc.request(subject, payload, timeout=timeout)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"NATS request to {subject} (responses/createDetached) "
+                f"timed out after {timeout}s"
+            ) from e
+        body = json.loads(reply.data)
+        if body.get("error"):
+            raise RuntimeError(
+                f"responses/createDetached failed: {body['error'].get('message')}"
+            )
+        return body.get("result", {})
+
     async def _handle_inbound(
         self,
         body: dict[str, Any],

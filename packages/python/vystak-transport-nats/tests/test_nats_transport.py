@@ -431,3 +431,83 @@ class TestNatsTransport(TransportContract):
                     await client._nc.close()
 
         return _ctx
+
+
+# ---------------------------------------------------------------------------
+# create_response_detached and nats_connection tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeReply:
+    def __init__(self, body: dict):
+        self.data = json.dumps(body).encode()
+
+
+class _FakeNC:
+    def __init__(self, reply_body: dict):
+        self._reply_body = reply_body
+        self.requests: list[tuple[str, dict]] = []
+        self.is_closed = False
+
+    async def request(self, subject, payload, timeout):
+        self.requests.append((subject, json.loads(payload)))
+        return _FakeReply(self._reply_body)
+
+
+@pytest.mark.asyncio
+async def test_create_response_detached_sends_envelope_and_returns_ack():
+    from vystak.transport import AgentRef
+
+    t = NatsTransport("nats://ignored:4222")
+    reply_body = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {"turn_id": "t1", "stream_subject": "s"},
+    }
+    fake = _FakeNC(reply_body)
+    t._nc = fake  # bypass real connect
+    result = await t.create_response_detached(
+        AgentRef(canonical_name="time-agent.agents.multi"),
+        {"input": "hi", "stream": True},
+        {},
+        turn_id="t1",
+        stream_subject="vystak.multi.streams.c1.t1",
+        timeout=5.0,
+    )
+    assert result == {"turn_id": "t1", "stream_subject": "s"}
+    subject, envelope = fake.requests[0]
+    assert subject == "vystak.multi.agents.time-agent.tasks"
+    assert envelope["method"] == "responses/createDetached"
+    assert envelope["params"]["turn_id"] == "t1"
+    assert envelope["params"]["stream_subject"] == "vystak.multi.streams.c1.t1"
+    assert envelope["params"]["request"]["input"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_create_response_detached_raises_on_jsonrpc_error():
+    from vystak.transport import AgentRef
+
+    t = NatsTransport("nats://ignored:4222")
+    error_body = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "error": {"code": -32602, "message": "bad params"},
+    }
+    t._nc = _FakeNC(error_body)
+    with pytest.raises(RuntimeError, match="bad params"):
+        await t.create_response_detached(
+            AgentRef(canonical_name="time-agent.agents.multi"),
+            {"input": "hi"},
+            {},
+            turn_id="t1",
+            stream_subject="s",
+            timeout=5.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_connection_returns_client():
+    t = NatsTransport("nats://ignored:4222")
+    fake = _FakeNC({})
+    t._nc = fake
+    assert await t.nats_connection() is fake

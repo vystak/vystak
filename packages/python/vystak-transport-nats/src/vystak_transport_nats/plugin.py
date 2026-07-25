@@ -28,7 +28,6 @@ class NatsTransportPlugin(TransportPlugin):
             env["VYSTAK_NATS_SUBJECT_PREFIX"] = transport.config.subject_prefix
         return env
 
-
     def resolve_address_for(self, agent: Agent, platform: Platform) -> str:
         # Matches NatsTransport.resolve_address.
         prefix = "vystak"

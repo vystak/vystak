@@ -61,7 +61,6 @@ def test_generate_env_contract_without_config():
     assert "VYSTAK_NATS_SUBJECT_PREFIX" not in env
 
 
-
 def test_resolve_address_for_default_prefix():
     """resolve_address_for uses 'vystak' prefix when config has default."""
     p = NatsTransportPlugin()
