@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import { addUserAction, setUserStatusAction } from '@/app/actions';
 import { ConfirmAction } from '@/components/confirm-action';
+import { SetPasswordDialog } from '@/components/set-password-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { getBootstrap, listUsers } from '@/lib/panel';
-import { ArrowLeftIcon } from 'lucide-react';
+import { ArrowLeftIcon, KeyRoundIcon } from 'lucide-react';
 
 export default async function UsersPage() {
   const session = await auth();
@@ -85,32 +86,47 @@ export default async function UsersPage() {
                 >
                   {u.status}
                 </Badge>
+                {u.has_password && (
+                  <KeyRoundIcon
+                    className="ml-1.5 inline size-3.5 text-muted-foreground"
+                    aria-label="Password set"
+                  />
+                )}
               </TableCell>
               <TableCell className="text-right">
                 {/* No self-deactivation: the channel only refuses removing
                     the LAST admin, so with a second admin present one stray
                     click would end your own session. */}
-                {u.id === me.id ? (
-                  <span className="text-sm text-muted-foreground">you</span>
-                ) : u.status === 'active' ? (
-                  <ConfirmAction
-                    action={setUserStatusAction.bind(null, u.id, 'deactivated')}
-                    title="Deactivate user?"
-                    description={`${u.email} will immediately lose access to the panel.`}
-                    confirmLabel="Deactivate"
-                    trigger={
-                      <Button variant="outline" size="sm">
-                        Deactivate
+                <div className="flex items-center justify-end gap-2">
+                  <SetPasswordDialog userId={u.id} email={u.email} />
+                  {u.id === me.id ? (
+                    <span className="text-sm text-muted-foreground">you</span>
+                  ) : u.status === 'active' ? (
+                    <ConfirmAction
+                      action={setUserStatusAction.bind(
+                        null,
+                        u.id,
+                        'deactivated',
+                      )}
+                      title="Deactivate user?"
+                      description={`${u.email} will immediately lose access to the panel.`}
+                      confirmLabel="Deactivate"
+                      trigger={
+                        <Button variant="outline" size="sm">
+                          Deactivate
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <form
+                      action={setUserStatusAction.bind(null, u.id, 'active')}
+                    >
+                      <Button variant="outline" size="sm" type="submit">
+                        Reactivate
                       </Button>
-                    }
-                  />
-                ) : (
-                  <form action={setUserStatusAction.bind(null, u.id, 'active')}>
-                    <Button variant="outline" size="sm" type="submit">
-                      Reactivate
-                    </Button>
-                  </form>
-                )}
+                    </form>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))}

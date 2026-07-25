@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { auth, signIn } from '@/auth';
+import { AuthError } from 'next-auth';
+import { auth, passwordAuthEnabled, signIn } from '@/auth';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,6 +10,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
 import { AlertCircleIcon } from 'lucide-react';
 
 function GoogleIcon() {
@@ -78,14 +81,69 @@ export default async function SignInPage({
               </AlertDescription>
             </Alert>
           )}
-          {error && error !== 'AccessDenied' && error !== 'PanelUnavailable' && (
+          {error === 'CredentialsSignin' && (
             <Alert variant="destructive">
               <AlertCircleIcon />
               <AlertTitle>Sign-in failed</AlertTitle>
-              <AlertDescription>
-                Contact an administrator if this persists.
-              </AlertDescription>
+              <AlertDescription>Invalid email or password.</AlertDescription>
             </Alert>
+          )}
+          {error &&
+            !['AccessDenied', 'PanelUnavailable', 'CredentialsSignin'].includes(
+              error,
+            ) && (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertTitle>Sign-in failed</AlertTitle>
+                <AlertDescription>
+                  Contact an administrator if this persists.
+                </AlertDescription>
+              </Alert>
+            )}
+          {passwordAuthEnabled() && (
+            <>
+              <form
+                action={async formData => {
+                  'use server';
+                  try {
+                    await signIn('credentials', {
+                      email: formData.get('email'),
+                      password: formData.get('password'),
+                      redirectTo: '/',
+                    });
+                  } catch (error) {
+                    // signIn throws NEXT_REDIRECT on success — let it propagate.
+                    if (error instanceof AuthError) {
+                      redirect('/signin?error=CredentialsSignin');
+                    }
+                    throw error;
+                  }
+                }}
+                className="flex flex-col gap-3"
+              >
+                <Input
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  required
+                />
+                <Input
+                  name="password"
+                  type="password"
+                  placeholder="Password"
+                  autoComplete="current-password"
+                  required
+                />
+                <Button type="submit" className="w-full">
+                  Sign in
+                </Button>
+              </form>
+              <div className="flex items-center gap-3">
+                <Separator className="flex-1" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <Separator className="flex-1" />
+              </div>
+            </>
           )}
           <form
             action={async () => {
