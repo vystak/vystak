@@ -13,11 +13,14 @@ if TYPE_CHECKING:
     from vystak.provisioning import Provisionable
 
 
+DEFAULT_DB_PATH = "/data/panel.db"
+
+
 class PanelChannelConfig(BaseModel):
     """Optional config for a panel channel."""
 
-    port: int = 8100
-    db_path: str = "/data/panel.db"
+    port: int = 8080
+    db_path: str = DEFAULT_DB_PATH
 
 
 class PanelChannelPlugin(ChannelPlugin):
@@ -49,7 +52,7 @@ class PanelChannelPlugin(ChannelPlugin):
             "agents": [a.name for a in channel.agents],
             "default_agent": channel.default_agent.name if channel.default_agent else None,
             "port": 8080,
-            "db_path": channel.config.get("db_path", "/data/panel.db"),
+            "db_path": channel.config.get("db_path", DEFAULT_DB_PATH),
             "state": (
                 channel.state.model_dump(exclude_none=True)
                 if channel.state is not None else None
