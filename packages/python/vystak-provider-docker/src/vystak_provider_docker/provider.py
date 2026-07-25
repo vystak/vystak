@@ -1316,7 +1316,7 @@ class DockerProvider(PlatformProvider):
         if container is not None:
             container.stop()
             container.remove()
-        if delete_channel_data and channel.type == ChannelType.SLACK:
+        if delete_channel_data and channel.type in (ChannelType.SLACK, ChannelType.PANEL):
             import contextlib
 
             state_volume = f"vystak-{channel.name}-state"

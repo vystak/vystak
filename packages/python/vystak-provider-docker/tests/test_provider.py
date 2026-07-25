@@ -486,6 +486,69 @@ class TestDestroy:
         agent_container.remove.assert_called_once()
 
 
+class TestDestroyChannelStateVolume:
+    """destroy_channel with delete_channel_data=True must remove the named
+    state volume for every channel type that gets one at apply time (Slack,
+    Panel — see DockerChannelNode.provision) and leave non-stateful channel
+    types untouched."""
+
+    def _make_channel(self, channel_type, name="my-channel"):
+        from vystak.schema.channel import Channel
+        from vystak.schema.common import ChannelType
+        from vystak.schema.platform import Platform
+
+        assert isinstance(channel_type, ChannelType)
+        docker_provider = Provider(name="docker", type="docker")
+        platform = Platform(name="local", type="docker", provider=docker_provider)
+        return Channel(name=name, type=channel_type, platform=platform, config={})
+
+    def test_removes_slack_state_volume_with_flag(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        from vystak.schema.common import ChannelType
+
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        channel = self._make_channel(ChannelType.SLACK, name="slack-main")
+        provider.destroy_channel(channel, delete_channel_data=True)
+        client.volumes.get.assert_called_once_with("vystak-slack-main-state")
+        client.volumes.get.return_value.remove.assert_called_once()
+
+    def test_removes_panel_state_volume_with_flag(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        from vystak.schema.common import ChannelType
+
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        channel = self._make_channel(ChannelType.PANEL, name="panel-main")
+        provider.destroy_channel(channel, delete_channel_data=True)
+        client.volumes.get.assert_called_once_with("vystak-panel-main-state")
+        client.volumes.get.return_value.remove.assert_called_once()
+
+    def test_does_not_remove_state_volume_for_chat_channel(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        from vystak.schema.common import ChannelType
+
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        channel = self._make_channel(ChannelType.CHAT, name="chat-main")
+        provider.destroy_channel(channel, delete_channel_data=True)
+        client.volumes.get.assert_not_called()
+
+    def test_does_not_remove_volume_without_flag(
+        self, provider, mock_docker_client, not_found_error
+    ):
+        from vystak.schema.common import ChannelType
+
+        client, _ = mock_docker_client
+        client.containers.get.side_effect = not_found_error("not found")
+        channel = self._make_channel(ChannelType.PANEL, name="panel-main")
+        provider.destroy_channel(channel, delete_channel_data=False)
+        client.volumes.get.assert_not_called()
+
+
 class TestVaultRejection:
     def test_docker_rejects_vault_at_plan(self, provider, sample_agent):
         from vystak.schema.common import VaultMode
