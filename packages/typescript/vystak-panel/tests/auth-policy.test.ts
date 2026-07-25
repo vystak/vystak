@@ -16,6 +16,7 @@ const user = {
   image: '',
   role: 'member' as const,
   status: 'active' as const,
+  has_password: false,
   created_at: '2026-01-01T00:00:00Z',
 };
 

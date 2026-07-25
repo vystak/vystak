@@ -131,3 +131,15 @@ export const streamConversationMessage = (
     method: 'POST',
     body: JSON.stringify({ text }),
   });
+
+export const setUserPassword = (email: string, userId: string, password: string) =>
+  ok(email, `/api/users/${userId}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password }),
+  });
+
+export const verifyPassword = (email: string, password: string) =>
+  json<{ ok: boolean; user: PanelUser | null }>(null, '/api/auth/verify', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });

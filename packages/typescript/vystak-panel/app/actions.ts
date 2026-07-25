@@ -13,6 +13,7 @@ import {
   patchUser,
   removeMember,
   renameConversation,
+  setUserPassword,
 } from '@/lib/panel';
 
 async function requireEmail(): Promise<string> {
@@ -97,4 +98,12 @@ export async function deleteProjectAction(projectId: string) {
 
 export async function signOutAction() {
   await signOut({ redirectTo: '/signin' });
+}
+
+export async function setUserPasswordAction(userId: string, formData: FormData) {
+  const email = await requireEmail();
+  const password = String(formData.get('password') ?? '');
+  if (password.length < 8) return;
+  await setUserPassword(email, userId, password);
+  revalidatePath('/admin/users');
 }

@@ -5,6 +5,7 @@ export interface PanelUser {
   image: string;
   role: 'admin' | 'member';
   status: 'active' | 'deactivated';
+  has_password: boolean;
   created_at: string;
 }
 

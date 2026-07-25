@@ -1,10 +1,45 @@
 import NextAuth from 'next-auth';
+import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 import { evaluateSignIn } from '@/lib/auth-policy';
-import { getBootstrap, setupAdmin } from '@/lib/panel';
+import { getBootstrap, setupAdmin, verifyPassword } from '@/lib/panel';
+
+export const passwordAuthEnabled = () =>
+  process.env.PANEL_PASSWORD_AUTH === '1';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  providers: [Google],
+  providers: [
+    Google,
+    ...(passwordAuthEnabled()
+      ? [
+          Credentials({
+            credentials: { email: {}, password: {} },
+            async authorize(credentials) {
+              const email = String(credentials?.email ?? '')
+                .trim()
+                .toLowerCase();
+              const password = String(credentials?.password ?? '');
+              if (!email || !password) return null;
+              // A channel outage surfaces as a failed login rather than a
+              // crash; the Google path keeps its distinct PanelUnavailable
+              // handling in the signIn callback below.
+              let result;
+              try {
+                result = await verifyPassword(email, password);
+              } catch {
+                return null;
+              }
+              if (!result.ok || !result.user) return null;
+              return {
+                email: result.user.email,
+                name: result.user.name,
+                image: result.user.image,
+              };
+            },
+          }),
+        ]
+      : []),
+  ],
   session: { strategy: 'jwt' },
   pages: { signIn: '/signin', error: '/signin' },
   callbacks: {
