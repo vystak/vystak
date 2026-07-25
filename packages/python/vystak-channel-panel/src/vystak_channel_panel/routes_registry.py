@@ -11,5 +11,6 @@ if TYPE_CHECKING:
 
 
 def mount_routes(app: FastAPI, rt: PanelChannelRuntime, current_user, admin_user) -> None:
-    # Tasks 8-11 add users/projects/conversations/messages routes here.
-    return None
+    from vystak_channel_panel.routes_users import build_users_router
+
+    app.include_router(build_users_router(rt, admin_user))
