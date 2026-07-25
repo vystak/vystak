@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,7 +39,12 @@ def build_users_router(rt: PanelChannelRuntime, admin_user) -> APIRouter:
             raise HTTPException(status_code=422, detail="invalid role")
         if await rt.panel_store.get_user_by_email(body.email) is not None:
             raise HTTPException(status_code=409, detail="user already exists")
-        user = await rt.panel_store.create_user(body.email, role=body.role)
+        try:
+            user = await rt.panel_store.create_user(body.email, role=body.role)
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409, detail="user already exists"
+            ) from None
         return {"user": user.model_dump()}
 
     @router.patch("/{user_id}")

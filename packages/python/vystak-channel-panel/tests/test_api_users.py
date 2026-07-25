@@ -60,6 +60,36 @@ async def test_duplicate_add_conflict(api):
     assert dup.status_code == 409
 
 
+async def test_concurrent_duplicate_add_conflict(api, panel_rt, monkeypatch):
+    admin = await _setup_admin(api)
+    await api.post(
+        "/api/users", json={"email": "race@example.com"}, headers=as_user(admin)
+    )
+
+    # Simulate the pre-check losing the race: it reports no existing user,
+    # so the conflict must be caught from create_user's IntegrityError.
+    # Only the lookup for the invited email is faked — the admin's own
+    # auth lookup (current_user dependency) must resolve normally.
+    original_get_user_by_email = panel_rt.panel_store.get_user_by_email
+    calls = {"n": 0}
+
+    async def flaky_get_user_by_email(email):
+        if email == "race@example.com":
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None
+        return await original_get_user_by_email(email)
+
+    monkeypatch.setattr(
+        panel_rt.panel_store, "get_user_by_email", flaky_get_user_by_email
+    )
+
+    dup = await api.post(
+        "/api/users", json={"email": "race@example.com"}, headers=as_user(admin)
+    )
+    assert dup.status_code == 409
+
+
 async def test_patch_unknown_user_404(api):
     admin = await _setup_admin(api)
     resp = await api.patch(
