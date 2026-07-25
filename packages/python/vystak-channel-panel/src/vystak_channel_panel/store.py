@@ -171,6 +171,42 @@ class SqlitePanelStore:
         await self.db.commit()
         return await self.get_user(user_id)
 
+    async def update_user_guarded(
+        self, user_id: str, *, role: str | None = None, status: str | None = None
+    ) -> tuple[PanelUser | None, bool]:
+        """Update a user unless doing so would remove the last active admin.
+
+        Returns ``(user, ok)``:
+          * ``(user, True)``  — applied; ``user`` is the updated row
+          * ``(None, False)`` — no such user
+          * ``(user, False)`` — refused; ``user`` is the unchanged row
+
+        The guard lives in the UPDATE's WHERE clause so the check and the
+        write are one atomic statement. A count-then-update sequence races:
+        two concurrent demotions of different admins would each see a
+        sufficient count and together drop the panel to zero admins.
+        """
+        cur = await self.db.execute(
+            "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
+            "WHERE id = ? "
+            "AND ( "
+            "  (COALESCE(?, role) = 'admin' AND COALESCE(?, status) = 'active') "
+            "  OR EXISTS ( "
+            "       SELECT 1 FROM users o "
+            "        WHERE o.id <> users.id "
+            "          AND o.role = 'admin' "
+            "          AND o.status = 'active' "
+            "     ) "
+            ")",
+            (role, status, user_id, role, status),
+        )
+        rowcount = cur.rowcount
+        await self.db.commit()
+        if rowcount == 0:
+            user = await self.get_user(user_id)
+            return (None, False) if user is None else (user, False)
+        return await self.get_user(user_id), True
+
     async def claim_setup_admin(
         self, email: str, *, name: str = "", image: str = ""
     ) -> PanelUser:

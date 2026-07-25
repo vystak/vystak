@@ -55,11 +55,15 @@ def build_users_router(rt: PanelChannelRuntime, admin_user) -> APIRouter:
             raise HTTPException(status_code=422, detail="invalid role")
         if body.status is not None and body.status not in ("active", "deactivated"):
             raise HTTPException(status_code=422, detail="invalid status")
-        user = await rt.panel_store.update_user(
+        user, ok = await rt.panel_store.update_user_guarded(
             user_id, role=body.role, status=body.status
         )
         if user is None:
             raise HTTPException(status_code=404, detail="unknown user")
+        if not ok:
+            raise HTTPException(
+                status_code=409, detail="cannot remove the last administrator"
+            )
         return {"user": user.model_dump()}
 
     return router

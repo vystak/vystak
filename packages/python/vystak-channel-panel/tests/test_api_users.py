@@ -1,5 +1,7 @@
 """Admin user management."""
 
+import asyncio
+
 
 def as_user(email: str) -> dict:
     return {"X-Panel-User": email}
@@ -103,3 +105,107 @@ async def test_uninvited_user_rejected(api):
     resp = await api.get("/api/users", headers=as_user("stranger@example.com"))
     assert resp.status_code == 403
     assert resp.json()["detail"] == "not invited"
+
+
+async def test_sole_admin_cannot_self_demote(api):
+    admin = await _setup_admin(api)
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admin_id = listed.json()["users"][0]["id"]
+
+    resp = await api.patch(
+        f"/api/users/{admin_id}", json={"role": "member"}, headers=as_user(admin)
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "cannot remove the last administrator"
+
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admins = [
+        u for u in listed.json()["users"]
+        if u["role"] == "admin" and u["status"] == "active"
+    ]
+    assert len(admins) == 1
+    assert admins[0]["id"] == admin_id
+
+
+async def test_sole_admin_cannot_self_deactivate(api):
+    admin = await _setup_admin(api)
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admin_id = listed.json()["users"][0]["id"]
+
+    resp = await api.patch(
+        f"/api/users/{admin_id}",
+        json={"status": "deactivated"},
+        headers=as_user(admin),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "cannot remove the last administrator"
+
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admins = [
+        u for u in listed.json()["users"]
+        if u["role"] == "admin" and u["status"] == "active"
+    ]
+    assert len(admins) == 1
+    assert admins[0]["id"] == admin_id
+
+
+async def test_demotion_allowed_with_second_admin(api):
+    admin = await _setup_admin(api)
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admin_id = listed.json()["users"][0]["id"]
+
+    created = await api.post(
+        "/api/users",
+        json={"email": "second-admin@example.com", "role": "admin"},
+        headers=as_user(admin),
+    )
+    assert created.status_code == 200
+
+    resp = await api.patch(
+        f"/api/users/{admin_id}", json={"role": "member"}, headers=as_user(admin)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["user"]["role"] == "member"
+
+    listed = await api.get("/api/users", headers=as_user("second-admin@example.com"))
+    admins = [
+        u for u in listed.json()["users"]
+        if u["role"] == "admin" and u["status"] == "active"
+    ]
+    assert len(admins) == 1
+    assert admins[0]["email"] == "second-admin@example.com"
+
+
+async def test_concurrent_demotion_of_two_admins_leaves_one(api, panel_rt):
+    admin = await _setup_admin(api)
+    listed = await api.get("/api/users", headers=as_user(admin))
+    admin1_id = listed.json()["users"][0]["id"]
+
+    created = await api.post(
+        "/api/users",
+        json={"email": "second-admin@example.com", "role": "admin"},
+        headers=as_user(admin),
+    )
+    admin2_id = created.json()["user"]["id"]
+
+    results = await asyncio.gather(
+        api.patch(
+            f"/api/users/{admin1_id}",
+            json={"role": "member"},
+            headers=as_user(admin),
+        ),
+        api.patch(
+            f"/api/users/{admin2_id}",
+            json={"role": "member"},
+            headers=as_user("second-admin@example.com"),
+        ),
+    )
+    assert {r.status_code for r in results} == {200, 409}
+
+    # Query the store directly — whichever admin lost the race may have
+    # been demoted, so an HTTP call authenticated as them would 403.
+    all_users = await panel_rt.panel_store.list_users()
+    active_admins = [
+        u for u in all_users if u.role == "admin" and u.status == "active"
+    ]
+    assert len(active_admins) >= 1
