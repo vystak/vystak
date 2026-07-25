@@ -141,14 +141,11 @@ class SqlitePanelStore:
     async def update_user(
         self, user_id: str, *, role: str | None = None, status: str | None = None
     ) -> PanelUser | None:
-        if role is not None:
-            await self.db.execute(
-                "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
-            )
-        if status is not None:
-            await self.db.execute(
-                "UPDATE users SET status = ? WHERE id = ?", (status, user_id)
-            )
+        await self.db.execute(
+            "UPDATE users SET role = COALESCE(?, role), status = COALESCE(?, status) "
+            "WHERE id = ?",
+            (role, status, user_id),
+        )
         await self.db.commit()
         return await self.get_user(user_id)
 

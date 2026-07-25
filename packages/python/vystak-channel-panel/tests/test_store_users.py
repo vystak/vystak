@@ -42,6 +42,15 @@ async def test_list_and_update_user(store):
     assert await store.update_user("missing", role="admin") is None
 
 
+async def test_failed_update_does_not_leak_into_later_commit(store):
+    user = await store.create_user("a@example.com")
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.update_user(user.id, role="admin", status="bogus")
+    # An unrelated later write must not silently persist the role change.
+    await store.create_user("b@example.com")
+    assert (await store.get_user(user.id)).role == "member"
+
+
 async def test_settings_round_trip(store):
     assert await store.get_setting("k") is None
     await store.set_setting("k", "v")
