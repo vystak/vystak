@@ -2,7 +2,7 @@
 
 All notable changes to Vystak are documented here.
 
-## Unreleased
+## v0.3.0 (2026-07-24)
 
 ### Added
 
