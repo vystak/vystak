@@ -552,3 +552,84 @@ class TestBackfill:
         await sched._backfill_next_fires(now())
         got = await store.get(rec.id)
         assert got.next_fire_at == at_ts
+
+
+class TestLegacyEventNames:
+    """Tasks named `"heartbeat"` (what a declarative `Heartbeat` block
+    compiles to via `vystak.schema.schedule.from_heartbeat`) keep the
+    pre-unification `heartbeat.*` log event names — `docs/heartbeat.md`'s
+    observability table and the `test_heartbeat_v2.py` release cell's
+    container-log grep both depend on this. Every other task uses the new
+    `scheduled_task.*` family. See `task_scheduler._event()`.
+    """
+
+    async def test_heartbeat_task_emits_legacy_event_names(
+        self, sched, store, transport, caplog
+    ):
+        # Non-ack path.
+        rec = await store.create_runtime(
+            AGENT, ScheduledTask(name="heartbeat", cron="* * * * *"), created_by="definition"
+        )
+        with caplog.at_level("INFO"):
+            await sched._fire_one(rec)
+        assert any("heartbeat.fired agent=" in r.message for r in caplog.records)
+        assert not any("scheduled_task.fired" in r.message for r in caplog.records)
+
+        caplog.clear()
+
+        # Ack path: reply matches HEARTBEAT_OK, delivery suppressed. A
+        # different agent avoids the (agent, name) uniqueness constraint
+        # colliding with the "heartbeat" task created above.
+        transport.send_task = AsyncMock(return_value=_reply("HEARTBEAT_OK"))
+        rec2 = await store.create_runtime(
+            "b.agents.default",
+            ScheduledTask(name="heartbeat", cron="* * * * *", ack_max_chars=300),
+            created_by="definition",
+        )
+        with caplog.at_level("INFO"):
+            await sched._fire_one(rec2)
+        assert any("heartbeat.fired agent=" in r.message for r in caplog.records)
+        assert any("heartbeat.acked agent=" in r.message for r in caplog.records)
+        assert not any("scheduled_task.fired" in r.message for r in caplog.records)
+        assert not any("scheduled_task.acked" in r.message for r in caplog.records)
+
+    async def test_non_heartbeat_task_emits_scheduled_task_events(
+        self, sched, store, transport, caplog
+    ):
+        rec = await store.create_runtime(
+            AGENT, ScheduledTask(name="digest", cron="* * * * *"), created_by="cli"
+        )
+        with caplog.at_level("INFO"):
+            await sched._fire_one(rec)
+        assert any("scheduled_task.fired agent=" in r.message for r in caplog.records)
+        assert not any("heartbeat.fired" in r.message for r in caplog.records)
+
+    async def test_heartbeat_busy_skip_emits_legacy_skipped(
+        self, sched, store, transport, caplog
+    ):
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="heartbeat", cron="* * * * *", skip_when_busy=True),
+            created_by="definition",
+        )
+        await store.set_next_fire(rec.id, past())
+        sched._busy.add(rec.id)
+        with caplog.at_level("INFO"):
+            await sched._fire_due(now())
+        assert any("heartbeat.skipped agent=" in r.message for r in caplog.records)
+        assert not any("scheduled_task.skipped" in r.message for r in caplog.records)
+
+    async def test_non_heartbeat_busy_skip_emits_scheduled_task_skipped(
+        self, sched, store, transport, caplog
+    ):
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="r", cron="* * * * *", skip_when_busy=True),
+            created_by="cli",
+        )
+        await store.set_next_fire(rec.id, past())
+        sched._busy.add(rec.id)
+        with caplog.at_level("INFO"):
+            await sched._fire_due(now())
+        assert any("scheduled_task.skipped agent=" in r.message for r in caplog.records)
+        assert not any("heartbeat.skipped" in r.message for r in caplog.records)

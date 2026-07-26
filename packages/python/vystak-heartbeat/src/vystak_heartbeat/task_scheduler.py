@@ -27,6 +27,21 @@ from vystak_heartbeat.session_store import HeartbeatSessionStore
 logger = logging.getLogger("vystak.heartbeat.task_scheduler")
 
 
+def _event(task, suffix: str) -> str:
+    """Legacy-compat event-name prefix.
+
+    A declarative `Heartbeat` always compiles to a `ScheduledTask` named
+    `"heartbeat"` (`vystak.schema.schedule.from_heartbeat`), and that task's
+    log event names are a load-bearing external contract: the
+    `test_heartbeat_v2.py` release cell greps container logs for the literal
+    substring `heartbeat.fired agent=<name>`, and `docs/heartbeat.md`'s
+    observability table documents the full `heartbeat.*` family. Every other
+    scheduled task uses the new unified `scheduled_task.*` family.
+    """
+    prefix = "heartbeat" if task.name == "heartbeat" else "scheduled_task"
+    return f"{prefix}.{suffix}"
+
+
 class TaskScheduler:
     """Polls `SqliteScheduleStore` for due tasks and fires them.
 
@@ -110,7 +125,7 @@ class TaskScheduler:
         for rec in await self._store.due(now):
             if rec.task.skip_when_busy and rec.id in self._busy:
                 logger.info(
-                    "scheduled_task.skipped agent=%s task=%s reason=busy",
+                    f"{_event(rec.task, 'skipped')} agent=%s task=%s reason=busy",
                     rec.agent_canonical,
                     rec.task.name,
                 )
@@ -159,7 +174,7 @@ class TaskScheduler:
             request_model = stored_model or task.model
 
             logger.info(
-                "scheduled_task.fired agent=%s task=%s session=%s",
+                f"{_event(task, 'fired')} agent=%s task=%s session=%s",
                 rec.agent_canonical,
                 task.name,
                 session_id,
@@ -182,6 +197,13 @@ class TaskScheduler:
             suppressed = task.ack_max_chars is not None and is_heartbeat_ok(
                 text, task.ack_max_chars
             )
+            if suppressed:
+                logger.info(
+                    f"{_event(task, 'acked')} agent=%s task=%s session=%s",
+                    rec.agent_canonical,
+                    task.name,
+                    session_id,
+                )
 
             # record_fire must run before delivery is attempted: a deliver()
             # failure must never orphan a one-shot as permanently "active"
@@ -213,11 +235,13 @@ class TaskScheduler:
                     )
                 except Exception:
                     logger.exception(
-                        "delivery failed task=%s agent=%s", task.name, rec.agent_canonical
+                        f"{_event(task, 'delivery_failed')} agent=%s task=%s",
+                        rec.agent_canonical,
+                        task.name,
                     )
         except Exception:
             logger.exception(
-                "scheduled_task.fire_failed agent=%s task=%s",
+                f"{_event(rec.task, 'fired_failed')} agent=%s task=%s",
                 rec.agent_canonical,
                 rec.task.name,
             )

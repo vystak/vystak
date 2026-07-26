@@ -138,8 +138,20 @@ logger:
 |---|---|---|
 | `heartbeat.fired` | INFO | Each fire dispatched into the pipeline |
 | `heartbeat.acked` | INFO | Reply matched `HEARTBEAT_OK` and was dropped |
-| `heartbeat.skipped` | INFO/DEBUG | Skipped due to `skip_when_busy` (INFO) or no resolved thread (DEBUG) |
-| `heartbeat.fired_failed` | ERROR | `_fire` raised an exception; loop continues |
+| `heartbeat.skipped` | INFO | Skipped due to `skip_when_busy` |
+| `heartbeat.fired_failed` | ERROR | `_fire_one` raised an exception; loop continues |
+
+A declarative `heartbeat` block compiles to a `ScheduledTask` named
+`"heartbeat"`, run by the unified `TaskScheduler`
+(`vystak_heartbeat.task_scheduler`) — the events above are that task's
+legacy-named subset; every other scheduled task emits the equivalent
+`scheduled_task.*` event instead. One row from the old, per-agent
+`HeartbeatScheduler` no longer has an equivalent and was dropped rather than
+faked: the DEBUG-level `heartbeat.skipped … reason=no-thread` case (the
+scheduler used to skip firing the agent entirely when no thread had been
+resolved). The unified scheduler always fires the agent when a task is due;
+a missing `target_thread` only skips the delivery step afterward, which is
+not logged as a separate event.
 
 ## Plan-time validation
 
