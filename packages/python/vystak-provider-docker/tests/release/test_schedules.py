@@ -201,3 +201,10 @@ def test_runtime_task_survives_scheduler_restart(project: Path, docker_required,
     rec = _get_json(f"{SCHEDULER_URL}/tasks/{task_id}")
     assert rec["source"] == "runtime"
     assert rec["status"] == "active"
+
+    # Also confirm it via the list endpoint, per the brief's literal wording
+    # ("GET /tasks still lists it") — not just the by-id lookup above.
+    listed = _find(_tasks_for_agent(AGENT_CANONICAL), "weekly")
+    assert listed is not None, "weekly task missing from GET /tasks after restart"
+    assert listed["source"] == "runtime"
+    assert listed["status"] == "active"
