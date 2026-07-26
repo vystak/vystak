@@ -184,7 +184,7 @@ Core:
   - `vystak.state/` — local `.vystak/` deploy-side bookkeeping (pushed secrets, identities).
   - `vystak.secrets/` — runtime SDK for reading secrets from container env.
   - `vystak.channels/` — `ChannelPluginRegistry`.
-- **`vystak-cli`** — `vystak init | plan | apply | destroy | status | logs | secrets | update` (Click; commands under `vystak_cli/commands/`). Scaffolds projects from bundled framework templates.
+- **`vystak-cli`** — `vystak init | plan | apply | destroy | status | logs | secrets | update | schedules` (Click; commands under `vystak_cli/commands/`). Scaffolds projects from bundled framework templates. `vystak schedules list|add|show|pause|resume|remove` manages runtime scheduled tasks against the platform scheduler's REST API (see `docs/schedules.md`).
 - **`vystak-chat`** — Rich/prompt-toolkit terminal REPL to talk to deployed agents (A2A client + agent picker).
 
 Framework templates:
@@ -268,9 +268,10 @@ Loading paths:
 
 ## Examples
 
-`examples/` (35 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+`examples/` (37 dirs) maps onto the feature axes: `docker-*` / `azure-*`
 (provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
-`heartbeat-*`, `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
+`heartbeat-*` / `docker-schedules` (scheduled tasks — see `docs/schedules.md`),
+`*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
 `docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
 `docker-skills` / `docker-skills-slack` (folder skills), `mcp-files`,
 `memory-agent`, `sessions-postgres` / `docker-compaction` (sessions),

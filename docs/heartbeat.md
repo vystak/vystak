@@ -4,6 +4,16 @@ A heartbeat is a periodic synthetic turn — the agent wakes up on a cron
 schedule, runs a check-in prompt, and either surfaces an alert into a
 configured channel/thread or stays silent.
 
+Heartbeat is the fixed-at-deploy-time special case of the more general
+[**scheduled tasks**](schedules.md) mechanism: under the hood, a
+declarative `heartbeat:` block compiles into a `ScheduledTask` named
+`"heartbeat"` with a stricter, always-on delivery contract (`target_channel`
+required, `ack_max_chars` on by default). If you need a one-shot reminder,
+a runtime-created schedule, or an agent that schedules tasks for itself
+("remind me in 2 hours..."), see `docs/schedules.md` — everything below
+still applies to the compiled `"heartbeat"` task, since it's the same
+scheduler underneath.
+
 ## Quick start
 
 Add a `heartbeat` block to any agent that has at least one channel

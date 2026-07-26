@@ -155,6 +155,41 @@ def test_docker_slack_example_loads():
     assert ch.state.path == "/data/channel-state.db"
 
 
+def test_docker_schedules_example_loads():
+    """`examples/docker-schedules/vystak.yaml` — declarative scheduled task.
+
+    Validates:
+    - The single agent (``ops-bot``) declares exactly one ``ScheduledTask``
+      with the ``cron`` shape (not ``at``/``every``).
+    - ``target_channel``/``target_thread`` round-trip so delivery is wired.
+    - ``_validate_schedule_targets`` accepts it (no raise) because
+      ``chat-main`` actually routes ``ops-bot``.
+    """
+    path = _examples_dir() / "docker-schedules" / "vystak.yaml"
+    assert path.exists(), f"Example file missing: {path}"
+
+    data = yaml.safe_load(path.read_text())
+    agents, channels, vault = load_multi_yaml(data)
+
+    assert vault is None
+    assert len(agents) == 1
+    agent = agents[0]
+    assert agent.name == "ops-bot"
+    assert len(agent.schedules) == 1
+
+    task = agent.schedules[0]
+    assert task.name == "monday-digest"
+    assert task.cron == "0 9 * * 1"
+    assert task.at is None
+    assert task.every is None
+    assert task.target_channel == "chat-main.channels.dev"
+    assert task.target_thread == "digest-room"
+
+    assert len(channels) == 1
+    assert channels[0].name == "chat-main"
+    assert [a.name for a in channels[0].agents] == ["ops-bot"]
+
+
 def test_docker_skills_example_loads():
     """`examples/docker-skills/vystak.yaml` — folder skill + inline skill.
 

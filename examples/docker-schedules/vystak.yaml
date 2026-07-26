@@ -1,0 +1,46 @@
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+
+models:
+  claude:
+    provider: anthropic
+    model_name: claude-sonnet-4-6
+    parameters: {temperature: 0.3}
+
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    instructions: |
+      You are an ops assistant. Once a week you're asked for a deploy
+      digest — summarize the state of deploys and any outstanding alerts
+      in a few sentences. You can also schedule tasks for yourself: when a
+      user asks you to remind them about something later ("remind me in 2
+      hours to check the deploy"), call the schedule_task tool with an
+      appropriate cron/at/every shape and a clear prompt describing what
+      to check when it fires.
+    default_model: claude
+    platform: local
+    secrets:
+      - {name: ANTHROPIC_API_KEY}
+    schedules:
+      - name: monday-digest
+        cron: "0 9 * * 1"
+        timezone: America/New_York
+        prompt: "Summarize last week's deploys and any outstanding alerts."
+        target_channel: chat-main.channels.dev
+        target_thread: digest-room
+        isolated_session: true
+        skip_when_busy: true
+        enabled: true
+
+channels:
+  - name: chat-main
+    type: chat
+    platform: local
+    config: {port: 8080}
+    agents: [ops-bot]
+    default_agent: ops-bot
