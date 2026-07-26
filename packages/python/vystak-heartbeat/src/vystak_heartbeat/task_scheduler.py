@@ -88,6 +88,14 @@ class TaskScheduler:
         for rec in await self._store.list(status="active"):
             if rec.next_fire_at is not None:
                 continue
+            if rec.id in self._busy:
+                # A dispatched one-shot has its next_fire_at deliberately
+                # cleared by _fire_due while _fire_one is still in flight
+                # (status stays 'active' until record_fire) — that NULL must
+                # not be mistaken for "never scheduled" and resurrected here,
+                # or an overlapping loop pass double-fires it (or, when
+                # skip_when_busy, tight-polls until the fire completes).
+                continue
             nxt = compute_next_fire(rec.task, now)
             if nxt is not None:
                 await self._store.set_next_fire(rec.id, nxt)

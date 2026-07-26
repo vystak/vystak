@@ -149,6 +149,9 @@ class TestFireSemantics:
         )
         await sched._fire_one(rec)
         delivery.deliver.assert_not_called()
+        # Suppressed-but-still-recorded: the ack contract only skips
+        # delivery, it must not skip record_fire bookkeeping.
+        assert (await store.get(rec.id)).last_fire_at is not None
 
     async def test_ack_not_suppressed_without_ack_max_chars(
         self, sched, store, transport, delivery
@@ -480,3 +483,72 @@ class TestBackfill:
         await sched._backfill_next_fires(now())
         got = await store.get(rec.id)
         assert got.next_fire_at == future()
+
+    async def test_backfill_skips_inflight_oneshot(self, sched, store, transport):
+        """Backfill must not resurrect a dispatched one-shot's cleared
+        next_fire_at while its _fire_one is still in flight.
+
+        Uses skip_when_busy=False so the reproduction is the sharper of the
+        two symptoms in the finding: if backfill wrongly re-armed the row, a
+        second _fire_due would dispatch a SECOND fire for the same one-shot.
+        """
+        release = asyncio.Event()
+
+        async def held_send_task(*_args, **_kwargs):
+            await release.wait()
+            return _reply("pong")
+
+        transport.send_task = AsyncMock(side_effect=held_send_task)
+        at_ts = past()
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="once", at=at_ts, skip_when_busy=False),
+            created_by="cli",
+        )
+        # First backfill pass arms it (mirrors real startup/loop behaviour).
+        await sched._backfill_next_fires(now())
+        assert (await store.get(rec.id)).next_fire_at == at_ts
+
+        await sched._fire_due(now())
+        assert rec.id in sched._busy
+        assert (await store.get(rec.id)).next_fire_at is None
+
+        # A second loop iteration overlaps the in-flight fire.
+        await sched._backfill_next_fires(now())
+        got = await store.get(rec.id)
+        assert got.next_fire_at is None
+        assert got.status == "active"
+
+        # Since next_fire_at was NOT resurrected, a subsequent _fire_due
+        # finds nothing due and does not dispatch a second fire.
+        await sched._fire_due(now())
+        assert transport.send_task.call_count == 1
+
+        release.set()
+        await asyncio.gather(*sched._fire_tasks)
+        got = await store.get(rec.id)
+        assert got.status == "completed"
+        assert got.next_fire_at is None
+
+    async def test_backfill_retries_crashed_oneshot(self, sched, store, transport):
+        """A one-shot that CRASHED before record_fire (transport error) is
+        active + NULL next_fire + not busy — intentionally re-armed by the
+        next backfill pass, since no fire was ever recorded for it.
+        """
+        transport.send_task = AsyncMock(side_effect=RuntimeError("boom"))
+        at_ts = past()
+        rec = await store.create_runtime(
+            AGENT, ScheduledTask(name="once", at=at_ts), created_by="cli"
+        )
+        await sched._backfill_next_fires(now())
+        await sched._fire_due(now())
+        await asyncio.gather(*sched._fire_tasks)
+
+        got = await store.get(rec.id)
+        assert got.status == "active"
+        assert got.next_fire_at is None
+        assert rec.id not in sched._busy
+
+        await sched._backfill_next_fires(now())
+        got = await store.get(rec.id)
+        assert got.next_fire_at == at_ts
