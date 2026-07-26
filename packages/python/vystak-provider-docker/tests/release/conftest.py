@@ -211,6 +211,25 @@ def vault_clean():
 
 
 @pytest.fixture
+def scheduler_clean():
+    """Ensure no stale scheduler state pollutes this test.
+
+    Pre-test: remove any `vystak-heartbeat` container and `vystak-scheduler-
+    data` volume left by an aborted prior run (or another worktree). The
+    container must be removed before the volume — Docker refuses to remove
+    a volume that's still mounted by a running (or stopped-but-attached)
+    container. Mirrors `vault_clean`'s pattern for the same class of
+    problem.
+
+    Post-test: no-op — individual tests handle their own teardown via the
+    `project` fixture's `vystak destroy`.
+    """
+    run(["docker", "rm", "-f", "vystak-heartbeat"], check=False)
+    run(["docker", "volume", "rm", "vystak-scheduler-data"], check=False)
+    yield
+
+
+@pytest.fixture
 def workspace_clean():
     """Ensure no stale workspace data volume pollutes this test.
 
