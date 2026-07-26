@@ -228,3 +228,20 @@ delivery step afterward, silently (no separate event).
 4. No agent declares a schedule literally named `"heartbeat"` (reserved).
 
 Failures block deploy with a message pointing at the misconfigured field.
+
+## Shared state across projects
+
+The `vystak-scheduler-data` volume (SQLite-backed store for every schedule,
+declarative and runtime) is **host-global**, not project-scoped, and it
+survives `vystak destroy` by design — same caveat as the Vault and
+Postgres data volumes elsewhere in this stack. Deploying a *different*
+project on the same Docker host reuses that volume, so the previous
+project's rows are still there: declarative tasks whose agent no longer
+exists keep getting picked up as "due" and firing into
+`scheduled_task.fired_failed` / `heartbeat.fired_failed` logs (the target
+agent container isn't reachable), and they keep showing up in
+`vystak schedules list` until pruned.
+
+Remedy: once the old project's containers are gone, remove the volume by
+hand — `docker volume rm vystak-scheduler-data` — before deploying the new
+project. There's no automatic per-project isolation of this volume today.

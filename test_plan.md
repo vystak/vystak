@@ -63,6 +63,15 @@ compaction, manual `/compact` succeeds, both rows appear in the inspection
 endpoint. Requires a real `ANTHROPIC_API_KEY`; LLM-dependent steps auto-skip
 on sentinel keys (infra wiring still verified).
 
+**Schedule-axis (scheduled tasks)**: orthogonal to stack × channel × transport,
+exercised once on docker × default × chat × http. Three cells verify the
+`vystak-heartbeat` scheduler REST API end-to-end (declarative fire, runtime
+one-shot completion, runtime-task persistence across a scheduler restart) —
+see the dedicated subsection under "Dimensions that do NOT vary by cell"
+below. `release_integration` + `docker` markers; sentinel API keys suffice
+(no real `ANTHROPIC_API_KEY` needed — the scheduler's fire-and-record path
+doesn't depend on the reply's content).
+
 ---
 
 ## Prerequisites
@@ -401,6 +410,26 @@ across hops. Test once per **stack** and once per **transport**:
 
 Each multi cell adds **V13–V15** to the V1–V9 checklist.
 
+**Scheduled tasks** — orthogonal dimension, layered on top of D1 (docker ×
+default × chat × http). Exercises the `vystak-heartbeat` scheduler REST API
+(`127.0.0.1:9797`) directly rather than the agent's chat/A2A surface. Test
+once, on docker only (`vystak-provider-docker/tests/release/test_schedules.py`,
+`release_integration` + `docker` markers; sentinel `ANTHROPIC_API_KEY` is
+enough — the agent's 401 from the LLM call still lets the fire-and-record
+path complete):
+
+- **Sched-declarative**: `test_declarative_schedule_fires` — a declarative
+  `schedules:` entry (`every: 30s`) fires within 90s of `vystak apply`;
+  `source=declarative`, `status` stays `active` (recurring).
+- **Sched-oneshot**: `test_runtime_oneshot_fires_and_completes` — a runtime
+  task created via `POST /tasks` with `at` fires and transitions to
+  `status=completed`.
+- **Sched-restart**: `test_runtime_task_survives_scheduler_restart` — a
+  runtime cron task (`POST /tasks` with `cron`) is still `status=active` and
+  listed via `GET /tasks` after a `docker restart vystak-heartbeat`.
+
+See [`docs/schedules.md`](docs/schedules.md) for the full field reference.
+
 **Canary — collision detection.** A regression-prevention micro-test you
 should run once on each stack: declare `subagents: [weather-agent]` AND
 drop a `tools/ask_weather_agent.py` next to `vystak.yaml`. Expect
@@ -519,3 +548,8 @@ dated markdown under `docs/test-plans/YYYY-MM-DD-results.md`.
   triggers threshold compaction; manual `/compact` succeeds; both rows
   appear in the inspection endpoint. `release_integration` + `docker`
   markers; LLM-dependent steps auto-skip on sentinel keys.
+- **2026-07-26** — Added the scheduled-tasks orthogonal dimension: three
+  cells (Sched-declarative, Sched-oneshot, Sched-restart) layered on D1,
+  exercising the `vystak-heartbeat` scheduler REST API end-to-end via
+  `vystak-provider-docker/tests/release/test_schedules.py`.
+  `release_integration` + `docker` markers; sentinel API keys suffice.

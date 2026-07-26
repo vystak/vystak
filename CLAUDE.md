@@ -75,10 +75,12 @@ the full deploy → verify → destroy lifecycle. The canonical reference is
 `test_plan.md` (repo root): **stack × secrets × channel × transport**, cells
 D1–D8 (Docker) and A1–A8 (Azure), plus extra lifecycle cells beyond the grid:
 
-- Docker (`vystak-provider-docker/tests/release/`, 15 files): `test_D1..D8_*`,
+- Docker (`vystak-provider-docker/tests/release/`, 18 files): `test_D1..D8_*`,
   `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_skills_folder.py`,
-  `test_live_chat.py`, and three Postgres variants (`test_sessions_postgres.py`,
-  `test_memory_postgres.py`, `test_sessions_and_memory_postgres.py`).
+  `test_live_chat.py`, `test_schedules.py`, `test_panel_nats_resume.py`,
+  `test_workspace_tools_v11.py`, and three Postgres variants
+  (`test_sessions_postgres.py`, `test_memory_postgres.py`,
+  `test_sessions_and_memory_postgres.py`).
 - Azure (`vystak-provider-azure/tests/release/`, 8 files): `test_A1..A8_*`.
 
 Markers (all gated — default `pytest` excludes them; registered in root `pyproject.toml`):

@@ -164,6 +164,13 @@ resolved). The unified scheduler always fires the agent when a task is due;
 a missing `target_thread` only skips the delivery step afterward, which is
 not logged as a separate event.
 
+**Upgrade cost:** if you're relying on this change, note it's not free —
+a heartbeat with `target_thread: null` that previously skipped its fire
+silently now invokes the agent (a real model call) on every cron tick,
+even though delivery is still skipped afterward. If such a heartbeat was
+effectively dormant before, set `enabled: false` or give it a concrete
+`target_thread` to avoid paying for fires that go nowhere.
+
 ## Plan-time validation
 
 `vystak plan` and `vystak apply` validate that:
