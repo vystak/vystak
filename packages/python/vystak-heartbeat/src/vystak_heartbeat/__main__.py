@@ -11,13 +11,15 @@ import signal
 from pathlib import Path
 
 from vystak.schema.heartbeat import Heartbeat
+from vystak.schema.schedule import ScheduledTask, from_heartbeat
 
-from vystak_heartbeat.scheduler import HeartbeatScheduler
+from vystak_heartbeat.schedule_store import SqliteScheduleStore
 from vystak_heartbeat.session_store import (
     HeartbeatSessionStore,
     InMemoryStore,
     SqliteStore,
 )
+from vystak_heartbeat.task_scheduler import TaskScheduler
 
 logger = logging.getLogger("vystak.heartbeat.main")
 
@@ -63,32 +65,48 @@ async def _run() -> None:
     routes = _load_json(cfg_dir / "routes.json")
 
     transport = _build_transport(cfg)
-    channel_routes = {
-        r["delivery"]["channel_canonical_name"]: r["delivery"].get("url", "")
-        for r in routes.values() if "delivery" in r
-    }
+    # All declared channels (not just heartbeat targets) so runtime-created
+    # scheduled tasks can deliver to any channel, not only the one wired at
+    # apply time for a heartbeat.
+    channel_routes = cfg.get("channel_addresses", {})
     delivery = _build_delivery(cfg, channel_routes)
     sessions = _build_session_store(cfg)
 
-    schedulers: list[HeartbeatScheduler] = []
-    for agent_name, route in routes.items():
-        if "heartbeat" not in route:
-            continue
-        hb = Heartbeat.model_validate(route["heartbeat"])
-        if not hb.enabled:
-            continue
-        schedulers.append(HeartbeatScheduler(
-            agent_name=agent_name,
-            agent_canonical=route["canonical"],
-            channel_canonical=route["delivery"]["channel_canonical_name"],
-            heartbeat=hb,
-            transport=transport,
-            delivery=delivery,
-            sessions=sessions,
-        ))
+    store = SqliteScheduleStore(cfg.get("store", {}).get("path", "/data/scheduler.db"))
+    await store.connect()
 
-    for s in schedulers:
-        await s.start()
+    agent_names: dict[str, str] = {}
+    for agent_name, route in routes.items():
+        agent_names[route["canonical"]] = agent_name
+        declared: list[ScheduledTask] = []
+        if "heartbeat" in route:
+            # Disabled heartbeats (hb.enabled is False) are still reconciled
+            # in — the task carries enabled=False, the store's `due()` skips
+            # it, and it stays visible via GET /tasks.
+            hb = Heartbeat.model_validate(route["heartbeat"])
+            declared.append(from_heartbeat(hb))
+        for raw in route.get("schedules", []):
+            declared.append(ScheduledTask.model_validate(raw))
+        await store.reconcile_declarative(route["canonical"], declared)
+
+    scheduler = TaskScheduler(
+        store=store,
+        transport=transport,
+        delivery=delivery,
+        sessions=sessions,
+        agent_names=agent_names,
+    )
+    # start() calls startup_reconcile_next_fires() internally — do not call
+    # it again here.
+    await scheduler.start()
+
+    import uvicorn
+
+    from vystak_heartbeat.api import build_api
+
+    server = uvicorn.Server(uvicorn.Config(
+        build_api(store, scheduler), host="0.0.0.0", port=8081, log_level="warning"))
+    api_task = asyncio.create_task(server.serve())
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -96,8 +114,11 @@ async def _run() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
     await stop.wait()
-    for s in schedulers:
-        await s.stop()
+
+    server.should_exit = True
+    await api_task
+    await scheduler.stop()
+    await store.close()
 
 
 def main() -> None:
