@@ -106,6 +106,13 @@ class TaskScheduler:
                     rec.agent_canonical,
                     rec.task.name,
                 )
+                # "Skip this tick" semantics: advance the row exactly as if
+                # it had fired so the poll loop doesn't busy-wait on it for
+                # the duration of the in-flight fire. A one-shot marked busy
+                # is currently firing — leave it alone; its own in-flight
+                # `_fire_one` will complete it.
+                if rec.task.at is None:
+                    await self._store.set_next_fire(rec.id, compute_next_fire(rec.task, now))
                 continue
             fire_task = asyncio.create_task(self._fire_one(rec))
             self._fire_tasks.add(fire_task)
@@ -167,28 +174,39 @@ class TaskScheduler:
             suppressed = task.ack_max_chars is not None and is_heartbeat_ok(
                 text, task.ack_max_chars
             )
-            if not suppressed and task.target_channel and task.target_thread:
-                await self._delivery.deliver(
-                    task.target_channel,
-                    DeliveryRequest(
-                        thread_id=task.target_thread,
-                        text=text,
-                        metadata={
-                            "scheduled_task": task.name,
-                            "agent": self._agent_names.get(
-                                rec.agent_canonical, rec.agent_canonical
-                            ),
-                            "fired_at": datetime.now(UTC).isoformat(),
-                        },
-                    ),
-                )
 
+            # record_fire must run before delivery is attempted: a deliver()
+            # failure must never orphan a one-shot as permanently "active"
+            # (its next_fire_at was already cleared by _fire_due) nor risk
+            # it re-firing after a restart. Losing a notification is
+            # acceptable; re-running a one-shot is not.
             await self._store.record_fire(
                 rec.id,
                 datetime.now(UTC),
                 text[:1000],
                 completed=task.at is not None,
             )
+
+            if not suppressed and task.target_channel and task.target_thread:
+                try:
+                    await self._delivery.deliver(
+                        task.target_channel,
+                        DeliveryRequest(
+                            thread_id=task.target_thread,
+                            text=text,
+                            metadata={
+                                "scheduled_task": task.name,
+                                "agent": self._agent_names.get(
+                                    rec.agent_canonical, rec.agent_canonical
+                                ),
+                                "fired_at": datetime.now(UTC).isoformat(),
+                            },
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "delivery failed task=%s agent=%s", task.name, rec.agent_canonical
+                    )
         except Exception:
             logger.exception(
                 "scheduled_task.fire_failed agent=%s task=%s",

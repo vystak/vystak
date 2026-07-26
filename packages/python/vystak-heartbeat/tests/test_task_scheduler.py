@@ -221,12 +221,31 @@ class TestFireSemantics:
         await sched._fire_due(now())
         transport.send_task.assert_not_called()
         assert not sched._fire_tasks
-        # Documents current behaviour, not a design requirement: the skip
-        # branch runs BEFORE the next_fire_at advance, so a busy-skipped row
-        # is left due (`next_fire_at` unchanged, still in the past) rather
-        # than rescheduled — `_run`'s poll would tight-loop on this row until
-        # `_busy` clears. Known, flagged in the task report; not fixed here.
-        assert (await store.get(rec.id)).next_fire_at == past()
+        # Busy-skip uses "skip this tick" semantics: the row is advanced
+        # exactly as if it had fired, so the poll loop doesn't tight-spin
+        # on it for the duration of the in-flight fire.
+        got = await store.get(rec.id)
+        assert got.next_fire_at is not None
+        assert got.next_fire_at > past()
+
+    async def test_skip_when_busy_oneshot_not_completed_or_cleared(
+        self, sched, store, transport
+    ):
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="once", at=future(), skip_when_busy=True),
+            created_by="cli",
+        )
+        await store.set_next_fire(rec.id, past())
+        sched._busy.add(rec.id)
+        await sched._fire_due(now())
+        transport.send_task.assert_not_called()
+        assert not sched._fire_tasks
+        # A busy one-shot is currently firing (its in-flight _fire_one will
+        # complete it) — _fire_due must not clear or complete it here.
+        got = await store.get(rec.id)
+        assert got.status == "active"
+        assert got.next_fire_at == past()
 
     async def test_not_skipped_when_busy_flag_disabled(self, sched, store, transport):
         rec = await store.create_runtime(
@@ -269,6 +288,49 @@ class TestFireSemantics:
         await sched._fire_one(rec)
         md = _sent_metadata(transport.send_task.await_args)
         assert md["scheduled_task"] == "r"
+
+    async def test_delivery_failure_still_records_fire_oneshot(
+        self, sched, store, transport, delivery
+    ):
+        delivery.deliver = AsyncMock(side_effect=RuntimeError("delivery down"))
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(
+                name="once",
+                at=future(),
+                target_channel="chat.channels.dev",
+                target_thread="t1",
+            ),
+            created_by="cli",
+        )
+        await sched._fire_one(rec)
+        got = await store.get(rec.id)
+        assert got.status == "completed"
+        assert got.last_fire_at is not None
+        assert rec.id not in sched._busy
+
+    async def test_delivery_failure_still_reschedules_recurring(
+        self, sched, store, transport, delivery
+    ):
+        delivery.deliver = AsyncMock(side_effect=RuntimeError("delivery down"))
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(
+                name="r",
+                cron="* * * * *",
+                target_channel="chat.channels.dev",
+                target_thread="t1",
+            ),
+            created_by="cli",
+        )
+        await store.set_next_fire(rec.id, past())
+        await sched._fire_due(now())
+        await asyncio.gather(*sched._fire_tasks)
+        got = await store.get(rec.id)
+        assert got.status == "active"
+        assert got.next_fire_at is not None
+        assert got.next_fire_at > now()
+        assert got.last_fire_at is not None
 
     async def test_busy_cleared_on_transport_error(self, sched, store, transport):
         transport.send_task = AsyncMock(side_effect=RuntimeError("boom"))
