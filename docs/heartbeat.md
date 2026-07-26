@@ -140,6 +140,7 @@ logger:
 | `heartbeat.acked` | INFO | Reply matched `HEARTBEAT_OK` and was dropped |
 | `heartbeat.skipped` | INFO | Skipped due to `skip_when_busy` |
 | `heartbeat.fired_failed` | ERROR | `_fire_one` raised an exception; loop continues |
+| `heartbeat.delivery_failed` | ERROR | `deliver()` raised after a successful fire; the fire is still recorded |
 
 A declarative `heartbeat` block compiles to a `ScheduledTask` named
 `"heartbeat"`, run by the unified `TaskScheduler`
