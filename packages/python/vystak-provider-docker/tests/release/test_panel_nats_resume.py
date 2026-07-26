@@ -235,16 +235,23 @@ def test_panel_nats_detached_persistence(project, panel_clean, monkeypatch):
             assert assistant_rows[0].get("turn_id"), "assistant row missing turn_id"
 
         # The 204 above is only proof of the detached persister at work if
-        # the turn actually started on the agent side. Rule out the
-        # short-circuit where `createDetached` itself failed (agent
-        # unreachable / bad request) and the channel cleared the turn
-        # without ever touching JetStream.
+        # the turn actually started on the agent side. With sentinel
+        # credentials, `assistant_rows` is typically empty (the LLM call
+        # fails fast, an errored empty turn writes no row) -- so the 204 +
+        # empty-row combination alone would also be true if `createDetached`
+        # never reached the agent at all. Require positive proof the
+        # detached dispatch happened (`tx responses/createDetached ...` is
+        # logged unconditionally, success or failure) and rule out the
+        # specific short-circuit where it failed outright.
         logs = run(
             ["docker", "logs", "--tail", "200", "vystak-channel-panel"], check=False,
         )
         combined_log = logs.stdout + logs.stderr
+        assert "tx responses/createDetached" in combined_log, (
+            f"createDetached was never dispatched to the agent:\n{combined_log}"
+        )
         assert "createDetached failed" not in combined_log, (
-            f"createDetached never reached the agent:\n{combined_log}"
+            f"createDetached failed outright rather than running the turn:\n{combined_log}"
         )
 
     assert_destroy_ok(cwd=project)
