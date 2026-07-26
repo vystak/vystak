@@ -173,6 +173,28 @@ async def test_delete_declarative_409(client, store):
     )
 
 
+async def test_patch_invalid_shape_422(client, scheduler):
+    """PATCH with both cron and every set → 422, scheduler.wake not called."""
+    created = (await client.post("/tasks", json=_body())).json()
+    scheduler.reset_mock()
+    # Try to add every to a task that already has cron
+    resp = await client.patch(f"/tasks/{created['id']}", json={"every": "5m"})
+    assert resp.status_code == 422
+    # Validate that the error mentions the shape constraint
+    detail = resp.json()["detail"]
+    assert "exactly one" in detail.lower()
+    scheduler.wake.assert_not_called()
+
+
+async def test_patch_invalid_cron_422(client, scheduler):
+    """PATCH with invalid cron string → 422, scheduler.wake not called."""
+    created = (await client.post("/tasks", json=_body())).json()
+    scheduler.reset_mock()
+    resp = await client.patch(f"/tasks/{created['id']}", json={"cron": "not a cron"})
+    assert resp.status_code == 422
+    scheduler.wake.assert_not_called()
+
+
 async def test_backfill_integration(store):
     """POST leaves next_fire_at NULL; a real scheduler's backfill fills it."""
     from vystak_heartbeat.api import build_api

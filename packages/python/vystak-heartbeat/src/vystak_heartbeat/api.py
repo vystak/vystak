@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Response
+from pydantic import ValidationError
 from vystak.schema.schedule import ScheduledTask
 
 from vystak_heartbeat.schedule_store import NameCollisionError
@@ -66,6 +67,8 @@ def build_api(store, scheduler) -> FastAPI:
             raise HTTPException(
                 409, "declarative task — change the YAML definition and re-apply"
             ) from None
+        except ValidationError as e:
+            raise HTTPException(422, str(e)) from None
         scheduler.wake()
         return _out(rec)
 
