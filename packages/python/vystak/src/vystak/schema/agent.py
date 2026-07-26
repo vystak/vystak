@@ -11,6 +11,7 @@ from vystak.schema.mcp import McpServer
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.resource import Resource
+from vystak.schema.schedule import ScheduledTask
 from vystak.schema.secret import Secret
 from vystak.schema.service import ServiceType
 from vystak.schema.skill import Skill
@@ -50,6 +51,7 @@ class Agent(NamedModel):
 
     compaction: Compaction | None = None
     heartbeat: Heartbeat | None = None
+    schedules: list[ScheduledTask] = []
 
     @property
     def canonical_name(self) -> str:
@@ -129,6 +131,22 @@ class Agent(NamedModel):
                                 f"mcp_servers[{mcp.name}].{path} references "
                                 f"undeclared secret '{name}'; add to agent.secrets"
                             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_schedules(self) -> Self:
+        seen: set[str] = set()
+        for s in self.schedules:
+            if s.name == "heartbeat":
+                raise ValueError(
+                    f"Agent '{self.name}': schedule name 'heartbeat' is reserved "
+                    f"for the compiled heartbeat task."
+                )
+            if s.name in seen:
+                raise ValueError(
+                    f"Agent '{self.name}' has duplicate schedule name '{s.name}'."
+                )
+            seen.add(s.name)
         return self
 
 

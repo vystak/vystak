@@ -47,6 +47,7 @@ from vystak.schema.resource import (
     SessionStore,
     VectorStore,
 )
+from vystak.schema.schedule import ScheduledTask, parse_every
 from vystak.schema.secret import Secret
 from vystak.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from vystak.schema.skill import Skill, SkillRequirements
@@ -88,6 +89,7 @@ __all__ = [
     "Redis",
     "Resource",
     "Policy",
+    "ScheduledTask",
     "SlackChannelOverride",
     "RuntimeMode",
     "Secret",
@@ -111,6 +113,7 @@ __all__ = [
     "Volume",
     "Workspace",
     "WorkspaceType",
+    "parse_every",
     # OpenAI-compatible API models
     "ChatCompletionChunk",
     "ChatCompletionRequest",
