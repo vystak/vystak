@@ -30,6 +30,7 @@ from _vystak.runtime.nats_bridge import maybe_build_bridge
 from _vystak.runtime.openai.chat import ChatCompletionsHandler
 from _vystak.runtime.openai.responses import ResponsesHandler
 from _vystak.runtime.prompt_callable import build_prompt
+from _vystak.runtime.schedules import build_schedule_tools
 from _vystak.runtime.skills import build_skill_tools
 from _vystak.runtime.store import (
     _LazyCheckpointer,
@@ -95,6 +96,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     subagent_tools = build_subagent_tools(agent)
     skill_tools = build_skill_tools(agent, Path("."))
     workspace_tools = build_workspace_tools(agent)
+    schedule_tools = build_schedule_tools(agent)
     # If memory_store is a _LazyStore, the lifespan resolves it before any
     # request runs. Until then, MemoryManager is wired with `None` and its
     # recall/handle_tool_output are safe no-ops.
@@ -116,7 +118,7 @@ def build_agent_app(agent: Any) -> FastAPI:
     graph = build_graph(
         agent,
         prompt=prompt,
-        tools=user_tools + workspace_tools + subagent_tools + skill_tools,
+        tools=user_tools + workspace_tools + subagent_tools + skill_tools + schedule_tools,
         checkpointer=initial_checkpointer,
     )
 
@@ -162,7 +164,8 @@ def build_agent_app(agent: Any) -> FastAPI:
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
-                    tools=user_tools + workspace_tools + subagent_tools + skill_tools + mcp_tools,
+                    tools=user_tools + workspace_tools + subagent_tools + skill_tools
+                    + schedule_tools + mcp_tools,
                     checkpointer=resolved,
                 )
                 a2a_executor._graph = new_graph

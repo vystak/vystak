@@ -307,6 +307,20 @@ class ChannelRuntime(ABC):
             raise AgentCallError(f"route {route} has no address")
         return agent_url
 
+    def _outbound_metadata(self, event: InboundEvent) -> dict[str, Any]:
+        """Build the metadata dict sent with an agent call.
+
+        Merges in `channel_canonical`/`thread_id` — the values the a2a
+        executor stashes into `CURRENT_TURN_METADATA` per turn (see
+        `_vystak/runtime/schedules.py`) so a `schedule_task(deliver_here=True)`
+        tool call mid-turn knows which channel/thread to target for
+        delivery of the scheduled task's result.
+        """
+        metadata = _json_safe(event.metadata)
+        metadata["channel_canonical"] = self.config.get("canonical_name", "")
+        metadata["thread_id"] = event.thread_id or event.scope_id
+        return metadata
+
     async def call_agent(
         self,
         event: InboundEvent,
@@ -318,7 +332,7 @@ class ChannelRuntime(ABC):
             text=event.text,
             thread_id=event.thread_id or event.scope_id,
             history=history,
-            metadata=_json_safe(event.metadata),
+            metadata=self._outbound_metadata(event),
         )
 
     async def stream_agent(
@@ -343,7 +357,7 @@ class ChannelRuntime(ABC):
             text=event.text,
             thread_id=event.thread_id or event.scope_id,
             history=history,
-            metadata=_json_safe(event.metadata),
+            metadata=self._outbound_metadata(event),
         ):
             await self.on_chunk(event, route, chunk)
             if chunk.type == "token":

@@ -265,7 +265,9 @@ class FakeAgentClient:
         self.calls = []
 
     async def send_turn(self, agent_url, text, thread_id, history=None, metadata=None):
-        self.calls.append({"url": agent_url, "text": text, "thread_id": thread_id})
+        self.calls.append({
+            "url": agent_url, "text": text, "thread_id": thread_id, "metadata": metadata,
+        })
         return AgentReply(text=f"reply to: {text}")
 
     async def stream_turn(self, *args, **kwargs):
@@ -290,6 +292,57 @@ async def test_handle_event_full_pipeline_happy_path():
     assert fc.calls[0]["url"] == "http://hero:8000"
     # thread binding persisted in after_reply
     assert await store.get_thread_binding("slack", "C1", "T:1") == "hero"
+
+
+@pytest.mark.asyncio
+async def test_call_agent_merges_channel_canonical_and_thread_id_into_metadata():
+    """call_agent must merge channel_canonical (this channel's own
+    canonical_name from config) and thread_id (the resolved conversation
+    thread) into the outbound metadata dict — the a2a executor stashes
+    these into CURRENT_TURN_METADATA so a schedule_task(deliver_here=True)
+    tool call mid-turn knows where to deliver the scheduled task's result."""
+    fc = FakeAgentClient()
+    rt = TrivialRuntime(
+        config=_config(canonical_name="hero-slack.channels.default"),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=fc,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id="T:1",
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+        metadata={"channel_id": "C1"},
+    )
+    await rt.call_agent(ev, "hero", history=[])
+
+    metadata = fc.calls[0]["metadata"]
+    assert metadata["channel_canonical"] == "hero-slack.channels.default"
+    assert metadata["thread_id"] == "T:1"
+    # Original event metadata is preserved alongside the merged keys.
+    assert metadata["channel_id"] == "C1"
+
+
+@pytest.mark.asyncio
+async def test_call_agent_thread_id_falls_back_to_scope_id():
+    """When the event has no thread_id (e.g. a channel-scoped DM), the
+    merged metadata's thread_id falls back to scope_id — same fallback
+    already used for the send_turn thread_id= argument."""
+    fc = FakeAgentClient()
+    rt = TrivialRuntime(
+        config=_config(canonical_name="hero-slack.channels.default"),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=fc,
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id=None,
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+        metadata={},
+    )
+    await rt.call_agent(ev, "hero", history=[])
+
+    metadata = fc.calls[0]["metadata"]
+    assert metadata["thread_id"] == "C1"
 
 
 @pytest.mark.asyncio

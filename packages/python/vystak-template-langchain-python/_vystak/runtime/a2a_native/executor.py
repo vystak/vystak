@@ -21,6 +21,7 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import Part, Task, TaskState, TaskStatus
 
 from _vystak.runtime.content import flatten_content
+from _vystak.runtime.schedules import CURRENT_TURN_METADATA
 
 
 class LangGraphExecutor(AgentExecutor):
@@ -31,6 +32,15 @@ class LangGraphExecutor(AgentExecutor):
         self._memory_mgr = memory_mgr
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # `context.message.metadata` is a google.protobuf.Struct (a2a-sdk 1.0.2
+        # uses protobuf-backed a2a.types) — `dict(...)` yields a plain dict,
+        # `{}` when unset; field access never raises even if empty. Set BEFORE
+        # running the graph so any schedule_task tool call made during this
+        # turn can read where the turn originated (channel_canonical/thread_id
+        # merged in by vystak-channel-runtime — see schedules.py).
+        msg = context.message
+        CURRENT_TURN_METADATA.set(dict(msg.metadata) if msg is not None else {})
+
         # Enqueue an initial Task if this is a fresh request — the SDK's
         # ActiveTask consumer raises if a TaskStatusUpdateEvent arrives
         # before a Task has been seen for this task_id.

@@ -2,8 +2,10 @@
 
 import pytest
 from _vystak.runtime.a2a_native.executor import LangGraphExecutor
+from _vystak.runtime.schedules import CURRENT_TURN_METADATA
 from a2a.server.events import EventQueue
 from a2a.types import Message, Part, Role, Task, TaskState, TaskStatusUpdateEvent
+from google.protobuf.struct_pb2 import Struct
 
 
 class FakeGraph:
@@ -173,3 +175,77 @@ async def test_executor_skips_initial_task_when_already_present():
 
     tasks = [ev for ev in queue.events if isinstance(ev, Task)]
     assert tasks == []  # no Task event emitted on follow-up
+
+
+# ---------------------------------------------------------------------------
+# Turn metadata — CURRENT_TURN_METADATA must be set from the incoming
+# message before the graph runs, so a schedule_task tool call made mid-turn
+# can read channel_canonical/thread_id (see _vystak/runtime/schedules.py).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_turn_metadata():
+    token = CURRENT_TURN_METADATA.set({})
+    yield
+    CURRENT_TURN_METADATA.reset(token)
+
+
+class MetadataCapturingGraph:
+    """Records CURRENT_TURN_METADATA at astream_events time — proves the
+    executor sets it before driving the graph, not after."""
+
+    def __init__(self):
+        self.seen_metadata: dict | None = None
+
+    async def astream_events(self, input, config, version="v2"):  # noqa: ANN001
+        self.seen_metadata = CURRENT_TURN_METADATA.get()
+        return
+        yield  # unreachable, marks this as an async generator
+
+    async def aget_state(self, config):  # noqa: ANN001
+        class _Msg:
+            content = "ok"
+
+        class _Snap:
+            values = {"messages": [_Msg()]}
+
+        return _Snap()
+
+
+@pytest.mark.asyncio
+async def test_executor_sets_current_turn_metadata_before_running_graph():
+    """The incoming message's metadata (a google.protobuf.Struct on a2a-sdk
+    1.0.2's protobuf-backed Message type) must land in CURRENT_TURN_METADATA
+    as a plain dict before the graph runs."""
+    meta = Struct()
+    meta.update({"channel_canonical": "c.channels.d", "thread_id": "t9"})
+
+    class ContextWithMetadata(FakeContext):
+        message = Message(
+            role=Role.ROLE_USER,
+            message_id="m-2",
+            parts=[Part(text="ping")],
+            metadata=meta,
+        )
+
+    graph = MetadataCapturingGraph()
+    executor = LangGraphExecutor(graph=graph)
+    queue = RecordingQueue()
+
+    await executor.execute(ContextWithMetadata(), queue)
+
+    assert graph.seen_metadata == {"channel_canonical": "c.channels.d", "thread_id": "t9"}
+
+
+@pytest.mark.asyncio
+async def test_executor_sets_empty_turn_metadata_when_message_has_none():
+    """FakeContext.message carries no metadata -> {} (never None), so
+    schedule_task's CURRENT_TURN_METADATA.get().get(...) never raises."""
+    graph = MetadataCapturingGraph()
+    executor = LangGraphExecutor(graph=graph)
+    queue = RecordingQueue()
+
+    await executor.execute(FakeContext(), queue)
+
+    assert graph.seen_metadata == {}
