@@ -33,6 +33,9 @@ class AgentHashTree:
     compaction: str
     # Heartbeat scheduler config (schedule, target_channel, prompt, enabled, etc.)
     heartbeat: str
+    # Declarative schedules (Agent.schedules). Runtime-created tasks never
+    # appear here — they don't exist on the Agent model.
+    schedules: str
     # Template digest. Captures the framework template's identity
     # (``_vystak/manifest.json`` ``template.{name, version}``) so a template
     # version bump triggers redeploy even when the Agent schema hasn't moved.
@@ -272,6 +275,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
     grants = compute_grants_hash(agent)
     compaction = _hash_optional(agent.compaction)
     heartbeat = _hash_optional(agent.heartbeat)
+    schedules = _hash_list(agent.schedules)
     template = template_hash if template_hash is not None else _hash_str(None)
 
     sections = "|".join(
@@ -292,6 +296,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
             grants,
             compaction,
             heartbeat,
+            schedules,
             template,
         ]
     )
@@ -313,6 +318,7 @@ def hash_agent(agent: Agent, *, template_hash: str | None = None) -> AgentHashTr
         grants=grants,
         compaction=compaction,
         heartbeat=heartbeat,
+        schedules=schedules,
         template=template,
         root=root,
     )
