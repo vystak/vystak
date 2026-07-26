@@ -64,3 +64,26 @@ def test_schedule_field_change_changes_hash():
     h2 = hash_agent(with_cron("0 10 * * 1"))
     assert h1.root != h2.root
     assert h1.schedules != h2.schedules
+
+
+def test_reordering_schedules_does_not_change_root():
+    """schedules is hashed via _hash_list (sorted), same as skills/secrets/
+    mcp_servers — declaration order carries no deploy-identity meaning
+    since ScheduledTask.name is the reconciliation key."""
+
+    def with_order(*tasks: ScheduledTask) -> Agent:
+        return Agent(
+            name="bot",
+            framework="langchain-python",
+            default_model=_model(),
+            platform=_platform(),
+            schedules=list(tasks),
+        )
+
+    a = ScheduledTask(name="a", cron="0 9 * * 1")
+    b = ScheduledTask(name="b", cron="0 10 * * 2")
+
+    h1 = hash_agent(with_order(a, b))
+    h2 = hash_agent(with_order(b, a))
+    assert h1.root == h2.root
+    assert h1.schedules == h2.schedules
