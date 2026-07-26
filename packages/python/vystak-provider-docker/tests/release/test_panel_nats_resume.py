@@ -244,7 +244,7 @@ def test_panel_nats_detached_persistence(project, panel_clean, monkeypatch):
         # logged unconditionally, success or failure) and rule out the
         # specific short-circuit where it failed outright.
         logs = run(
-            ["docker", "logs", "--tail", "200", "vystak-channel-panel"], check=False,
+            ["docker", "logs", "--tail", "2000", "vystak-channel-panel"], check=False,
         )
         combined_log = logs.stdout + logs.stderr
         assert "tx responses/createDetached" in combined_log, (

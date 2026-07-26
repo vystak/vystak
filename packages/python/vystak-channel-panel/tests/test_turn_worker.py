@@ -1,5 +1,7 @@
 """Persister worker tests with a fake NATS client."""
 
+import asyncio
+
 import pytest
 from vystak_channel_panel.responses_client import PanelStreamEvent
 from vystak_channel_panel.turn_worker import run_turn_persister
@@ -25,6 +27,17 @@ class FakeNatsClientRaises:
 
     async def stream_turn_events(self, subject):
         raise RuntimeError("jetstream subscribe failed")
+        yield  # pragma: no cover — makes this an async generator
+
+
+class FakeNatsClientCancels:
+    """Simulates the task being cancelled mid-stream-read. CancelledError is
+    a BaseException, not an Exception, so it is never caught by the
+    `except Exception` handlers inside run_turn_persister — it must still
+    reach the outer try/finally that pops turn_tasks (Fix 3)."""
+
+    async def stream_turn_events(self, subject):
+        raise asyncio.CancelledError()
         yield  # pragma: no cover — makes this an async generator
 
 
@@ -150,6 +163,86 @@ async def test_persister_infra_failure_leaves_turn_active_for_retry(panel_store,
     conv = await panel_store.get_conversation(conversation.id)
     assert conv.active_turn_id == "t5"
     assert "t5" not in rt.turn_tasks
+
+
+@pytest.mark.asyncio
+async def test_persister_cancelled_error_still_pops_task(panel_store, conversation):
+    """CancelledError escapes uncaught (nothing here should swallow task
+    cancellation) but must still pop turn_tasks and must not clear the
+    active turn, since we don't know whether cancellation happened before
+    or after any write (Fix 3)."""
+    await panel_store.set_active_turn(conversation.id, "t9")
+    rt = FakeRuntime(panel_store, FakeNatsClientCancels())
+    rt.turn_tasks["t9"] = object()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_turn_persister(rt, conversation.id, "t9", "subj")
+
+    assert "t9" not in rt.turn_tasks
+    conv = await panel_store.get_conversation(conversation.id)
+    assert conv.active_turn_id == "t9"
+
+
+class _RaisingAddMessageStore:
+    """Wraps a real store; add_message always raises to simulate a
+    persist-time store failure (e.g. disk full) after a clean stream
+    terminal has already been observed."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    async def add_message(self, *args, **kwargs):
+        raise RuntimeError("disk full")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_persister_store_failure_after_done_leaves_turn_active(panel_store, conversation):
+    """A store failure in the persist block (after a clean `done`) must not
+    clear active_turn_id — otherwise JetStream still holds the turn's output
+    but nothing will ever retry persisting it (Fix 1)."""
+    await panel_store.set_active_turn(conversation.id, "t6")
+    rt = FakeRuntime(
+        _RaisingAddMessageStore(panel_store),
+        FakeNatsClient([PanelStreamEvent(type="done", response_id="resp_6")]),
+    )
+    rt.turn_tasks["t6"] = object()
+
+    await run_turn_persister(rt, conversation.id, "t6", "subj")
+
+    assert [
+        m for m in await panel_store.list_messages(conversation.id) if m.role == "assistant"
+    ] == []
+    conv = await panel_store.get_conversation(conversation.id)
+    assert conv.active_turn_id == "t6"
+    assert "t6" not in rt.turn_tasks
+
+
+@pytest.mark.asyncio
+async def test_persister_rescan_skips_duplicate_insert(panel_store, conversation):
+    """Simulates a restart replay of a turn that crashed between
+    `add_message` and `clear_active_turn`: the assistant row is already
+    there, so the rescan must not insert a second one but must still clear
+    the active turn (the crashed-half completing) (Fix 2)."""
+    await panel_store.set_active_turn(conversation.id, "t7")
+    await panel_store.add_message(
+        conversation.id, "assistant", "hello", response_id="resp_7", turn_id="t7"
+    )
+    rt = FakeRuntime(
+        panel_store,
+        FakeNatsClient([PanelStreamEvent(type="done", response_id="resp_7")]),
+    )
+
+    await run_turn_persister(rt, conversation.id, "t7", "subj")
+
+    assistant = [
+        m for m in await panel_store.list_messages(conversation.id) if m.role == "assistant"
+    ]
+    assert len(assistant) == 1
+    conv = await panel_store.get_conversation(conversation.id)
+    assert conv.active_turn_id is None
 
 
 def test_turn_subject_for():

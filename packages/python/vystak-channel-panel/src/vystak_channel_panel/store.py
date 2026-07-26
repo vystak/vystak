@@ -701,6 +701,28 @@ class SqlitePanelStore:
             rows = await cur.fetchall()
         return [self._message_from_row(r) for r in rows]
 
+    async def get_message_by_turn_id(
+        self, conversation_id: str, turn_id: str
+    ) -> PanelMessage | None:
+        """Look up the assistant row already persisted for *turn_id*, if any.
+
+        Used by the NATS turn persister (`turn_worker.run_turn_persister`) to
+        make the panel's startup rescan idempotent: a crash between
+        `add_message` and `clear_active_turn` leaves the turn active, so a
+        restart replays it from JetStream seq 0 — without this check that
+        replay would insert a second assistant row. Scoped to `role =
+        'assistant'` because the user-turn row is inserted without a
+        `turn_id` on both transport paths, and the persister only ever
+        inserts assistant rows, so this can only be more precise.
+        """
+        async with self.db.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND turn_id = ? "
+            "AND role = 'assistant' LIMIT 1",
+            (conversation_id, turn_id),
+        ) as cur:
+            row = await cur.fetchone()
+        return self._message_from_row(row) if row else None
+
     @staticmethod
     def _message_from_row(row) -> PanelMessage:
         d = dict(row)

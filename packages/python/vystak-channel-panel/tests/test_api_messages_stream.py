@@ -653,7 +653,7 @@ async def test_post_message_nats_start_turn_failure_clears_active_turn(api, pane
     turn it just set and surface exactly one `error` frame — regression
     guard for a real bug found in review: an `except ... as exc` binding
     whose value was read from a closure invoked after the except block (and
-    the function) had already returned, which raises UnboundLocalError
+    the function) had already returned, which raises NameError
     instead of reaching the browser at all."""
     owner, pid, cid = await _ready(api)
     panel_rt.nats_client = FakePanelNatsClientStartTurnFails()

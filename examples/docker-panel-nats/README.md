@@ -10,6 +10,9 @@ Streams flow through JetStream (`vystak-panel-nats-streams` stream on the `vysta
 which means in-flight responses survive browser refreshes and panel restarts. When resuming a
 conversation, the panel replays from the start of the turn.
 
+This example cannot run concurrently with `examples/docker-panel`: both bind
+host port 18100 and deploy an unnamespaced `vystak-channel-panel` container.
+
 ## Deploy the stack
 
     cd examples/docker-panel-nats

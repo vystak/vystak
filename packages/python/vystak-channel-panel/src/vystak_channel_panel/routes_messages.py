@@ -197,7 +197,7 @@ async def _post_message_nats(rt, conv, conv_id: str, text: str, user, title: str
         # it once this block exits. err_gen() only *creates* the generator
         # here — its body runs later, when the ASGI server iterates it,
         # after this function has already returned. A closure over `exc`
-        # itself would hit an UnboundLocalError at that point; capture the
+        # itself would hit a NameError at that point; capture the
         # message as a plain string instead.
         message = f"agent unreachable: {exc}"
 
