@@ -1,21 +1,55 @@
-"""SqliteScheduleStore — persistent task storage with declarative reconciliation."""
+"""ScheduleStore contract — persistent task storage with declarative
+reconciliation, parametrized over both backends (sqlite always runs; pg
+only under -m docker against a real Postgres container — see the `store`
+fixture below and docs/superpowers/plans/2026-05-02-channel-runtime-and-discord.md
+Step 4 for the `docker run` recipe to start one locally)."""
 
+import os
 from datetime import UTC, datetime, timedelta
 
+import asyncpg
 import pytest
 from vystak.schema.schedule import ScheduledTask
 from vystak_heartbeat.schedule_store import (
     NameCollisionError,
     SqliteScheduleStore,
 )
+from vystak_heartbeat.schedule_store_pg import PgScheduleStore
 
 AGENT = "a.agents.default"
 NOW = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
 
 
-@pytest.fixture
-async def store(tmp_path):
-    s = SqliteScheduleStore(str(tmp_path / "sched.db"))
+@pytest.fixture(params=["sqlite", pytest.param("pg", marks=pytest.mark.docker)])
+async def store(request, tmp_path):
+    if request.param == "sqlite":
+        s = SqliteScheduleStore(str(tmp_path / "sched.db"))
+        await s.connect()
+        yield s
+        await s.close()
+        return
+
+    # pg param: real Postgres, started manually per docs/superpowers/plans/
+    # 2026-05-02-channel-runtime-and-discord.md Step 4 (`docker run ... &&
+    # export POSTGRES_DSN=...`), same convention as
+    # vystak_channel_runtime/tests/conftest.py's `postgres_dsn` fixture —
+    # inlined here (not factored into a shared conftest.py fixture) because
+    # vystak-heartbeat/tests/__init__.py makes this package's conftest
+    # resolve to the bare module name `tests.conftest` under
+    # --import-mode=importlib, colliding with sibling packages' own
+    # `tests/conftest.py` (which lack an __init__.py and so get a unique,
+    # fully-qualified module name instead).
+    dsn = os.environ.get("POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("POSTGRES_DSN not set")
+    # Shared container across the whole run — reset schema per test so rows
+    # from earlier tests don't leak into this test's assertions.
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute("DROP TABLE IF EXISTS scheduled_tasks, settings")
+    finally:
+        await conn.close()
+    s = PgScheduleStore(dsn)
     await s.connect()
     yield s
     await s.close()
@@ -137,10 +171,18 @@ class TestFireBookkeeping:
         got = await store.get(rec.id)
         assert got.status == "completed" and got.last_result == "done"
 
-    async def test_persistence_across_reconnect(self, store, tmp_path):
-        rec = await store.create_runtime(AGENT, _cron("p"), created_by="cli")
-        await store.close()
-        s2 = SqliteScheduleStore(str(tmp_path / "sched.db"))
+    # Sqlite-specific (not parametrized over `store`): exercises reopening
+    # the same on-disk file across two independent instances, which only
+    # makes sense for a file-backed store — a Postgres backend's
+    # "persistence" is just the shared DSN/database, nothing instance-local
+    # to reconnect to.
+    async def test_persistence_across_reconnect(self, tmp_path):
+        path = str(tmp_path / "sched.db")
+        s1 = SqliteScheduleStore(path)
+        await s1.connect()
+        rec = await s1.create_runtime(AGENT, _cron("p"), created_by="cli")
+        await s1.close()
+        s2 = SqliteScheduleStore(path)
         await s2.connect()
         assert (await s2.get(rec.id)).task.name == "p"
         await s2.close()

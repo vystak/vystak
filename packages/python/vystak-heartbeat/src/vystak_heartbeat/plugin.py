@@ -17,6 +17,7 @@ def build_bundle(
     channel_addresses: dict[str, str],            # canonical_name → http://host:port
     transport_cfg: dict,                          # {"type": "http"|"nats", ...}
     session_store_cfg: dict,                      # {"type": "memory"|"sqlite", ...}
+    store_cfg: dict | None = None,                # ScheduleStore config; see below
 ) -> FileBundle:
     agents = agents_with_schedules
 
@@ -45,7 +46,12 @@ def build_bundle(
         "session_store": session_store_cfg,
         "agent_addresses": agent_addresses,
         "channel_addresses": channel_addresses,
-        "store": {"type": "sqlite", "path": "/data/scheduler.db"},
+        # ScheduleStore backend for scheduled tasks (distinct from
+        # session_store above, which is the heartbeat conversation store).
+        # Defaults to sqlite; callers pass
+        # {"type": "postgres", "dsn": "postgresql://..."} to opt into
+        # PgScheduleStore instead — see __main__._build_schedule_store.
+        "store": store_cfg or {"type": "sqlite", "path": "/data/scheduler.db"},
     }
 
     return FileBundle(

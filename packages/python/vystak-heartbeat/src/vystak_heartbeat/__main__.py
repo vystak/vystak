@@ -14,6 +14,7 @@ from vystak.schema.heartbeat import Heartbeat
 from vystak.schema.schedule import ScheduledTask, from_heartbeat
 
 from vystak_heartbeat.schedule_store import SqliteScheduleStore
+from vystak_heartbeat.schedule_store_pg import PgScheduleStore
 from vystak_heartbeat.session_store import (
     HeartbeatSessionStore,
     InMemoryStore,
@@ -58,6 +59,20 @@ def _build_session_store(cfg: dict) -> HeartbeatSessionStore:
     return InMemoryStore()
 
 
+def _build_schedule_store(cfg: dict) -> SqliteScheduleStore | PgScheduleStore:
+    """Construct the ScheduleStore from service_config.json's `store` key.
+
+    Default (and only backend the docker provider currently wires) is
+    sqlite — see build_bundle's `store_cfg` parameter and
+    DockerProvider.apply_scheduler for how a bundle would opt into
+    `{"type": "postgres", "dsn": ...}` instead.
+    """
+    s = cfg.get("store", {})
+    if s.get("type") == "postgres":
+        return PgScheduleStore(s["dsn"])
+    return SqliteScheduleStore(s.get("path", "/data/scheduler.db"))
+
+
 async def _run() -> None:
     logging.basicConfig(level=os.environ.get("VYSTAK_LOG_LEVEL", "INFO").upper())
     cfg_dir = Path(os.environ.get("VYSTAK_CONFIG_DIR", "/etc/vystak"))
@@ -72,7 +87,7 @@ async def _run() -> None:
     delivery = _build_delivery(cfg, channel_routes)
     sessions = _build_session_store(cfg)
 
-    store = SqliteScheduleStore(cfg.get("store", {}).get("path", "/data/scheduler.db"))
+    store = _build_schedule_store(cfg)
     await store.connect()
 
     agent_names: dict[str, str] = {}

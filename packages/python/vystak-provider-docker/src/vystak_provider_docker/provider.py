@@ -1303,6 +1303,18 @@ class DockerProvider(PlatformProvider):
             },
             transport_cfg=transport_cfg,
             session_store_cfg={"type": "sqlite", "path": "/data/heartbeat.db"},
+            # ScheduleStore backend for scheduled tasks. Always sqlite here:
+            # apply_scheduler runs once at the platform level, after every
+            # agent's own graph (where a per-agent Postgres session/memory
+            # resource would live) has already executed and torn down its
+            # ProvisionGraph — there's no clean way from here to discover
+            # "does this deployment have a Postgres instance we could
+            # reuse" without inventing a new schema field (out of scope;
+            # see vystak-heartbeat's PgScheduleStore/build_bundle's
+            # store_cfg param for the opt-in path). Postgres selection is
+            # therefore opt-in only via a caller constructing the bundle
+            # directly with store_cfg={"type": "postgres", "dsn": ...}.
+            store_cfg={"type": "sqlite", "path": "/data/scheduler.db"},
         )
 
         extra_env: dict[str, str] = {}
