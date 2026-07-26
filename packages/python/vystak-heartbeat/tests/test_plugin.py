@@ -136,3 +136,16 @@ def test_requirements_includes_fastapi_and_uvicorn():
     )
     assert "fastapi" in out.files["requirements.txt"]
     assert "uvicorn" in out.files["requirements.txt"]
+
+
+def test_store_cfg_override_lands_in_service_config():
+    out = build_bundle(
+        agents_with_schedules=[],
+        agent_addresses={},
+        channel_addresses={},
+        transport_cfg={"type": "http"},
+        session_store_cfg={"type": "memory"},
+        store_cfg={"type": "postgres", "dsn": "postgresql://scheduler:testpass@db:5432/sched"},
+    )
+    cfg = json.loads(out.files["service_config.json"])
+    assert cfg["store"] == {"type": "postgres", "dsn": "postgresql://scheduler:testpass@db:5432/sched"}

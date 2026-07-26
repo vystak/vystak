@@ -139,6 +139,26 @@ class TestApplySchedulerProvisioning:
         }
         assert kwargs["agents_with_schedules"] == [a1, a2]
 
+    def test_provider_uses_sqlite_store_cfg(self, provider, mock_docker_client):
+        """Provider must always use SQLite for the scheduler store (not Postgres).
+        This pins the design boundary: provider stays sqlite-only by design;
+        opt-in Postgres is via direct build_bundle calls with store_cfg."""
+        with patch("vystak_heartbeat.plugin.build_bundle") as mock_build_bundle, patch(
+            "vystak.provisioning.ProvisionGraph"
+        ) as MockGraph:
+            mock_graph = MagicMock()
+            MockGraph.return_value = mock_graph
+            agent = Agent(
+                name="bot",
+                framework="langchain-python",
+                default_model=_model(),
+                schedules=[ScheduledTask(name="task", cron="0 9 * * 1")],
+            )
+            provider.apply_scheduler([agent], [])
+
+        _, kwargs = mock_build_bundle.call_args
+        assert kwargs["store_cfg"] == {"type": "sqlite", "path": "/data/scheduler.db"}
+
 
 class TestApplyHeartbeatAlias:
     def test_delegates_to_apply_scheduler(self, provider, mock_docker_client):
