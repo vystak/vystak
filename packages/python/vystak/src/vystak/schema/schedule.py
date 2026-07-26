@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from vystak.schema.heartbeat import Heartbeat
+
 _EVERY_RE = re.compile(r"^(\d+)([smhd])$")
 _UNIT = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
@@ -91,3 +93,25 @@ class ScheduledTask(BaseModel):
                 f"(got {len(shapes)} on schedule '{self.name}')"
             )
         return self
+
+
+def from_heartbeat(hb: Heartbeat) -> ScheduledTask:
+    """Compile a Heartbeat declaration into its equivalent ScheduledTask.
+
+    The task keeps `prompt=None` when the heartbeat has no prompt; the
+    scheduler substitutes DEFAULT_PROMPT at fire time only for the task
+    named 'heartbeat' (preserving HEARTBEAT.md semantics).
+    """
+    return ScheduledTask(
+        name="heartbeat",
+        cron=hb.schedule,
+        timezone=hb.timezone,
+        prompt=hb.prompt,
+        target_channel=hb.target_channel,
+        target_thread=hb.target_thread,
+        isolated_session=hb.isolated_session,
+        skip_when_busy=hb.skip_when_busy,
+        ack_max_chars=hb.ack_max_chars,
+        model=hb.model,
+        enabled=hb.enabled,
+    )

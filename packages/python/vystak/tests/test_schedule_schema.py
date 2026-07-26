@@ -96,3 +96,33 @@ class TestAgentSchedules:
     def test_reserved_heartbeat_name_rejected(self):
         with pytest.raises(ValidationError, match="reserved"):
             self._agent([{"name": "heartbeat", "cron": "* * * * *"}])
+
+
+class TestFromHeartbeat:
+    def test_compiles(self):
+        from vystak.schema.heartbeat import Heartbeat
+        from vystak.schema.schedule import from_heartbeat
+
+        hb = Heartbeat(schedule="*/30 * * * *", timezone="America/New_York",
+                       target_channel="chat-main.channels.dev",
+                       target_thread="room-1", prompt=None,
+                       isolated_session=False, skip_when_busy=False,
+                       ack_max_chars=250, model="fast")
+        t = from_heartbeat(hb)
+        assert t.name == "heartbeat"
+        assert t.cron == "*/30 * * * *" and t.at is None and t.every is None
+        assert t.timezone == "America/New_York"
+        assert t.target_channel == "chat-main.channels.dev"
+        assert t.target_thread == "room-1"
+        assert t.prompt is None          # None → scheduler falls back to DEFAULT_PROMPT
+        assert t.isolated_session is False and t.skip_when_busy is False
+        assert t.ack_max_chars == 250 and t.model == "fast"
+        assert t.enabled is True
+
+    def test_disabled_carries(self):
+        from vystak.schema.heartbeat import Heartbeat
+        from vystak.schema.schedule import from_heartbeat
+
+        hb = Heartbeat(schedule="* * * * *", target_channel="c.channels.d",
+                       enabled=False)
+        assert from_heartbeat(hb).enabled is False

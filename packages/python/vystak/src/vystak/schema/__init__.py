@@ -47,7 +47,7 @@ from vystak.schema.resource import (
     SessionStore,
     VectorStore,
 )
-from vystak.schema.schedule import ScheduledTask, parse_every
+from vystak.schema.schedule import ScheduledTask, from_heartbeat, parse_every
 from vystak.schema.secret import Secret
 from vystak.schema.service import Postgres, Qdrant, Redis, Service, Sqlite
 from vystak.schema.skill import Skill, SkillRequirements
@@ -75,6 +75,7 @@ __all__ = [
     "Database",
     "Embedding",
     "EnvironmentOverride",
+    "from_heartbeat",
     "Heartbeat",
     "McpServer",
     "McpTransport",
