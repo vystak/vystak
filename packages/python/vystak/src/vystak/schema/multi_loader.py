@@ -26,11 +26,14 @@ def _validate_vault_provider_pairing(vault: Vault) -> None:
         )
 
 
-def _validate_heartbeat_targets(
+def _validate_schedule_targets(
     agents: list[Agent], channels: list[Channel],
 ) -> None:
-    """Cross-deployable check: every agent.heartbeat.target_channel must
-    name a real channel that routes this agent."""
+    """Cross-deployable check: every agent.heartbeat.target_channel and
+    every agent.schedules[*].target_channel must name a real channel that
+    routes this agent; any explicit model name must be in the agent's
+    model pool. Unlike heartbeat, a schedule's target_channel may be None
+    (log-only delivery)."""
     channels_by_canonical = {c.canonical_name: c for c in channels}
     for agent in agents:
         if agent.heartbeat is None:
@@ -56,6 +59,30 @@ def _validate_heartbeat_targets(
                     f"agent '{agent.name}' heartbeat.model "
                     f"'{agent.heartbeat.model}' not in agent's model pool "
                     f"(have: {sorted(pool)})"
+                )
+
+    for agent in agents:
+        pool = {agent.default_model.name} | {m.name for m in agent.models}
+        for t in agent.schedules:
+            if t.target_channel is not None:
+                target = t.target_channel
+                channel = channels_by_canonical.get(target)
+                if channel is None:
+                    raise ValueError(
+                        f"agent '{agent.name}' schedules[{t.name}].target_channel "
+                        f"'{target}' does not match any declared channel "
+                        f"(have: {sorted(channels_by_canonical)})"
+                    )
+                routed = {a.name for a in channel.agents}
+                if agent.name not in routed:
+                    raise ValueError(
+                        f"channel '{target}' does not route agent '{agent.name}' "
+                        f"named in its schedules[{t.name}].target_channel"
+                    )
+            if t.model is not None and t.model not in pool:
+                raise ValueError(
+                    f"agent '{agent.name}' schedules[{t.name}].model "
+                    f"'{t.model}' not in agent's model pool {sorted(pool)}"
                 )
 
 
@@ -298,6 +325,6 @@ def load_multi_yaml(
         channel_data = _resolve_channel_agent_refs(channel_data, agents_by_name)
         channels.append(Channel.model_validate(channel_data))
 
-    _validate_heartbeat_targets(agents, channels)
+    _validate_schedule_targets(agents, channels)
 
     return agents, channels, vault

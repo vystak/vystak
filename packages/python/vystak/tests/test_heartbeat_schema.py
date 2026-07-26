@@ -296,3 +296,130 @@ channels:
 """
     with pytest.raises(ValueError, match="not in agent's model pool"):
         load_multi_yaml(yaml.safe_load(text))
+
+
+def test_schedule_target_channel_typo_rejected():
+    """schedules[<name>].target_channel naming an undeclared channel is rejected."""
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    default_model: c
+    platform: local
+    schedules:
+      - name: digest
+        cron: "*/30 * * * *"
+        target_channel: nonexistent.channels.dev
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    agents: [ops-bot]
+"""
+    data = yaml.safe_load(yaml_text)
+    with pytest.raises(ValueError, match=r"schedules\[digest\].target_channel"):
+        load_multi_yaml(data)
+
+
+def test_schedule_target_channel_does_not_route_agent_rejected():
+    """schedules[<name>].target_channel naming a channel that exists but
+    does not route this agent is rejected."""
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    default_model: c
+    platform: local
+    schedules:
+      - name: digest
+        cron: "*/30 * * * *"
+        target_channel: discord-main.channels.dev
+channels:
+  - name: slack-main
+    type: slack
+    platform: local
+    agents: [ops-bot]
+  - name: discord-main
+    type: discord
+    platform: local
+    agents: []
+"""
+    data = yaml.safe_load(yaml_text)
+    with pytest.raises(ValueError, match="does not route"):
+        load_multi_yaml(data)
+
+
+def test_schedule_target_channel_null_ok():
+    """schedules[<name>].target_channel=null (log-only delivery) loads fine."""
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    yaml_text = """
+providers:
+  docker: {type: docker}
+  anthropic: {type: anthropic}
+platforms:
+  local: {type: docker, provider: docker, namespace: dev}
+models:
+  c: {provider: anthropic, model_name: claude-sonnet-4-6}
+agents:
+  - name: ops-bot
+    framework: langchain-python
+    default_model: c
+    platform: local
+    schedules:
+      - name: digest
+        cron: "*/30 * * * *"
+        target_channel: null
+"""
+    data = yaml.safe_load(yaml_text)
+    agents, _channels, _vault = load_multi_yaml(data)
+    agent = next(a for a in agents if a.name == "ops-bot")
+    assert agent.schedules[0].target_channel is None
+
+
+def test_schedule_model_not_in_pool_rejected():
+    """schedules[<name>].model naming a model outside the agent's pool is rejected."""
+    import yaml
+    from vystak.schema.multi_loader import load_multi_yaml
+
+    text = """
+providers: {anthropic: {type: anthropic}, docker: {type: docker}}
+platforms: {local: {type: docker, provider: docker, namespace: dev}}
+models:
+  opus:  {provider: anthropic, model_name: claude-opus-4-7}
+agents:
+  - name: bot
+    framework: langchain-python
+    default_model: opus
+    platform: local
+    schedules:
+      - name: digest
+        cron: "*/30 * * * *"
+        target_channel: chat-main.channels.dev
+        model: ghost
+channels:
+  - {name: chat-main, type: chat, platform: local, agents: [bot]}
+"""
+    with pytest.raises(ValueError, match=r"schedules\[digest\].model"):
+        load_multi_yaml(yaml.safe_load(text))
