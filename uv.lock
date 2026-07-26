@@ -3252,6 +3252,7 @@ name = "vystak-cli"
 source = { editable = "packages/python/vystak-cli" }
 dependencies = [
     { name = "click" },
+    { name = "httpx" },
     { name = "vystak" },
     { name = "vystak-channel-chat" },
     { name = "vystak-channel-discord" },
@@ -3263,6 +3264,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "vystak", editable = "packages/python/vystak" },
     { name = "vystak-channel-chat", editable = "packages/python/vystak-channel-chat" },
     { name = "vystak-channel-discord", editable = "packages/python/vystak-channel-discord" },

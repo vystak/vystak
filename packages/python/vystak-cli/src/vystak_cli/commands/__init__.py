@@ -13,6 +13,7 @@ from vystak_cli.commands.destroy import destroy as destroy_cmd
 from vystak_cli.commands.init import init as init_cmd
 from vystak_cli.commands.logs import logs as logs_cmd
 from vystak_cli.commands.plan import plan as plan_cmd
+from vystak_cli.commands.schedules import schedules as schedules_cmd
 from vystak_cli.commands.secrets import secrets as secrets_cmd
 from vystak_cli.commands.status import status as status_cmd
 from vystak_cli.commands.update import update as update_cmd
@@ -23,6 +24,7 @@ __all__ = [
     "init_cmd",
     "logs_cmd",
     "plan_cmd",
+    "schedules_cmd",
     "secrets_cmd",
     "status_cmd",
     "update_cmd",

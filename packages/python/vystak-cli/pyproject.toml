@@ -30,6 +30,7 @@ dependencies = [
     "vystak-channel-panel>=0.1.0",
     "vystak-channel-slack>=0.1.0",
     "click>=8.0",
+    "httpx>=0.27",
 ]
 
 [project.urls]

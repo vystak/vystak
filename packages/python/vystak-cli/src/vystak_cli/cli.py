@@ -17,6 +17,7 @@ from vystak_cli.commands import (
     init_cmd,
     logs_cmd,
     plan_cmd,
+    schedules_cmd,
     secrets_cmd,
     status_cmd,
     update_cmd,
@@ -37,6 +38,7 @@ cli.add_command(status_cmd)
 cli.add_command(logs_cmd)
 cli.add_command(secrets_cmd)
 cli.add_command(update_cmd)
+cli.add_command(schedules_cmd)
 
 
 if __name__ == "__main__":
