@@ -12,20 +12,13 @@ from vystak_heartbeat.server_template import DOCKERFILE, REQUIREMENTS
 
 def build_bundle(
     *,
-    agents_with_schedules: list[Any] | None = None,  # list of Agent
-    agents_with_heartbeat: list[Any] | None = None,  # deprecated alias, kept
-    #                                                   for provider.py callers
-    #                                                   pending Task 9
+    agents_with_schedules: list[Any],              # list of Agent
     agent_addresses: dict[str, str],              # canonical_name → /a2a URL
     channel_addresses: dict[str, str],            # canonical_name → http://host:port
     transport_cfg: dict,                          # {"type": "http"|"nats", ...}
     session_store_cfg: dict,                      # {"type": "memory"|"sqlite", ...}
 ) -> FileBundle:
-    agents = (
-        agents_with_schedules
-        if agents_with_schedules is not None
-        else (agents_with_heartbeat or [])
-    )
+    agents = agents_with_schedules
 
     routes: dict[str, dict] = {}
     for agent in agents:

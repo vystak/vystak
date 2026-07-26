@@ -29,3 +29,26 @@ class TestPlatform:
         data = platform.model_dump()
         restored = Platform.model_validate(data)
         assert restored == platform
+
+
+class TestSchedulerConfig:
+    def test_default_scheduler_is_none(self):
+        docker = Provider(name="docker", type="docker")
+        platform = Platform(name="local", type="docker", provider=docker)
+        assert platform.scheduler is None
+
+    def test_scheduler_enabled_true(self):
+        docker = Provider(name="docker", type="docker")
+        platform = Platform(
+            name="local", type="docker", provider=docker,
+            scheduler={"enabled": True},
+        )
+        assert platform.scheduler.enabled is True
+
+    def test_scheduler_enabled_defaults_false(self):
+        docker = Provider(name="docker", type="docker")
+        platform = Platform(
+            name="local", type="docker", provider=docker,
+            scheduler={},
+        )
+        assert platform.scheduler.enabled is False

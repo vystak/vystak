@@ -2,12 +2,19 @@
 
 from typing import Self
 
-from pydantic import model_validator
+from pydantic import BaseModel, model_validator
 
 from vystak.schema.common import NamedModel
 from vystak.schema.provider import Provider
 from vystak.schema.telemetry import Telemetry
 from vystak.schema.transport import Transport
+
+
+class SchedulerConfig(BaseModel):
+    """Toggle for auto-provisioning the scheduler (vystak-heartbeat)
+    container even when no agent on the platform declares a schedule."""
+
+    enabled: bool = False
 
 
 class Platform(NamedModel):
@@ -19,6 +26,7 @@ class Platform(NamedModel):
     config: dict = {}
     transport: Transport | None = None
     telemetry: Telemetry | None = None
+    scheduler: SchedulerConfig | None = None
 
     @model_validator(mode="after")
     def _default_transport(self) -> Self:

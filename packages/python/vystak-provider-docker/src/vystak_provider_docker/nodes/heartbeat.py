@@ -10,6 +10,7 @@ from vystak.provisioning.node import Provisionable, ProvisionResult
 
 CONTAINER_NAME = "vystak-heartbeat"
 IMAGE_TAG = "vystak-heartbeat:latest"
+SCHEDULER_VOLUME = "vystak-scheduler-data"
 
 
 class DockerHeartbeatNode(Provisionable):
@@ -80,6 +81,13 @@ class DockerHeartbeatNode(Provisionable):
 
             self._client.images.build(path=str(build_dir), tag=IMAGE_TAG)
 
+            # Ensure the scheduler's SQLite store volume exists — persists
+            # across redeploys; destroy() intentionally leaves it in place.
+            try:
+                self._client.volumes.get(SCHEDULER_VOLUME)
+            except docker.errors.NotFound:
+                self._client.volumes.create(SCHEDULER_VOLUME)
+
             env: dict[str, str] = {}
             # Caller-supplied overrides (e.g. OTel env vars).
             env.update(self._extra_env)
@@ -90,6 +98,8 @@ class DockerHeartbeatNode(Provisionable):
                 detach=True,
                 network=network.name,
                 environment=env,
+                volumes={SCHEDULER_VOLUME: {"bind": "/data", "mode": "rw"}},
+                ports={"8081/tcp": ("127.0.0.1", 9797)},
                 labels={"vystak.service": "heartbeat"},
             )
 

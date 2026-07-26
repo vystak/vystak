@@ -26,7 +26,7 @@ def test_routes_json_includes_heartbeat_and_delivery():
         Heartbeat(schedule="*/30 * * * *", target_channel="x.channels.dev"),
     )
     out = build_bundle(
-        agents_with_heartbeat=[a],
+        agents_with_schedules=[a],
         agent_addresses={"bot.agents.dev": "http://vystak-bot:8000/a2a"},
         channel_addresses={"x.channels.dev": "http://vystak-channel-x:9999"},
         transport_cfg={"type": "http"},
@@ -40,7 +40,7 @@ def test_routes_json_includes_heartbeat_and_delivery():
 
 def test_dockerfile_uses_python_module():
     out = build_bundle(
-        agents_with_heartbeat=[],
+        agents_with_schedules=[],
         agent_addresses={},
         channel_addresses={},
         transport_cfg={"type": "http"},
@@ -51,7 +51,7 @@ def test_dockerfile_uses_python_module():
 
 def test_service_config_includes_transport_and_session_store():
     out = build_bundle(
-        agents_with_heartbeat=[],
+        agents_with_schedules=[],
         agent_addresses={},
         channel_addresses={},
         transport_cfg={"type": "nats", "url": "nats://x:4222"},

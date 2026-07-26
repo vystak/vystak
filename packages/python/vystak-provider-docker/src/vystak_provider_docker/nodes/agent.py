@@ -43,6 +43,7 @@ class DockerAgentNode(Provisionable):
         *,
         peer_routes_json: str = "{}",
         extra_env: dict[str, str] | None = None,
+        scheduler_enabled: bool = False,
     ):
         self._client = client
         self._agent = agent
@@ -50,6 +51,7 @@ class DockerAgentNode(Provisionable):
         self._plan = plan
         self._peer_routes_json = peer_routes_json
         self._extra_env = extra_env or {}
+        self._scheduler_enabled = scheduler_enabled
         self._vault_secrets_volume: str | None = None
         self._workspace_host: str | None = None
         self._default_path_env: dict[str, str] | None = None
@@ -233,6 +235,10 @@ class DockerAgentNode(Provisionable):
 
             if self._workspace_host:
                 env["VYSTAK_WORKSPACE_HOST"] = self._workspace_host
+
+            if self._scheduler_enabled:
+                env["VYSTAK_SCHEDULER_URL"] = "http://vystak-heartbeat:8081"
+                env["VYSTAK_AGENT_CANONICAL"] = self._agent.canonical_name
 
             # Build volumes
             volumes = {}

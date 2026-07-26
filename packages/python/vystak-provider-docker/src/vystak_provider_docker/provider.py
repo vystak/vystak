@@ -798,7 +798,23 @@ class DockerProvider(PlatformProvider):
                     self._add_default_path_nodes(graph)
                 )
 
-            # Agent container
+            # Agent container. scheduler_enabled is computed per-agent: True
+            # when this agent itself declares a heartbeat or schedules, or
+            # the platform's scheduler toggle is on. It does NOT look at
+            # sibling agents on the same platform (see task-9 report).
+            platform = self._agent.platform if self._agent else None
+            scheduler_enabled = bool(
+                self._agent
+                and (
+                    self._agent.heartbeat is not None
+                    or self._agent.schedules
+                    or (
+                        platform
+                        and getattr(platform, "scheduler", None)
+                        and platform.scheduler.enabled
+                    )
+                )
+            )
             agent_node = DockerAgentNode(
                 self._client,
                 self._agent,
@@ -806,6 +822,7 @@ class DockerProvider(PlatformProvider):
                 plan,
                 peer_routes_json=peer_routes if peer_routes is not None else "{}",
                 extra_env=extra_env,
+                scheduler_enabled=scheduler_enabled,
             )
             agent_principal = (
                 f"{self._agent.name}-agent" if self._agent is not None else None
@@ -1227,26 +1244,33 @@ class DockerProvider(PlatformProvider):
                 message=f"Channel deployment failed: {e}",
             )
 
-    def apply_heartbeat(
+    def apply_scheduler(
         self,
-        agents_with_heartbeat: list[Agent],
+        agents_with_schedules: list[Agent],
         channels: list[Channel],
         *,
         platform=None,
     ) -> None:
-        """Auto-provision the vystak-heartbeat container.
+        """Auto-provision the vystak-heartbeat (scheduler) container.
 
-        Called once after all agents and channels are deployed.  Only
-        executes when at least one agent carries a ``heartbeat``
-        declaration — callers must pre-filter ``agents_with_heartbeat``
-        before calling this method (the method also double-checks and
-        returns early when the list is empty).
+        Called once after all agents and channels are deployed. Executes
+        when at least one agent carries a ``heartbeat`` declaration or
+        non-empty ``schedules`` — callers pre-filter ``agents_with_schedules``
+        before calling this method — OR when ``platform.scheduler.enabled``
+        is set, in which case the container is provisioned even with zero
+        declaring agents (e.g. so schedules can be created later at runtime
+        via the scheduler's HTTP API).
 
         The container depends on every agent + channel already being
         up on ``vystak-net``, which is guaranteed by provisioning them
         first in the CLI orchestration loop.
         """
-        if not agents_with_heartbeat:
+        scheduler_toggle_enabled = bool(
+            platform
+            and getattr(platform, "scheduler", None)
+            and platform.scheduler.enabled
+        )
+        if not agents_with_schedules and not scheduler_toggle_enabled:
             return
 
         from vystak.provisioning import ProvisionGraph
@@ -1268,10 +1292,10 @@ class DockerProvider(PlatformProvider):
                 }
 
         code = hb_generate(
-            agents_with_heartbeat=agents_with_heartbeat,
+            agents_with_schedules=agents_with_schedules,
             agent_addresses={
                 a.canonical_name: f"http://vystak-{a.name}:8000/a2a"
-                for a in agents_with_heartbeat
+                for a in agents_with_schedules
             },
             channel_addresses={
                 c.canonical_name: f"http://vystak-channel-{c.name}:9999"
@@ -1288,7 +1312,7 @@ class DockerProvider(PlatformProvider):
         if platform:
             tel = getattr(platform, "telemetry", None)
         if tel is None:
-            for a in agents_with_heartbeat:
+            for a in agents_with_schedules:
                 if a.platform:
                     tel = getattr(a.platform, "telemetry", None)
                     if tel:
@@ -1308,6 +1332,18 @@ class DockerProvider(PlatformProvider):
             extra_env=extra_env,
         ))
         graph.execute()
+
+    def apply_heartbeat(
+        self,
+        agents_with_heartbeat: list[Agent],
+        channels: list[Channel],
+        *,
+        platform=None,
+    ) -> None:
+        """Deprecated name for :meth:`apply_scheduler`, kept as a thin alias
+        since it's part of the public provider surface (other callers may
+        still reference it)."""
+        return self.apply_scheduler(agents_with_heartbeat, channels, platform=platform)
 
     def destroy_channel(
         self, channel: Channel, *, delete_channel_data: bool = False

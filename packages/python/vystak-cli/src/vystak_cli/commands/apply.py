@@ -206,6 +206,19 @@ def _order_agents_for_deploy(agents: list) -> list:
     return ordered
 
 
+def _agents_needing_scheduler(agent_entries: list[dict]) -> list[dict]:
+    """Pre-filter deployed-agent entries (``{"name", "url", "agent"}`` dicts,
+    the ``deployed_agents`` shape) down to those that need the scheduler
+    (vystak-heartbeat) container: a ``heartbeat`` declaration (legacy) or
+    one or more ``schedules`` entries. Extracted for direct unit testing.
+    """
+    return [
+        a for a in agent_entries
+        if getattr(a["agent"], "heartbeat", None) is not None
+        or getattr(a["agent"], "schedules", None)
+    ]
+
+
 def _run_provider_apply(
     *,
     agents,
@@ -459,31 +472,54 @@ def _run_provider_apply(
             click.echo(f"  Error: {result.message}", err=True)
             raise SystemExit(1)
 
-    # Auto-spawn vystak-heartbeat once, after all agents and channels are up.
-    agents_with_heartbeat = [
-        a["agent"] for a in deployed_agents
-        if getattr(a["agent"], "heartbeat", None) is not None
-    ]
-    if agents_with_heartbeat:
-        # Use the first heartbeat agent's platform for transport/telemetry config.
-        hb_platform = None
-        for a in agents_with_heartbeat:
+    # Auto-spawn vystak-heartbeat (the scheduler container) once, after all
+    # agents and channels are up. Runs when at least one deployed agent
+    # needs it (heartbeat or non-empty schedules) OR the platform declares
+    # scheduler.enabled — the latter provisions the container even with
+    # zero declaring agents so schedules can be created later at runtime.
+    scheduler_entries = _agents_needing_scheduler(deployed_agents)
+    agents_with_schedules = [e["agent"] for e in scheduler_entries]
+
+    # Resolve a platform to drive the toggle check + pass into apply_scheduler.
+    # Prefer a schedule/heartbeat-declaring agent's platform (transport/
+    # telemetry config should reflect where the work actually is); fall back
+    # to any declared agent's platform so the toggle-only path (zero
+    # declaring agents) can still find scheduler.enabled.
+    scheduler_platform = None
+    for a in agents_with_schedules:
+        if a.platform:
+            scheduler_platform = a.platform
+            break
+    if scheduler_platform is None:
+        for a in agents:
             if a.platform:
-                hb_platform = a.platform
+                scheduler_platform = a.platform
                 break
-        provider = get_provider(agents_with_heartbeat[0])
-        if hasattr(provider, "apply_heartbeat"):
+
+    scheduler_toggle_enabled = bool(
+        scheduler_platform
+        and getattr(scheduler_platform, "scheduler", None)
+        and scheduler_platform.scheduler.enabled
+    )
+
+    if agents_with_schedules or scheduler_toggle_enabled:
+        provider = (
+            get_provider(agents_with_schedules[0])
+            if agents_with_schedules
+            else get_provider(agents[0])
+        )
+        if hasattr(provider, "apply_scheduler"):
             all_channels = [d["channel"] for d in deployed_channels]
-            click.echo("\nHeartbeat: provisioning vystak-heartbeat container")
+            click.echo("\nScheduler: provisioning vystak-heartbeat container")
             try:
-                provider.apply_heartbeat(
-                    agents_with_heartbeat,
+                provider.apply_scheduler(
+                    agents_with_schedules,
                     all_channels,
-                    platform=hb_platform,
+                    platform=scheduler_platform,
                 )
                 click.echo("  OK")
             except Exception as e:
-                click.echo(f"  Warning: heartbeat provisioning failed: {e}", err=True)
+                click.echo(f"  Warning: scheduler provisioning failed: {e}", err=True)
 
     if deployed_agents or deployed_channels:
         _print_summary(deployed_agents, deployed_channels)
