@@ -16,9 +16,16 @@ SCHEDULER_VOLUME = "vystak-scheduler-data"
 class DockerHeartbeatNode(Provisionable):
     """Builds a Docker image and runs the vystak-heartbeat container on vystak-net.
 
+    The container also hosts the scheduler REST API on port 8081 (mapped to
+    127.0.0.1:9797), used to create/list/cancel schedules at runtime.
+
     Provisioned at most once per platform — the caller (DockerProvider) is
-    responsible for ensuring this node is only added when at least one agent
-    carries a ``heartbeat`` declaration.
+    responsible for ensuring this node is only added under the three-way
+    condition: at least one agent carries a ``heartbeat`` declaration, at
+    least one agent has non-empty ``schedules``, or the platform declares
+    ``scheduler.enabled=True`` (the toggle-only path, which provisions the
+    container even with zero declaring agents so schedules can be created
+    later at runtime).
     """
 
     def __init__(

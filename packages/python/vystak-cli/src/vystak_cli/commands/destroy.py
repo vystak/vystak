@@ -8,6 +8,28 @@ from vystak_cli.loader import find_agent_file, load_definitions
 from vystak_cli.provider_factory import get_provider
 
 
+def _needs_scheduler_teardown(agents: list, platform) -> bool:
+    """True when the scheduler (vystak-heartbeat) container may have been
+    provisioned for this deployment and therefore needs tearing down.
+
+    Mirrors the three-way condition in apply.py's `_run_provider_apply`
+    (`_agents_needing_scheduler` + `scheduler_toggle_enabled`): the
+    container is spawned when any agent declares a `heartbeat`, any agent
+    has one or more `schedules` entries, OR the resolved platform has
+    `scheduler.enabled=True` (the toggle-only path, which provisions the
+    container even with zero declaring agents so schedules can be created
+    later at runtime). `destroy` must tear it down under all three, not
+    just the legacy heartbeat-only case.
+    """
+    if any(
+        getattr(a, "heartbeat", None) is not None or getattr(a, "schedules", None)
+        for a in agents
+    ):
+        return True
+    scheduler = getattr(platform, "scheduler", None) if platform is not None else None
+    return bool(scheduler and scheduler.enabled)
+
+
 @click.command()
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option("--file", "file_path", default=None, help="Path to agent definition file (legacy)")
@@ -118,12 +140,37 @@ def destroy(
             click.echo(f"'{agent_name}' not found in definition.", err=True)
             raise SystemExit(1)
 
-    # Stop the heartbeat scheduler first so it doesn't keep firing
+    # Stop the scheduler (vystak-heartbeat) first so it doesn't keep firing
     # against agents/channels we're about to remove. Mirror of
-    # provider.apply_heartbeat in the apply flow.
-    agents_with_heartbeat = [a for a in agents if getattr(a, "heartbeat", None)]
-    if agents_with_heartbeat:
-        provider = get_provider(agents_with_heartbeat[0])
+    # apply.py's _run_provider_apply scheduler auto-spawn: teardown must
+    # fire for heartbeat-only, schedules-only, AND toggle-only
+    # (platform.scheduler.enabled with zero declaring agents) deployments,
+    # or the container (and its vystak-scheduler-data volume) is orphaned.
+    scheduler_declaring_agents = [
+        a
+        for a in agents
+        if getattr(a, "heartbeat", None) is not None or getattr(a, "schedules", None)
+    ]
+    # Resolve a platform to check the scheduler.enabled toggle: prefer a
+    # heartbeat/schedule-declaring agent's platform, falling back to any
+    # agent's platform so the toggle-only path (zero declaring agents) can
+    # still be detected. Mirrors apply.py's `scheduler_platform` resolution.
+    scheduler_platform = None
+    for a in scheduler_declaring_agents:
+        if a.platform:
+            scheduler_platform = a.platform
+            break
+    if scheduler_platform is None:
+        for a in agents:
+            if a.platform:
+                scheduler_platform = a.platform
+                break
+
+    if agents and _needs_scheduler_teardown(agents, scheduler_platform):
+        provider_source = (
+            scheduler_declaring_agents[0] if scheduler_declaring_agents else agents[0]
+        )
+        provider = get_provider(provider_source)
         if hasattr(provider, "destroy_heartbeat"):
             click.echo("Destroying heartbeat scheduler")
             try:
