@@ -24,6 +24,7 @@ const sidebars = {
         'concepts/telemetry',
         'concepts/services',
         'concepts/compaction',
+        'concepts/schedules',
         'concepts/channels',
       ],
     },
