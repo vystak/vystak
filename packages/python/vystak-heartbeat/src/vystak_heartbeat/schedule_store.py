@@ -2,14 +2,19 @@
 
 Whole `ScheduledTask` payloads are stored as JSON so the schema doesn't need
 a migration every time the model grows a field. `UNIQUE (agent_canonical,
-name)` spans both `source` values ('declarative' and 'runtime'): it's the
-reconciliation identity for declarative tasks *and* the mechanism that keeps
-a runtime task from colliding with a declarative one of the same name.
+name)` spans both `source` values ('declarative' and 'runtime'), but the two
+directions of a same-name collision are handled differently to preserve the
+invariant that `source=runtime` tasks are never touched by apply/reconcile:
+`create_runtime` raises `NameCollisionError` when a name is already taken by
+a declarative task, while `reconcile_declarative` silently skips (and warns
+about) a declarative entry whose name is already owned by a runtime task,
+leaving that runtime row completely untouched.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 import uuid
 from collections.abc import AsyncIterator
@@ -19,6 +24,8 @@ from datetime import UTC, datetime
 
 import aiosqlite
 from vystak.schema.schedule import ScheduledTask
+
+logger = logging.getLogger("vystak.heartbeat.schedule_store")
 
 # Bump when _SCHEMA changes in a way existing databases need migrating for.
 # _migrate() compares this against the `schema_version` row in `settings`
@@ -51,11 +58,15 @@ _SHAPE_FIELDS = ("cron", "at", "every", "timezone")
 
 
 class NameCollisionError(Exception):
-    """Raised when a task name collides with an existing task for the agent.
+    """Raised when a runtime task name collides with an existing task.
 
     The `UNIQUE (agent_canonical, name)` constraint spans both `source`
-    values, so this also fires when a runtime task's name collides with an
-    existing declarative one (or vice versa).
+    values, so this fires when `create_runtime` targets a name already held
+    by a declarative task (or another runtime task) for the same agent. The
+    reverse direction — a declarative task colliding with an existing
+    runtime one — does NOT raise: `reconcile_declarative` skips that entry
+    and logs a warning instead, so a runtime row is never overwritten or
+    resurrected by apply/reconcile.
     """
 
 
@@ -319,6 +330,26 @@ class SqliteScheduleStore:
                 )
             for task in tasks:
                 payload = task.model_dump_json()
+                async with db.execute(
+                    "SELECT source FROM scheduled_tasks "
+                    "WHERE agent_canonical = ? AND name = ?",
+                    (agent_canonical, task.name),
+                ) as cur:
+                    existing = await cur.fetchone()
+                if existing is not None and existing["source"] == "runtime":
+                    logger.warning(
+                        "reconcile: declarative task %r for agent %r skipped "
+                        "— a runtime task already owns this name; runtime "
+                        "task left untouched",
+                        task.name,
+                        agent_canonical,
+                    )
+                    continue
+                # The WHERE guard on DO UPDATE is defense-in-depth: the SELECT
+                # above already filters out runtime collisions, but this
+                # keeps the invariant true even under concurrent writers —
+                # a false condition makes the statement a no-op for that row
+                # instead of overwriting it.
                 await db.execute(
                     "INSERT INTO scheduled_tasks "
                     "(id, agent_canonical, name, source, status, payload, created_by) "
@@ -329,7 +360,8 @@ class SqliteScheduleStore:
                     "  next_fire_at = CASE "
                     "    WHEN scheduled_tasks.payload != excluded.payload THEN NULL "
                     "    ELSE scheduled_tasks.next_fire_at "
-                    "  END",
+                    "  END "
+                    "WHERE scheduled_tasks.source = 'declarative'",
                     (_new_id(), agent_canonical, task.name, payload),
                 )
 

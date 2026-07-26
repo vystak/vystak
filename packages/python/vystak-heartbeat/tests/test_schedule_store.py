@@ -76,6 +76,45 @@ class TestReconcile:
         [rec] = await store.list(agent=AGENT)
         assert rec.task.cron == "0 10 * * 1"
 
+    async def test_declarative_collision_with_runtime_skips_and_warns(
+        self, store, caplog
+    ):
+        await store.create_runtime(AGENT, _cron("mine"), created_by="agent:" + AGENT)
+        with caplog.at_level("WARNING"):
+            await store.reconcile_declarative(
+                AGENT, [ScheduledTask(name="mine", cron="0 10 * * 2")]
+            )
+        [rec] = await store.list(agent=AGENT)
+        assert rec.source == "runtime"
+        assert rec.task.cron == "0 9 * * 1"
+        assert any("mine" in r.message for r in caplog.records)
+
+    async def test_declarative_collision_does_not_resurrect_cancelled_runtime(
+        self, store
+    ):
+        rec = await store.create_runtime(
+            AGENT, _cron("mine"), created_by="agent:" + AGENT
+        )
+        await store.cancel_runtime(rec.id)
+        await store.reconcile_declarative(
+            AGENT, [ScheduledTask(name="mine", cron="0 10 * * 2")]
+        )
+        got = await store.get(rec.id)
+        assert got.status == "cancelled"
+        assert got.task.cron == "0 9 * * 1"
+
+    async def test_collision_skip_does_not_block_other_declaratives(self, store):
+        await store.create_runtime(AGENT, _cron("mine"), created_by="agent:" + AGENT)
+        await store.reconcile_declarative(
+            AGENT,
+            [ScheduledTask(name="mine", cron="0 10 * * 2"), _cron("other")],
+        )
+        [other] = await store.list(agent=AGENT, source="declarative")
+        assert other.task.name == "other"
+        assert other.status == "active"
+        [mine] = await store.list(agent=AGENT, source="runtime")
+        assert mine.task.cron == "0 9 * * 1"
+
 
 class TestFireBookkeeping:
     async def test_due_and_next_fire(self, store):
