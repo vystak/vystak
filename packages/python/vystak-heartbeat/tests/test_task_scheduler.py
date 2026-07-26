@@ -633,3 +633,71 @@ class TestLegacyEventNames:
             await sched._fire_due(now())
         assert any("scheduled_task.skipped agent=" in r.message for r in caplog.records)
         assert not any("heartbeat.skipped" in r.message for r in caplog.records)
+
+    async def test_fire_failure_event_names(
+        self, sched, store, transport, caplog
+    ):
+        # Heartbeat-named task with transport failure
+        transport.send_task = AsyncMock(side_effect=RuntimeError("transport down"))
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="heartbeat", cron="* * * * *"),
+            created_by="definition",
+        )
+        with caplog.at_level("ERROR"):
+            await sched._fire_one(rec)
+        assert any("heartbeat.fired_failed agent=" in r.message for r in caplog.records)
+        assert not any("scheduled_task.fired_failed" in r.message for r in caplog.records)
+
+        caplog.clear()
+
+        # Non-heartbeat task with transport failure
+        transport.send_task = AsyncMock(side_effect=RuntimeError("transport down"))
+        rec2 = await store.create_runtime(
+            AGENT,
+            ScheduledTask(name="digest", cron="* * * * *"),
+            created_by="cli",
+        )
+        with caplog.at_level("ERROR"):
+            await sched._fire_one(rec2)
+        assert any("scheduled_task.fired_failed agent=" in r.message for r in caplog.records)
+        assert not any("heartbeat.fired_failed" in r.message for r in caplog.records)
+
+    async def test_delivery_failure_event_names(
+        self, sched, store, transport, delivery, caplog
+    ):
+        # Heartbeat-named task with delivery failure
+        delivery.deliver = AsyncMock(side_effect=RuntimeError("delivery down"))
+        rec = await store.create_runtime(
+            AGENT,
+            ScheduledTask(
+                name="heartbeat",
+                cron="* * * * *",
+                target_channel="chat.channels.dev",
+                target_thread="t1",
+            ),
+            created_by="definition",
+        )
+        with caplog.at_level("ERROR"):
+            await sched._fire_one(rec)
+        assert any("heartbeat.delivery_failed agent=" in r.message for r in caplog.records)
+        assert not any("scheduled_task.delivery_failed" in r.message for r in caplog.records)
+
+        caplog.clear()
+
+        # Non-heartbeat task with delivery failure
+        delivery.deliver = AsyncMock(side_effect=RuntimeError("delivery down"))
+        rec2 = await store.create_runtime(
+            AGENT,
+            ScheduledTask(
+                name="digest",
+                cron="* * * * *",
+                target_channel="chat.channels.dev",
+                target_thread="t1",
+            ),
+            created_by="cli",
+        )
+        with caplog.at_level("ERROR"):
+            await sched._fire_one(rec2)
+        assert any("scheduled_task.delivery_failed agent=" in r.message for r in caplog.records)
+        assert not any("heartbeat.delivery_failed" in r.message for r in caplog.records)

@@ -131,7 +131,7 @@ agent should remember its previous summaries.
 
 ## Telemetry
 
-The runtime emits structured log events at the `vystak.channel.runtime.heartbeat`
+The runtime emits structured log events at the `vystak.heartbeat.task_scheduler`
 logger:
 
 | Event | Level | When |
