@@ -245,3 +245,21 @@ class TestExtraContractCoverage:
         await store.set_next_fire(r1.id, NOW)
         await store.set_next_fire(r2.id, NOW - timedelta(hours=1))
         assert await store.min_next_fire() == NOW - timedelta(hours=1)
+
+    async def test_update_runtime_rejects_rename(self, store):
+        rec = await store.create_runtime(AGENT, _cron("r"), created_by="cli")
+        with pytest.raises(ValueError, match="immutable"):
+            await store.update_runtime(rec.id, {"name": "other"})
+        # Unchanged: both the payload's embedded name AND the name column.
+        got = await store.get(rec.id)
+        assert got.task.name == "r"
+        [row] = await store.list(agent=AGENT)
+        assert row.task.name == "r"
+
+    async def test_update_runtime_same_name_is_noop_allowed(self, store):
+        rec = await store.create_runtime(AGENT, _cron("r"), created_by="cli")
+        updated = await store.update_runtime(
+            rec.id, {"name": "r", "prompt": "hi"}
+        )
+        assert updated.task.name == "r"
+        assert updated.task.prompt == "hi"

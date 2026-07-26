@@ -69,6 +69,10 @@ def build_api(store, scheduler) -> FastAPI:
             ) from None
         except ValidationError as e:
             raise HTTPException(422, str(e)) from None
+        except ValueError as e:
+            # pydantic's ValidationError subclasses ValueError, so this must
+            # be caught after ValidationError — order matters here.
+            raise HTTPException(422, str(e)) from None
         scheduler.wake()
         return _out(rec)
 

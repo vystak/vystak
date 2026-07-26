@@ -195,6 +195,22 @@ async def test_patch_invalid_cron_422(client, scheduler):
     scheduler.wake.assert_not_called()
 
 
+async def test_patch_rename_422(client, scheduler):
+    """PATCH {"name": "other"} → 422; name is immutable identity, not just
+    a payload field — the store must reject before the column and payload
+    can desync."""
+    created = (await client.post("/tasks", json=_body())).json()
+    scheduler.reset_mock()
+    resp = await client.patch(f"/tasks/{created['id']}", json={"name": "other"})
+    assert resp.status_code == 422
+    assert "immutable" in resp.json()["detail"].lower()
+    scheduler.wake.assert_not_called()
+    # Row unchanged.
+    got = (await client.get(f"/tasks/{created['id']}")).json()
+    assert got["name"] == "digest"
+    assert got["task"]["name"] == "digest"
+
+
 async def test_backfill_integration(store):
     """POST leaves next_fire_at NULL; a real scheduler's backfill fills it."""
     from vystak_heartbeat.api import build_api

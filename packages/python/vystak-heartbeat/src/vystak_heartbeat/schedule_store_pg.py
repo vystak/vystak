@@ -221,6 +221,13 @@ class PgScheduleStore:
             raise PermissionError(
                 f"task {task_id} is declarative and cannot be modified"
             )
+        # name is immutable identity: the `name` column and the payload's
+        # embedded name must never desync (the UNIQUE(agent_canonical, name)
+        # invariant, and the reserved 'heartbeat' contract, both depend on
+        # the column being authoritative). A same-name patch is a no-op and
+        # allowed; anything else is rejected here before any write happens.
+        if "name" in patch and patch["name"] != row.task.name:
+            raise ValueError("task name is immutable — create a new task instead")
         # model_copy() does not re-run validators, so re-validate the
         # patched shape via model_validate() before persisting it.
         candidate = row.task.model_copy(update=patch)
