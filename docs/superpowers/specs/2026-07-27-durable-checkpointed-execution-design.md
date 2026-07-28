@@ -106,6 +106,32 @@ CREATE TABLE IF NOT EXISTS detached_turns (
 );
 ```
 
+A companion table maps checkpoint identity to stream position:
+
+```sql
+CREATE TABLE IF NOT EXISTS turn_boundaries (
+    turn_id       TEXT NOT NULL,
+    checkpoint_id TEXT NOT NULL,
+    seq           INTEGER NOT NULL,
+    PRIMARY KEY (turn_id, checkpoint_id)
+);
+```
+
+`boundary_seq` alone is not safe to rewind to. `on_chain_end` fires when the
+node function returns, which is not necessarily after the superstep's
+checkpoint write has landed. A crash in that gap means LangGraph resumes from
+an *earlier* checkpoint than `boundary_seq` claims, so the rewind
+under-truncates and consumers keep stale events that the resumed run then
+re-emits. Recording `(checkpoint_id → seq)` lets the re-drive ask LangGraph
+which checkpoint the thread is *actually* resuming from and rewind to that
+seq. `boundary_seq` is retained as the fallback when the resumed checkpoint id
+has no recorded seq.
+
+**To verify during planning:** the precise ordering of `on_chain_end` versus
+the checkpoint write in the pinned LangGraph version. If the write provably
+precedes the event, `turn_boundaries` collapses back into the single
+`boundary_seq` column and this table is dropped.
+
 The journal is **always SQLite at `/data/turns.db`**, independent of the
 checkpointer engine. Keeping it out of the Postgres path avoids a second store
 backend for v1; the trade-off is that the journal is per-container, which is
@@ -165,7 +191,7 @@ for `status='running'` rows and re-drive each:
    publishing events from `last_seq + 2` onward, updating `last_seq` and
    `boundary_seq` exactly as the first attempt did.
 
-Rows with `status='parked'` are deliberately skipped (see §7).
+Rows with `status='parked'` are deliberately skipped (see §8).
 
 The rewind exists because LangGraph re-executes the *interrupted* node on
 resume. If the crash landed mid-LLM-stream, that model node re-runs and
@@ -191,7 +217,37 @@ Three places fold the event stream and therefore must honor rewind:
   fresh resume attach, so it is a reuse of existing behavior rather than a new
   rendering path.
 
-### 7. Park / interrupt seam
+### 7. The panel's idle timeout must stop concluding turns
+
+This is the change without which the rest of the design does not work.
+
+`stream_turn_events` raises `TurnStreamIdle` after 120s of silence
+(`vystak_transport_nats/streams.py:71`), and `run_turn_persister` treats it as
+the turn concluding: `errored = True`, persist a partial assistant row, clear
+`active_turn_id`. A container restart plus JetStream reconnect plus journal
+rescan plus re-drive will routinely exceed 120s — for this feature that is the
+*normal* path, not an edge. Left as-is, the panel writes an error row and
+clears `active_turn_id` before the agent finishes resuming, its own startup
+rescan then has nothing to re-spawn, and the agent republishes into a subject
+with no consumer. The reply is lost and the error row stands.
+
+Silence must therefore mean "still working" rather than "concluded". The panel
+cannot read the agent's journal (it is agent-side SQLite), so it asks:
+
+- **New RPC `responses/turnStatus {turn_id}`** — the bridge reads its journal
+  and replies `running | parked | done | failed | unknown`.
+- On `TurnStreamIdle` the persister queries it. `running` or `parked` → keep
+  waiting and re-enter the consume loop. `done` or `failed` → conclude as
+  today. `unknown` → conclude (the agent has no record; the turn predates a
+  volume wipe or was never journaled).
+- **RPC failure is not a conclusion.** During a restart the agent is
+  unreachable, which is exactly when the answer matters; a failed query keeps
+  waiting.
+- A bounded overall deadline (default 15 min, from first dispatch) is the
+  backstop so a turn cannot wait forever. On expiry the persister concludes as
+  errored, as today.
+
+### 8. Park / interrupt seam
 
 A tool calling LangGraph's `interrupt()` suspends the graph; the checkpointer
 holds the pending interrupt and the detached runner exits, holding no process
@@ -221,9 +277,14 @@ wraps a tool in `interrupt()`, plus panel UI to call `responses/resumeDetached`.
 - **JetStream retention (~1h) expires before resume** → replay from 0 is
   incomplete; the persister writes what it has. Accepted, same as the prior
   design's broker-restart edge.
-- **Parked turn never resumed** → panel persister idle timeout (~120s) writes an
-  error-annotated row while the journal row stays `parked`. v1 accepts the
-  mismatch; a park-aware panel state is follow-up work.
+- **Parked turn never resumed** → `turnStatus` reports `parked`, so the
+  persister waits until the 15-minute overall deadline and then concludes as
+  errored. The journal row stays `parked` and is never auto-resumed. v1 accepts
+  the mismatch; a park-aware panel state is follow-up work.
+- **Agent unreachable for longer than the overall deadline** → the persister
+  concludes as errored even though the agent may still resume later and
+  republish. Bounding the wait is a deliberate trade against an unbounded
+  pending turn.
 
 ## Testing
 
@@ -235,12 +296,28 @@ Unit:
   right seq.
 - Resume endpoint: passes `None` vs `Command(resume=...)` correctly.
 - `build_checkpointer`: no `MemorySaver` on any path; default path resolution.
+  **`/data` does not exist in unit-test or dev environments**, and
+  `AsyncSqliteSaver.from_conn_string("/data/sessions.db")` fails at lifespan
+  startup when it is absent — this would break `just test-python`, one of the
+  four live CI gates. Path resolution needs an explicit fallback chain
+  (`VYSTAK_SESSIONS_PATH` → `/data/sessions.db` when the directory exists and
+  is writable → a local path), covered by a test per branch.
+- `responses/turnStatus`: every status mapping, plus the persister's behavior
+  on RPC failure (keeps waiting) and on overall-deadline expiry (concludes).
 
 Release:
 - `release_integration` (sentinel credentials, no live LLM): dispatch a
   detached turn; it fails fast at the LLM call. Assert the journal row reaches
   `failed`, the terminal event is published, and the rescan does not re-drive a
   completed turn.
+- `release_integration` (deterministic restart, no live LLM): the
+  `release_live_chat` cell below is the only end-to-end proof, and it
+  auto-skips on sentinel keys and never runs in GitHub Actions — so the
+  plumbing needs a gate that always runs locally. Dispatch a turn, `docker
+  restart` the agent, and assert the mechanical facts that hold regardless of
+  LLM behavior: the journal row survives on the volume, the rescan logs a
+  re-drive, `attempts` increments, a rewind event is published, and the panel
+  does not conclude the turn at 120s.
 - `release_live_chat` (real key): the actual proof. An agent with a
   deliberately slow tool; start a turn, `docker restart` the agent mid-tool,
   assert the assistant row eventually lands **exactly once** with its
@@ -250,9 +327,10 @@ Release:
 
 ## Example (definition of done)
 
-`examples/docker-panel-durable` — the `docker-panel` example plus
-`transport: nats` and a slow multi-step tool, with a README walking through
-`docker restart vystak-<agent>` mid-turn and observing the reply still land.
+`examples/docker-panel-durable` — `examples/docker-panel-nats` (which already
+exists, from the prior design) plus a deliberately slow multi-step tool, with a
+README walking through `docker restart vystak-<agent>` mid-turn and observing
+the reply still land.
 
 ## Out of scope
 
