@@ -127,10 +127,10 @@ which checkpoint the thread is *actually* resuming from and rewind to that
 seq. `boundary_seq` is retained as the fallback when the resumed checkpoint id
 has no recorded seq.
 
-**To verify during planning:** the precise ordering of `on_chain_end` versus
-the checkpoint write in the pinned LangGraph version. If the write provably
-precedes the event, `turn_boundaries` collapses back into the single
-`boundary_seq` column and this table is dropped.
+**Resolved during planning:** a probe against the pinned langgraph 1.1.10
+confirmed `on_chain_end` fires *before* the checkpoint recording that node's
+output, so this table is required and the boundary signal comes from the
+checkpointer itself. See §3 for the measurement and the mechanism.
 
 The journal is **always SQLite at `/data/turns.db`**, independent of the
 checkpointer engine. Keeping it out of the Postgres path avoids a second store
@@ -147,21 +147,55 @@ sight. No new plumbing.
 ### 3. Checkpoint boundaries in the stream
 
 The bridge is a proxy — it sees Responses SSE events, not LangGraph node
-transitions, so it cannot infer where a checkpoint committed. `_stream_iterator`
-already consumes `astream_events(version="v2")`, where node completions surface
-as `on_chain_end` with `ev["name"]` in `("agent", "tools")`. At each such event
-it emits an internal marker:
+transitions, so it cannot infer where a checkpoint committed.
 
-```json
-{"type": "vystak.checkpoint"}
+**`on_chain_end` is the wrong signal — measured, not assumed.** A probe against
+the pinned langgraph 1.1.10 instrumenting `MemorySaver.aput` alongside
+`astream_events(version="v2")` produced:
+
+```
+CHECKPOINT_PUT     ...bfff-2ff610e73406
+CHECKPOINT_PUT     ...8000-1f9bf85fa50c
+ON_CHAIN_END       a
+CHECKPOINT_PUT     ...8001-cb1e07a6112c     <- records node a's output
+ON_CHAIN_END       b
+CHECKPOINT_PUT     ...8002-6381241278fc     <- records node b's output
 ```
 
-The bridge **consumes and does not republish** this marker: on sight it records
-`boundary_seq = last_seq` in the journal. JetStream therefore carries no
-internal events. Every other consumer of `/v1/responses` (the panel's HTTP
-path, `vystak-chat`) ignores unknown event types already —
-`translate_responses_event` returns `None` for anything unrecognized — so this
-is additive and safe.
+A node's `on_chain_end` fires *before* the checkpoint recording that node's
+output. Marking a boundary there claims durability that does not exist: crash
+in the gap and LangGraph resumes from the previous checkpoint, re-running the
+node and re-emitting its events, while the rewind under-truncates and
+consumers keep the stale copies.
+
+**Mechanism: wrap the checkpointer, not the event stream.** `build_checkpointer`
+already owns saver construction, so it wraps the resolved saver in a proxy whose
+`aput` — *after* delegating to the real saver — pushes `checkpoint["id"]` onto a
+per-thread `asyncio.Queue`. `_stream_iterator` drains that queue at the top of
+each loop iteration, before emitting the graph event it just received, and
+yields one marker per drained id:
+
+```json
+{"type": "vystak.checkpoint", "checkpoint_id": "1f18dbef-a914-61d4-8001-..."}
+```
+
+Ordering is then exact in the direction that matters. A marker is emitted only
+after its `aput` returned, and any event yielded before the marker was
+published before that checkpoint became durable — so
+`turn_boundaries[checkpoint_id] = last_seq` is a truthful high-water mark.
+
+This precision is required, not defensive: rewinding to a seq *later* than the
+true resume point leaves duplicates, and rewinding *earlier* discards events
+that the resumed run will never re-emit, losing content. Only the exact
+per-checkpoint seq is safe, which is why §2 keys boundaries by checkpoint id
+rather than tracking a single running value.
+
+The bridge **consumes and does not republish** these markers: on sight it
+records `(checkpoint_id → last_seq)` in `turn_boundaries` and updates
+`boundary_seq`. JetStream therefore carries no internal events. Every other
+consumer of `/v1/responses` (the panel's HTTP path, `vystak-chat`) ignores
+unknown event types already — `translate_responses_event` returns `None` for
+anything unrecognized — so this is additive and safe.
 
 ### 4. Resume endpoint
 
