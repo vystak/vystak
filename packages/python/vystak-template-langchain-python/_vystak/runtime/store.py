@@ -11,6 +11,8 @@ import os
 import tempfile
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 _DATA_DIR = "/data"
 
 
@@ -112,3 +114,124 @@ def build_memory_store(agent: Any):
     # in-memory fallback for any other / unset engine
     from langgraph.store.memory import InMemoryStore
     return InMemoryStore()
+
+
+class CheckpointObserver:
+    """Records committed checkpoint ids per thread.
+
+    The Responses stream drains this to emit `vystak.checkpoint` markers. A
+    marker is only ever emitted after the underlying `aput` returned, which is
+    what makes the recorded stream position a truthful durability high-water
+    mark.
+    """
+
+    def __init__(self) -> None:
+        self._pending: dict[str, list[str]] = {}
+
+    def record(self, thread_id: str, checkpoint_id: str) -> None:
+        if not thread_id or not checkpoint_id:
+            return
+        self._pending.setdefault(thread_id, []).append(checkpoint_id)
+
+    def drain(self, thread_id: str) -> list[str]:
+        return self._pending.pop(thread_id, []) if thread_id in self._pending else []
+
+    def release(self, thread_id: str) -> None:
+        self._pending.pop(thread_id, None)
+
+
+class ObservedSaver(BaseCheckpointSaver):
+    """Transparent proxy around a checkpointer that reports committed puts.
+
+    Subclasses `BaseCheckpointSaver` (rather than being a plain object, as
+    an earlier draft of this class was) because LangGraph's
+    `ensure_valid_checkpointer` rejects anything that isn't a
+    `BaseCheckpointSaver` instance at `graph.compile()` time -- a plain
+    proxy breaks every real deployment. Every method delegates to `inner`;
+    `aput` additionally records the committed checkpoint id with `observer`
+    only after the delegate call returns, which is what makes the recorded
+    stream position a truthful durability high-water mark. `__getattr__`
+    covers inner-specific attributes (e.g. a sqlite `conn`) that aren't part
+    of the base class's public surface.
+    """
+
+    def __init__(self, inner: Any, observer: CheckpointObserver) -> None:
+        # Deliberately skip BaseCheckpointSaver.__init__: it assigns
+        # self.serde, which we delegate to `inner` via a property instead.
+        self._inner = inner
+        self._observer = observer
+
+    @property
+    def serde(self) -> Any:
+        return self._inner.serde
+
+    @property
+    def config_specs(self) -> list:
+        return self._inner.config_specs
+
+    def get(self, config):  # noqa: ANN001, ANN201
+        return self._inner.get(config)
+
+    def get_tuple(self, config):  # noqa: ANN001, ANN201
+        return self._inner.get_tuple(config)
+
+    def list(self, config, *, filter=None, before=None, limit=None):  # noqa: A002, ANN001, ANN201
+        return self._inner.list(config, filter=filter, before=before, limit=limit)
+
+    def put(self, config, checkpoint, metadata, new_versions):  # noqa: ANN001, ANN201
+        return self._inner.put(config, checkpoint, metadata, new_versions)
+
+    def put_writes(self, config, writes, task_id, task_path=""):  # noqa: ANN001, ANN201
+        return self._inner.put_writes(config, writes, task_id, task_path)
+
+    def delete_thread(self, thread_id):  # noqa: ANN001, ANN201
+        return self._inner.delete_thread(thread_id)
+
+    def delete_for_runs(self, run_ids):  # noqa: ANN001, ANN201
+        return self._inner.delete_for_runs(run_ids)
+
+    def copy_thread(self, source_thread_id, target_thread_id):  # noqa: ANN001, ANN201
+        return self._inner.copy_thread(source_thread_id, target_thread_id)
+
+    def prune(self, thread_ids, *, strategy="keep_latest"):  # noqa: ANN001, ANN201
+        return self._inner.prune(thread_ids, strategy=strategy)
+
+    async def aget(self, config):  # noqa: ANN001, ANN201
+        return await self._inner.aget(config)
+
+    async def aget_tuple(self, config):  # noqa: ANN001, ANN201
+        return await self._inner.aget_tuple(config)
+
+    async def alist(self, config, *, filter=None, before=None, limit=None):  # noqa: A002, ANN001, ANN201
+        async for item in self._inner.alist(config, filter=filter, before=before, limit=limit):
+            yield item
+
+    async def aput(self, config, checkpoint, metadata, new_versions):  # noqa: ANN001
+        result = await self._inner.aput(config, checkpoint, metadata, new_versions)
+        thread_id = (config or {}).get("configurable", {}).get("thread_id", "")
+        self._observer.record(str(thread_id), str(checkpoint.get("id", "")))
+        return result
+
+    async def aput_writes(self, config, writes, task_id, task_path=""):  # noqa: ANN001, ANN201
+        return await self._inner.aput_writes(config, writes, task_id, task_path)
+
+    async def adelete_thread(self, thread_id):  # noqa: ANN001, ANN201
+        return await self._inner.adelete_thread(thread_id)
+
+    async def adelete_for_runs(self, run_ids):  # noqa: ANN001, ANN201
+        return await self._inner.adelete_for_runs(run_ids)
+
+    async def acopy_thread(self, source_thread_id, target_thread_id):  # noqa: ANN001, ANN201
+        return await self._inner.acopy_thread(source_thread_id, target_thread_id)
+
+    async def aprune(self, thread_ids, *, strategy="keep_latest"):  # noqa: ANN001, ANN201
+        return await self._inner.aprune(thread_ids, strategy=strategy)
+
+    def get_next_version(self, current, channel):  # noqa: ANN001, ANN201
+        return self._inner.get_next_version(current, channel)
+
+    def with_allowlist(self, extra_allowlist):  # noqa: ANN001, ANN201
+        return self._inner.with_allowlist(extra_allowlist)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

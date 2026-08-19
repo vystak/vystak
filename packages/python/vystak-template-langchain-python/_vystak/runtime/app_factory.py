@@ -33,6 +33,8 @@ from _vystak.runtime.prompt_callable import build_prompt
 from _vystak.runtime.schedules import build_schedule_tools
 from _vystak.runtime.skills import build_skill_tools
 from _vystak.runtime.store import (
+    CheckpointObserver,
+    ObservedSaver,
     _LazyCheckpointer,
     _LazyStore,
     build_checkpointer,
@@ -161,6 +163,9 @@ def build_agent_app(agent: Any) -> FastAPI:
                     if is_lazy
                     else checkpointer
                 )
+                observer = CheckpointObserver()
+                app_.state.checkpoint_observer = observer
+                resolved = ObservedSaver(resolved, observer)
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
