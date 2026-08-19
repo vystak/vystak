@@ -175,6 +175,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                 )
                 a2a_executor._graph = new_graph
                 responses_handler.graph = new_graph
+                responses_handler._observer = observer
                 chat_handler.graph = new_graph
                 app_.state.graph = new_graph
             else:

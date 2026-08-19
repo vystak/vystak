@@ -11,10 +11,18 @@ from _vystak.runtime.content import flatten_content
 class ResponsesHandler:
     """OpenAI Responses API — stateful via previous_response_id (LangGraph thread_id)."""
 
-    def __init__(self, agent: Any, graph: Any, *, store: Any | None) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        graph: Any,
+        *,
+        store: Any | None = None,
+        observer: Any | None = None,
+    ) -> None:
         self.agent = agent
         self.graph = graph
         self.store = store
+        self._observer = observer
 
     async def create(self, body: dict) -> dict | Any:
         if body.get("stream"):
@@ -74,6 +82,12 @@ class ResponsesHandler:
             async for ev in self.graph.astream_events(
                 {"messages": messages}, config, version="v2"
             ):
+                if self._observer is not None:
+                    for checkpoint_id in self._observer.drain(thread_id):
+                        yield _sse({
+                            "type": "vystak.checkpoint",
+                            "checkpoint_id": checkpoint_id,
+                        })
                 ev_type = ev.get("event")
                 if ev_type == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
@@ -177,6 +191,13 @@ class ResponsesHandler:
             })
             yield "data: [DONE]\n\n"
             return
+
+        if self._observer is not None:
+            for checkpoint_id in self._observer.drain(thread_id):
+                yield _sse({
+                    "type": "vystak.checkpoint",
+                    "checkpoint_id": checkpoint_id,
+                })
 
         final_text = "".join(full_text)
         yield _sse({
