@@ -92,6 +92,7 @@ class TurnAccumulator:
         self._current_text: list[str] = []
         self.msg_parts: list[dict] = []
         self._pending_tool_calls: dict[str, dict] = {}
+        self._log: list[tuple[int, PanelStreamEvent]] = []
 
     def feed(self, ev: PanelStreamEvent) -> None:
         if ev.type == "token":
@@ -118,6 +119,28 @@ class TurnAccumulator:
         if self._current_text:
             self.msg_parts.append({"type": "text", "text": "".join(self._current_text)})
             self._current_text.clear()
+
+    def feed_seq(self, seq: int, ev: PanelStreamEvent) -> None:
+        """Feed an event with a sequence number, logging it for potential rewind."""
+        self._log.append((seq, ev))
+        self.feed(ev)
+
+    def retained(self) -> list[tuple[int, PanelStreamEvent]]:
+        """Return the list of all retained (seq, event) pairs."""
+        return list(self._log)
+
+    def rewind(self, to_seq: int) -> None:
+        """Discard events above `to_seq` (inclusive of `to_seq` itself) and
+        re-fold. A resumed run re-emits exactly these, so keeping them would
+        duplicate output."""
+        survivors = [(s, e) for s, e in self._log if s <= to_seq]
+        self.text_chunks.clear()
+        self._current_text.clear()
+        self.msg_parts.clear()
+        self._pending_tool_calls.clear()
+        self._log = []
+        for s, e in survivors:
+            self.feed_seq(s, e)
 
     @property
     def content(self) -> str:
