@@ -92,13 +92,36 @@ def bridge_factory(monkeypatch):
         nats_bridge_module, "_stream_base_of_turn_subject", _noop_stream_base_of_turn_subject
     )
 
-    def _make(*, journal=None, sse_events=None, resume_checkpoint_id=None):
+    def _make(
+        *,
+        journal=None,
+        sse_events=None,
+        resume_checkpoint_id=None,
+        healthz_failures: int = 0,
+    ):
         events = sse_events or []
         lines = [f"data: {json.dumps(e)}\n\n" for e in events]
         lines.append("data: [DONE]\n\n")
         sse_bytes = "".join(lines).encode()
 
+        requests: list[dict[str, Any]] = []
+        healthz_calls = {"n": 0}
+
         def handler(request: httpx.Request) -> httpx.Response:
+            body: Any = None
+            if request.content:
+                try:
+                    body = json.loads(request.content)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    body = None
+            requests.append(
+                {"method": request.method, "path": request.url.path, "json": body}
+            )
+            if request.url.path == "/healthz":
+                healthz_calls["n"] += 1
+                if healthz_calls["n"] <= healthz_failures:
+                    return httpx.Response(503)
+                return httpx.Response(200)
             if request.url.path == "/v1/_vystak/checkpoint":
                 return httpx.Response(200, json={"checkpoint_id": resume_checkpoint_id})
             return httpx.Response(
@@ -117,6 +140,7 @@ def bridge_factory(monkeypatch):
         bridge._nc = _JournalTestFakeNatsClient(js)
         bridge._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         bridge.published_payloads = js.published_payloads
+        bridge.requests = requests
         return bridge
 
     return _make

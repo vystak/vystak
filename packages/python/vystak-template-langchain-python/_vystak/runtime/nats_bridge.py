@@ -98,6 +98,12 @@ class NatsHttpBridge:
         self._http: httpx.AsyncClient | None = None
         # Tracks in-flight forward-and-reply tasks so shutdown can drain.
         self._inflight: set[asyncio.Task] = set()
+        # The startup re-drive sweep's background task, tracked separately
+        # from `_inflight`: it can legitimately be waiting on
+        # `_wait_until_ready` for up to its own timeout, and shutdown
+        # should cancel it outright rather than making every stop() pay
+        # that wait (see `stop()`).
+        self._redrive_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Connect to NATS, subscribe, and return. Subscription callbacks
@@ -117,22 +123,55 @@ class NatsHttpBridge:
         # avoid per-message connection setup. Bridge timeout exceeds
         # typical agent latency (LLM round-trips + tool calls).
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
-        # Re-drive any turns a prior process left mid-flight (crash/restart),
-        # after the NATS connection is live but *before* subscribing — so
-        # nothing new can be assigned to this bridge and race the sweep's
-        # own reads/writes of the same journal rows.
-        try:
-            redriven = await self.redrive_unfinished()
-            if redriven:
-                logger.info("nats_bridge.redrove_unfinished count=%d", redriven)
-        except Exception:  # noqa: BLE001 — startup must not crash on this
-            logger.exception("nats_bridge.redrive_unfinished_failed")
         self._sub = await self._nc.subscribe(
             self._subject,
             queue=self._queue_group,
             cb=self._on_message,
         )
         logger.info("nats_bridge.subscribed subject=%s", self._subject)
+        # Re-drive any turns a prior process left mid-flight (crash/restart).
+        # This can't run synchronously here: the sweep needs the local agent's
+        # own HTTP server (GET /v1/_vystak/checkpoint, POST /v1/_vystak/resume)
+        # to be accepting connections, and uvicorn only starts accepting
+        # connections *after* FastAPI's lifespan startup — this coroutine —
+        # returns. Run it as a background task that waits for /healthz first.
+        self._redrive_task = asyncio.create_task(self._redrive_after_ready())
+
+    async def _wait_until_ready(self, *, timeout: float = 30.0, interval: float = 0.25) -> bool:
+        """Poll the local agent's own `/healthz` until it answers 200, or
+        `timeout` seconds elapse. See `start()` for why this can't be
+        skipped: the socket isn't open yet when `start()` runs."""
+        assert self._http is not None
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            try:
+                resp = await self._http.get(
+                    f"{self._local_base}/healthz", timeout=httpx.Timeout(2.0)
+                )
+                if resp.status_code == 200:
+                    return True
+            except Exception:  # noqa: BLE001 — server not up yet, keep polling
+                pass
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
+
+    async def _redrive_after_ready(self) -> None:
+        """Background task launched from `start()`: wait for the local
+        server, then sweep. Startup must never crash on this — a redrive
+        failure is recoverable on the next restart, an unhandled exception
+        here is not (it would just be a silently-dead background task
+        either way, but the try/except makes that explicit)."""
+        if not await self._wait_until_ready():
+            logger.warning("nats_bridge.redrive_skipped_server_not_ready")
+            return
+        try:
+            redriven = await self.redrive_unfinished()
+            if redriven:
+                logger.info("nats_bridge.redrove_unfinished count=%d", redriven)
+        except Exception:  # noqa: BLE001
+            logger.exception("nats_bridge.redrive_unfinished_failed")
 
     async def _on_message(self, msg: Any) -> None:
         """Forward one inbound NATS message → local /a2a → reply on inbox.
@@ -420,7 +459,12 @@ class NatsHttpBridge:
         return publish
 
     async def _consume_response_stream(
-        self, resp: httpx.Response, turn_id: str, publish: Any
+        self,
+        resp: httpx.Response,
+        turn_id: str,
+        publish: Any,
+        *,
+        suppress_created: bool = False,
     ) -> None:
         """Shared SSE-consumption loop for both a live detached run
         (`_run_detached`) and a re-driven resume (`_stream_from_resume_endpoint`).
@@ -432,6 +476,16 @@ class NatsHttpBridge:
         terminal event gets a synthetic `response.failed` so consumers still
         terminate — the turn is left in a re-drive-eligible state, not
         stamped failed, by the callers (see their comments).
+
+        `suppress_created`: `resume_stream` always re-emits a
+        `response.created` for the resumed thread. On a live detached run
+        that's the original, first-ever event and must publish. On a
+        re-drive it's a *duplicate* of the one already published before the
+        crash — publish it again only when the rewind discarded the
+        original (`to_seq < 0`); otherwise the caller passes
+        `suppress_created=True` and this drops it, same as a checkpoint
+        marker (thread_id capture still happens; it's a no-op re-write of
+        the same id).
         """
         last_seq: int | None = None
         async for line in resp.aiter_lines():
@@ -456,6 +510,8 @@ class NatsHttpBridge:
                 response_id = event.get("response", {}).get("id", "")
                 if response_id and self._journal is not None:
                     await self._journal.set_thread_id(turn_id, response_id)
+                if suppress_created:
+                    continue  # duplicate of the pre-crash original; drop it
 
             last_seq = await publish(event)
             if self._journal is not None:
@@ -560,9 +616,18 @@ class NatsHttpBridge:
     async def _publish_synthetic_failure(self, rec: TurnRecord, message: str) -> None:
         await self._publish_seq(rec.stream_subject, rec.last_seq + 1, _failed_event(message))
 
-    async def _stream_from_resume_endpoint(self, rec: TurnRecord, *, start_seq: int) -> None:
+    async def _stream_from_resume_endpoint(
+        self, rec: TurnRecord, *, start_seq: int, to_seq: int
+    ) -> None:
         """POST `/v1/_vystak/resume` and consume the SSE stream through the
-        same loop `_run_detached` uses, publishing at `start_seq` onward."""
+        same loop `_run_detached` uses, publishing at `start_seq` onward.
+
+        `to_seq` is the rewind target just published for this turn: when
+        `>= 0`, the original pre-crash `response.created` survived the
+        rewind and the one `resume_stream` re-emits is a duplicate to drop;
+        when `< 0` the rewind discarded everything and the re-emitted one
+        is the only copy consumers will retain, so it must publish.
+        """
         try:
             js = self._nc.jetstream()
         except Exception:
@@ -584,7 +649,9 @@ class NatsHttpBridge:
                     if self._journal is not None:
                         await self._journal.set_last_seq(rec.turn_id, seq)
                     return
-                await self._consume_response_stream(resp, rec.turn_id, publish)
+                await self._consume_response_stream(
+                    resp, rec.turn_id, publish, suppress_created=to_seq >= 0
+                )
         except Exception as e:  # noqa: BLE001 — the failure must reach consumers
             logger.exception("nats_bridge.redrive_stream_failed")
             try:
@@ -613,31 +680,51 @@ class NatsHttpBridge:
             to_seq = await self._journal.seq_for_checkpoint(rec.turn_id, checkpoint_id)
         if to_seq is None:
             to_seq = rec.boundary_seq
+        # Defensive clamp: a boundary write is always paired with an
+        # already-committed last_seq for the same event (see
+        # _consume_response_stream — record_boundary uses the `last_seq`
+        # a prior set_last_seq call already persisted), so to_seq should
+        # never exceed rec.last_seq in practice. Clamping anyway means a
+        # stale/inconsistent journal row can't make the rewind marker's own
+        # seq land at or below its own to_seq — which a consumer applying
+        # "discard everything after to_seq" would otherwise misread as
+        # discarding the rewind marker itself.
+        to_seq = min(to_seq, rec.last_seq)
+        # Same stream the live detached run publishes into — ensure it
+        # exists before publishing the rewind marker, same as _run_detached
+        # does for its first publish.
+        js = self._nc.jetstream()
+        await _ensure_turn_stream(js, _stream_base_of_turn_subject(rec.stream_subject))
         seq = rec.last_seq + 1
         await self._publish_seq(
             rec.stream_subject, seq, {"type": "vystak.turn.rewind", "to_seq": to_seq}
         )
-        await self._stream_from_resume_endpoint(rec, start_seq=seq + 1)
+        await self._stream_from_resume_endpoint(rec, start_seq=seq + 1, to_seq=to_seq)
 
     async def redrive_unfinished(self) -> int:
         """Re-drive every turn the journal still considers `running` — a
         crash/restart mid-turn is the expected way to land here. Turns that
         have already exhausted `MAX_REDRIVE_ATTEMPTS` are given up on and
         marked failed instead of retried forever. Returns the number of
-        turns actually re-driven (not counting turns that hit the cap)."""
+        turns actually re-driven (not counting turns that hit the cap or
+        that raised mid-redrive — one broken turn must not abort the sweep
+        of the rest)."""
         if self._journal is None:
             return 0
         count = 0
         for rec in await self._journal.list_running():
-            if rec.attempts >= MAX_REDRIVE_ATTEMPTS:
-                await self._publish_synthetic_failure(
-                    rec, "turn abandoned after repeated restarts"
-                )
-                await self._journal.set_status(rec.turn_id, "failed")
-                continue
-            await self._journal.bump_attempts(rec.turn_id)
-            await self._redrive_one(rec)
-            count += 1
+            try:
+                if rec.attempts >= MAX_REDRIVE_ATTEMPTS:
+                    await self._publish_synthetic_failure(
+                        rec, "turn abandoned after repeated restarts"
+                    )
+                    await self._journal.set_status(rec.turn_id, "failed")
+                    continue
+                await self._journal.bump_attempts(rec.turn_id)
+                await self._redrive_one(rec)
+                count += 1
+            except Exception:  # noqa: BLE001 — one broken turn must not abort the sweep
+                logger.exception("nats_bridge.redrive_turn_failed turn_id=%s", rec.turn_id)
         return count
 
     async def _publish_error_async(
@@ -680,6 +767,18 @@ class NatsHttpBridge:
                 await self._sub.unsubscribe()
             except Exception:
                 logger.exception("nats_bridge.unsubscribe_error")
+        # The re-drive sweep may still be polling /healthz (up to its own
+        # 30s timeout) or mid-sweep — cancel it outright rather than making
+        # every shutdown pay that wait; a re-drive interrupted by shutdown
+        # just runs again on the next restart's sweep.
+        if self._redrive_task is not None and not self._redrive_task.done():
+            self._redrive_task.cancel()
+            # gather(..., return_exceptions=True) swallows only the *child*
+            # task's CancelledError/exception; if this stop() coroutine
+            # itself is cancelled (e.g. a timed-out shutdown), the await
+            # still raises that outer cancellation through normally.
+            await asyncio.gather(self._redrive_task, return_exceptions=True)
+            self._redrive_task = None
         # Drain in-flight forward tasks (best-effort, bounded).
         if self._inflight:
             try:

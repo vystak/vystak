@@ -89,3 +89,206 @@ async def test_turn_with_no_thread_id_fails_immediately_without_a_rewind(bridge_
     assert (await journal.get("t1")).status == "failed"
     published = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
     assert published == ["response.failed"]
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: the sweep must wait for the local server to be accepting
+# connections before hitting /v1/_vystak/checkpoint or /v1/_vystak/resume.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wait_until_ready_retries_until_healthz_is_200(bridge_factory):
+    bridge = bridge_factory(healthz_failures=2)
+    ready = await bridge._wait_until_ready(timeout=1.0, interval=0.01)
+    assert ready is True
+    healthz_calls = [r for r in bridge.requests if r["path"] == "/healthz"]
+    assert len(healthz_calls) >= 3
+
+
+@pytest.mark.asyncio
+async def test_wait_until_ready_times_out_when_server_never_comes_up(bridge_factory):
+    bridge = bridge_factory(healthz_failures=10_000)
+    ready = await bridge._wait_until_ready(timeout=0.05, interval=0.01)
+    assert ready is False
+
+
+@pytest.mark.asyncio
+async def test_redrive_after_ready_skips_the_sweep_when_never_ready(bridge_factory, monkeypatch):
+    bridge = bridge_factory(journal=InMemoryTurnJournal())
+    called = {"n": 0}
+
+    async def _never_ready(**kwargs):
+        return False
+
+    async def _fake_redrive():
+        called["n"] += 1
+        return 0
+
+    monkeypatch.setattr(bridge, "_wait_until_ready", _never_ready)
+    monkeypatch.setattr(bridge, "redrive_unfinished", _fake_redrive)
+
+    await bridge._redrive_after_ready()
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_redrive_after_ready_sweeps_once_the_server_is_ready(bridge_factory, monkeypatch):
+    bridge = bridge_factory(journal=InMemoryTurnJournal())
+    called = {"n": 0}
+
+    async def _ready(**kwargs):
+        return True
+
+    async def _fake_redrive():
+        called["n"] += 1
+        return 0
+
+    monkeypatch.setattr(bridge, "_wait_until_ready", _ready)
+    monkeypatch.setattr(bridge, "redrive_unfinished", _fake_redrive)
+
+    await bridge._redrive_after_ready()
+    assert called["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: resume_stream always re-emits response.created for the resumed
+# thread. It's a duplicate (drop it) only when the rewind target kept the
+# original; when the rewind discarded everything (to_seq < 0) the re-emitted
+# copy is the only one consumers will ever see (publish it).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_duplicate_response_created_dropped_when_original_survives_rewind(bridge_factory):
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    await journal.record_boundary("t1", "ck-1", 3)  # to_seq will be 3, >= 0
+    await journal.set_last_seq("t1", 12)
+
+    bridge = bridge_factory(
+        journal=journal,
+        resume_checkpoint_id="ck-1",
+        sse_events=[
+            {"type": "response.created", "response": {"id": "resp_1"}},
+            {"type": "response.completed", "response": {"id": "resp_1"}},
+        ],
+    )
+    await bridge.redrive_unfinished()
+
+    published_types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
+    assert published_types == ["vystak.turn.rewind", "response.completed"]
+
+
+@pytest.mark.asyncio
+async def test_response_created_kept_when_rewind_discards_everything(bridge_factory):
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    await journal.set_last_seq("t1", 12)  # no boundary ever recorded -> to_seq falls back to -1
+
+    bridge = bridge_factory(
+        journal=journal,
+        resume_checkpoint_id="ck-unknown",
+        sse_events=[
+            {"type": "response.created", "response": {"id": "resp_1"}},
+            {"type": "response.completed", "response": {"id": "resp_1"}},
+        ],
+    )
+    await bridge.redrive_unfinished()
+
+    published_types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
+    assert published_types == [
+        "vystak.turn.rewind",
+        "response.created",
+        "response.completed",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: one turn erroring mid-redrive must not abort the sweep of the rest.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_one_turn_erroring_does_not_abort_the_sweep(bridge_factory, monkeypatch):
+    from _vystak.runtime import nats_bridge as nats_bridge_module
+
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    await journal.create("t2", "s.t2", {})
+    await journal.set_thread_id("t2", "resp_2")
+
+    bridge = bridge_factory(journal=journal, resume_checkpoint_id="ck-1")
+
+    async def _boom_for_t1(js, base):  # noqa: ANN001
+        if base == "s.t1":
+            raise RuntimeError("boom")
+        return None
+
+    monkeypatch.setattr(nats_bridge_module, "_ensure_turn_stream", _boom_for_t1)
+
+    count = await bridge.redrive_unfinished()
+
+    assert count == 1  # t1 raised, t2 was still swept
+    t1 = await journal.get("t1")
+    t2 = await journal.get("t2")
+    assert t1.status == "running"  # left eligible for the next restart's sweep
+    assert t1.attempts == 1
+    assert t2.attempts == 1
+    published = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
+    assert published == ["vystak.turn.rewind"]  # only t2's rewind marker
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: seq continuity across the rewind, and the resume request actually
+# targets the right endpoints with the right thread_id.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resumed_stream_seq_continues_after_the_rewind_marker(bridge_factory):
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    await journal.record_boundary("t1", "ck-1", 3)
+    await journal.set_last_seq("t1", 12)
+
+    bridge = bridge_factory(
+        journal=journal,
+        resume_checkpoint_id="ck-1",
+        sse_events=[
+            {"type": "response.created", "response": {"id": "resp_1"}},
+            {"type": "response.output_text.delta", "delta": "x"},
+        ],
+    )
+    await bridge.redrive_unfinished()
+
+    payloads = [json.loads(p) for p in bridge.published_payloads]
+    assert payloads[0]["seq"] == 13
+    assert payloads[0]["event"]["type"] == "vystak.turn.rewind"
+    # response.created is suppressed (to_seq=3 >= 0); the next thing
+    # actually published is the delta, and it must land right after the
+    # rewind marker's seq, with no gap.
+    assert payloads[1]["seq"] == 14
+    assert payloads[1]["event"]["type"] == "response.output_text.delta"
+
+
+@pytest.mark.asyncio
+async def test_redrive_hits_checkpoint_then_resume_with_the_right_thread_id(bridge_factory):
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    await journal.set_last_seq("t1", 12)
+
+    bridge = bridge_factory(journal=journal, resume_checkpoint_id="ck-1")
+    await bridge.redrive_unfinished()
+
+    checkpoint_req = next(r for r in bridge.requests if r["path"] == "/v1/_vystak/checkpoint")
+    assert checkpoint_req["method"] == "GET"
+
+    resume_req = next(r for r in bridge.requests if r["path"] == "/v1/_vystak/resume")
+    assert resume_req["method"] == "POST"
+    assert resume_req["json"] == {"thread_id": "resp_1"}
