@@ -65,6 +65,7 @@ async def test_resume_detached_publishes_no_rewind(bridge_factory):
         {"id": 1, "method": "responses/resumeDetached", "params": {"turn_id": "t1"}},
         "reply.inbox",
     )
+    await asyncio.gather(*list(bridge._inflight))
     types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
     assert "vystak.turn.rewind" not in types
 
@@ -138,6 +139,50 @@ async def test_truncated_stream_marks_failed_when_not_interrupted(bridge_factory
     assert (await journal.get("t1")).status == "failed"
     types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
     assert "response.failed" in types
+
+
+@pytest.mark.asyncio
+async def test_truncated_stream_leaves_running_when_checkpoint_lookup_fails(bridge_factory):
+    """A transient/infra failure asking the agent about its own checkpoint
+    state ('couldn't ask') must not be conflated with 'asked and confirmed
+    not interrupted' — the row must stay re-drive-eligible, not be stamped
+    `failed` (which would remove it from `redrive_unfinished()`'s sweep for
+    good)."""
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    await journal.set_thread_id("t1", "resp_1")
+    bridge = bridge_factory(
+        journal=journal,
+        sse_events=[{"type": "response.created", "response": {"id": "resp_1"}}],
+        sse_done=False,
+        checkpoint_raises=True,
+    )
+    await bridge._run_detached({"input": "hi"}, "s.t1", "t1")
+
+    assert (await journal.get("t1")).status == "running"
+    types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
+    assert "response.failed" not in types
+
+
+@pytest.mark.asyncio
+async def test_truncated_stream_before_thread_id_leaves_running(bridge_factory):
+    """Truncation before `response.created` ever arrived: there's no
+    thread_id to ask the agent about at all — also a 'couldn't ask' window,
+    not a confirmed failure."""
+    journal = InMemoryTurnJournal()
+    await journal.create("t1", "s.t1", {})
+    bridge = bridge_factory(
+        journal=journal,
+        sse_events=[],
+        sse_done=False,
+    )
+    await bridge._run_detached({"input": "hi"}, "s.t1", "t1")
+
+    rec = await journal.get("t1")
+    assert rec.thread_id is None
+    assert rec.status == "running"
+    types = [json.loads(p)["event"]["type"] for p in bridge.published_payloads]
+    assert "response.failed" not in types
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,7 @@ def bridge_factory(monkeypatch):
         sse_events=None,
         resume_checkpoint_id=None,
         checkpoint_interrupted: bool = False,
+        checkpoint_raises: bool = False,
         healthz_failures: int = 0,
         sse_done: bool = True,
     ):
@@ -126,6 +127,8 @@ def bridge_factory(monkeypatch):
                     return httpx.Response(503)
                 return httpx.Response(200)
             if request.url.path == "/v1/_vystak/checkpoint":
+                if checkpoint_raises:
+                    raise httpx.ConnectError("simulated: agent unreachable", request=request)
                 return httpx.Response(
                     200,
                     json={

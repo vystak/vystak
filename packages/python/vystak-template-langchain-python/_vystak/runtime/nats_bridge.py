@@ -569,16 +569,27 @@ class NatsHttpBridge:
         status after each publish. A stream that ends without `[DONE]` or a
         terminal event is ambiguous: it could be a graph that just parked on
         `interrupt()` (nothing wrong — the turn is waiting on
-        `responses/resumeDetached`) or a genuine crash/truncation. This is
-        resolved by asking the agent's own checkpoint state
-        (`GET /v1/_vystak/checkpoint`): `interrupted: True` means `next` is
-        non-empty on the LangGraph state — the graph is durably parked, so
-        the row is stamped `parked` and *no* terminal event is published
-        (the panel's `turnStatus`/`resumeDetached` poll is what keeps
-        consumers waiting, not a stream event). Otherwise the row is stamped
-        `failed` and a synthetic `response.failed` is published so consumers
-        still terminate. This only runs when a journal is configured — an
-        HTTP-only bridge has neither a journal nor anything to park.
+        `responses/resumeDetached`), a genuine crash/truncation, or simply
+        a window where the agent can't be asked yet/anymore (see below).
+        This is resolved by asking the agent's own checkpoint state
+        (`GET /v1/_vystak/checkpoint`) — a tri-state answer:
+          - Got an answer, `interrupted: True` (`next` is non-empty on the
+            LangGraph state): the graph is durably parked. Row stamped
+            `parked`, *no* terminal event is published (the panel's
+            `turnStatus`/`resumeDetached` poll is what keeps consumers
+            waiting, not a stream event).
+          - Got an answer, `interrupted: False`: a genuine failure. Row
+            stamped `failed`, synthetic `response.failed` published so
+            consumers terminate.
+          - Couldn't ask at all (no `thread_id` yet, or the GET itself
+            failed — e.g. mid-restart) — `_agent_checkpoint_state` returns
+            `None`: status is left untouched (stays `running`), same as
+            every other transient/infra failure in this file, so
+            `redrive_unfinished()` can retry the turn; no synthetic failure
+            is published either. Not stamped `failed` — that would remove
+            it from `list_running()`'s re-drive sweep for good.
+        This only runs when a journal is configured — an HTTP-only bridge
+        has neither a journal nor anything to park.
 
         `suppress_created`: `resume_stream` always re-emits a
         `response.created` for the resumed thread. On a live detached run
@@ -640,13 +651,26 @@ class NatsHttpBridge:
         if self._journal is not None:
             rec = await self._journal.get(turn_id)
             state = await self._agent_checkpoint_state(rec.thread_id if rec else None)
+            if state is None:
+                # Couldn't ask — no thread_id yet (truncated before
+                # `response.created`), or the checkpoint GET itself failed
+                # (e.g. the agent process is mid-restart: clean EOF on the
+                # response stream, then the follow-up GET is refused). Both
+                # are healthy-turn windows, not evidence of a genuine
+                # failure. Leave status untouched (it stays `running`, same
+                # transient/infra-failure convention as every other error
+                # path in this file) so `redrive_unfinished()` can retry —
+                # and skip the synthetic `response.failed` below too: a
+                # redrive will rewind/replay or eventually cap out at
+                # `MAX_REDRIVE_ATTEMPTS` and publish its own failure.
+                return
             if state.get("interrupted"):
                 await self._journal.set_status(turn_id, "parked")
                 return  # graph is durably parked; no terminal event to publish
             await self._journal.set_status(turn_id, "failed")
 
-        # Truncated stream (no [DONE], no terminal event, and not a park):
-        # make sure consumers still terminate.
+        # Truncated stream (no [DONE], no terminal event, not a park, and
+        # not a "couldn't ask" window): make sure consumers still terminate.
         final_seq = await publish(_failed_event("agent stream ended without a terminal event"))
         if self._journal is not None:
             await self._journal.set_last_seq(turn_id, final_seq)
@@ -716,13 +740,20 @@ class NatsHttpBridge:
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_failed_publish")
 
-    async def _agent_checkpoint_state(self, thread_id: str | None) -> dict[str, Any]:
+    async def _agent_checkpoint_state(self, thread_id: str | None) -> dict[str, Any] | None:
         """Ask the local agent about a thread's checkpoint state via
         `GET /v1/_vystak/checkpoint` — `{"checkpoint_id": ..., "interrupted": ...}`.
-        Returns `{}` (falsy on every key) when there's no thread to ask
-        about or the call fails, so callers can `.get(...)` unconditionally."""
+
+        Two-state contract callers must not conflate: returns `None` when
+        there's no thread to ask about yet, or the call itself failed
+        (network error, non-2xx) — "couldn't ask", not an answer. Returns
+        the parsed dict on a successful call — a real answer, even if
+        `interrupted` is `False` within it. See `_consume_response_stream`'s
+        tri-state handling of this for why the distinction matters: `None`
+        must not be treated the same as "asked and confirmed not
+        interrupted"."""
         if not thread_id:
-            return {}
+            return None
         assert self._http is not None
         try:
             resp = await self._http.get(
@@ -733,12 +764,13 @@ class NatsHttpBridge:
             return resp.json()
         except Exception:  # noqa: BLE001
             logger.exception("nats_bridge.checkpoint_state_lookup_failed")
-            return {}
+            return None
 
     async def _current_checkpoint_id(self, thread_id: str | None) -> str | None:
         """Ask the local agent for the checkpoint LangGraph would resume
         from for this thread — via `GET /v1/_vystak/checkpoint`."""
-        return (await self._agent_checkpoint_state(thread_id)).get("checkpoint_id")
+        state = await self._agent_checkpoint_state(thread_id)
+        return state.get("checkpoint_id") if state is not None else None
 
     async def _publish_seq(self, stream_subject: str, seq: int, event: dict) -> None:
         js = self._nc.jetstream()

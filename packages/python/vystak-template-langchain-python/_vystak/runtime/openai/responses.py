@@ -1,11 +1,14 @@
 """Stateful /v1/responses handler."""
 
 import json
+import logging
 import time
 import uuid
 from typing import Any
 
 from _vystak.runtime.content import flatten_content
+
+logger = logging.getLogger("vystak.runtime.openai.responses")
 
 _UNSET = object()
 
@@ -223,6 +226,7 @@ class ResponsesHandler:
             try:
                 snapshot = await aget_state(config)
             except Exception:  # noqa: BLE001 — state lookup is best-effort here
+                logger.exception("responses.interrupt_state_lookup_failed")
                 snapshot = None
             if snapshot is not None and snapshot.next:
                 return
