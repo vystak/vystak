@@ -7,7 +7,11 @@ opens the context once at startup via AsyncExitStack and keeps it open for
 the app's lifetime.
 """
 
+import os
+import tempfile
 from typing import Any
+
+_DATA_DIR = "/data"
 
 
 class _LazyCheckpointer:
@@ -26,31 +30,43 @@ class _LazyCheckpointer:
         return self._cm_factory()
 
 
+def resolve_sessions_path() -> str:
+    """Resolve the default checkpointer path.
+
+    Chain: VYSTAK_SESSIONS_PATH -> /data/sessions.db (when /data exists and is
+    writable, i.e. the deployed container) -> a temp-dir path (unit tests, dev
+    machines, and any platform that mounts no volume).
+    """
+    override = os.environ.get("VYSTAK_SESSIONS_PATH")
+    if override:
+        return override
+    if os.path.isdir(_DATA_DIR) and os.access(_DATA_DIR, os.W_OK):
+        return os.path.join(_DATA_DIR, "sessions.db")
+    return os.path.join(tempfile.gettempdir(), "vystak-sessions.db")
+
+
 def build_checkpointer(agent: Any):
     sessions = getattr(agent, "sessions", None)
-    if sessions is None:
-        from langgraph.checkpoint.memory import MemorySaver
-        return MemorySaver()
-
-    engine = getattr(sessions, "engine", None)
-    if engine == "sqlite":
-        path = getattr(sessions, "path", None) or ":memory:"
-
-        def _make_cm():
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            return AsyncSqliteSaver.from_conn_string(path)
-
-        return _LazyCheckpointer(_make_cm)
+    engine = getattr(sessions, "engine", None) if sessions is not None else None
 
     if engine == "postgres":
-        def _make_cm():
+        def _make_pg_cm():
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
             return AsyncPostgresSaver.from_conn_string(sessions.connection_string)
 
-        return _LazyCheckpointer(_make_cm)
+        return _LazyCheckpointer(_make_pg_cm)
 
-    from langgraph.checkpoint.memory import MemorySaver
-    return MemorySaver()
+    if engine == "sqlite":
+        path = getattr(sessions, "path", None) or resolve_sessions_path()
+    else:
+        # No sessions declared: durable by default rather than in-memory.
+        path = resolve_sessions_path()
+
+    def _make_cm():
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        return AsyncSqliteSaver.from_conn_string(path)
+
+    return _LazyCheckpointer(_make_cm)
 
 
 class _LazyStore:
