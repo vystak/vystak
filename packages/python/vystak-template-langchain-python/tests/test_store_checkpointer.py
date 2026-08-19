@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from unittest import mock
 
 from _vystak.runtime.store import _LazyCheckpointer, build_checkpointer, resolve_sessions_path
@@ -26,16 +25,20 @@ def test_env_override_wins(tmp_path):
 def test_data_dir_used_when_writable(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
-    with mock.patch.dict(os.environ, {}, clear=True):
-        with mock.patch("_vystak.runtime.store._DATA_DIR", str(data)):
-            assert resolve_sessions_path() == str(data / "sessions.db")
+    with (
+        mock.patch.dict(os.environ, {}, clear=True),
+        mock.patch("_vystak.runtime.store._DATA_DIR", str(data)),
+    ):
+        assert resolve_sessions_path() == str(data / "sessions.db")
 
 
 def test_falls_back_to_local_when_data_dir_missing(tmp_path):
     missing = tmp_path / "nope"
-    with mock.patch.dict(os.environ, {}, clear=True):
-        with mock.patch("_vystak.runtime.store._DATA_DIR", str(missing)):
-            resolved = resolve_sessions_path()
+    with (
+        mock.patch.dict(os.environ, {}, clear=True),
+        mock.patch("_vystak.runtime.store._DATA_DIR", str(missing)),
+    ):
+        resolved = resolve_sessions_path()
     assert resolved.endswith("sessions.db")
     assert not resolved.startswith(str(missing))
 
