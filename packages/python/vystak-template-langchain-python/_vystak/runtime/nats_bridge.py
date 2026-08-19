@@ -34,9 +34,12 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from _vystak.runtime.turn_journal import TurnJournal
 
 logger = logging.getLogger("vystak.runtime.nats_bridge")
 
@@ -52,11 +55,13 @@ class NatsHttpBridge:
         queue_group: str,
         local_url: str,
         local_base: str = "",
+        journal: TurnJournal | None = None,
     ) -> None:
         self._nats_url = nats_url
         self._subject = subject
         self._queue_group = queue_group
         self._local_url = local_url
+        self._journal = journal
         # Base URL of the local FastAPI app (no path), used for the
         # Responses-API proxy routes below. Falls back to deriving it from
         # local_url (the /a2a URL) so existing callers that only pass
@@ -343,6 +348,11 @@ class NatsHttpBridge:
                 request_id=envelope.get("id"),
             )
             return
+        # Journal row created BEFORE the ack is published: the crash
+        # window (bridge dies after ack but before the row exists) is
+        # then one INSERT wide instead of spanning the whole detached run.
+        if self._journal is not None:
+            await self._journal.create(turn_id, stream_subject, request)
         ack = {
             "jsonrpc": "2.0",
             "id": envelope.get("id"),
@@ -350,11 +360,13 @@ class NatsHttpBridge:
         }
         if reply_subject:
             await self._nc.publish(reply_subject, json.dumps(ack).encode())
-        task = asyncio.create_task(self._run_detached(dict(request), stream_subject))
+        task = asyncio.create_task(self._run_detached(dict(request), stream_subject, turn_id))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
 
-    async def _run_detached(self, request: dict[str, Any], stream_subject: str) -> None:
+    async def _run_detached(
+        self, request: dict[str, Any], stream_subject: str, turn_id: str
+    ) -> None:
         try:
             js = self._nc.jetstream()
         except Exception:
@@ -379,6 +391,13 @@ class NatsHttpBridge:
             # idle timeout.
             try:
                 await publish(_failed_event(str(e)))
+                if self._journal is not None:
+                    # Not stamped `failed` here: Task 7 owns re-drive
+                    # semantics via list_running(), and this is exactly
+                    # the kind of transient/infra failure re-drive exists
+                    # to recover — leaving status `running` keeps the
+                    # turn eligible for that sweep.
+                    await self._journal.set_last_seq(turn_id, seq - 1)
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_ensure_stream_publish_failed")
             return
@@ -395,6 +414,11 @@ class NatsHttpBridge:
             ) as resp:
                 if resp.status_code != 200:
                     await publish(_failed_event(f"local /v1/responses returned {resp.status_code}"))
+                    # Left `running` — see the ensure-stream failure comment
+                    # above; this is a re-drive candidate, not a terminal
+                    # failure.
+                    if self._journal is not None:
+                        await self._journal.set_last_seq(turn_id, seq - 1)
                     return
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
@@ -406,14 +430,40 @@ class NatsHttpBridge:
                         event = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
+
+                    if event.get("type") == "vystak.checkpoint":
+                        if self._journal is not None:
+                            await self._journal.record_boundary(
+                                turn_id, event.get("checkpoint_id", ""), seq - 1
+                            )
+                        continue  # internal: never published to JetStream
+
+                    if event.get("type") == "response.created":
+                        response_id = event.get("response", {}).get("id", "")
+                        if response_id and self._journal is not None:
+                            await self._journal.set_thread_id(turn_id, response_id)
+
                     await publish(event)
+                    if self._journal is not None:
+                        await self._journal.set_last_seq(turn_id, seq - 1)
+                        if event.get("type") == "response.completed":
+                            await self._journal.set_status(turn_id, "done")
+                        elif event.get("type") == "response.failed":
+                            await self._journal.set_status(turn_id, "failed")
                 # Truncated stream (no [DONE], no terminal event): make sure
-                # consumers still terminate.
+                # consumers still terminate. Left `running` in the journal —
+                # a re-drive candidate, not a terminal failure (see above).
                 await publish(_failed_event("agent stream ended without a terminal event"))
+                if self._journal is not None:
+                    await self._journal.set_last_seq(turn_id, seq - 1)
         except Exception as e:  # noqa: BLE001 — the failure must reach consumers
             logger.exception("nats_bridge.detached_failed")
             try:
                 await publish(_failed_event(str(e)))
+                # Left `running` — transient/infra failure, re-drive
+                # candidate (see above).
+                if self._journal is not None:
+                    await self._journal.set_last_seq(turn_id, seq - 1)
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_failed_publish")
 
