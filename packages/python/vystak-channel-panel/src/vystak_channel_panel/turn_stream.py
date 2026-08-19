@@ -65,6 +65,8 @@ def translate_responses_event(
             .get("message", "agent stream failed")
         )
         return PanelStreamEvent(type="error", text=err)
+    if event_type == "vystak.turn.rewind":
+        return PanelStreamEvent(type="rewind", to_seq=int(data.get("to_seq", -1)))
     return None
 
 
@@ -159,6 +161,8 @@ def browser_frame(ev: PanelStreamEvent) -> dict:
     """The panel→browser SSE payload for one streaming event."""
     if ev.type == "token":
         return {"type": "delta", "text": ev.text}
+    if ev.type == "rewind":
+        return {"type": "reset"}
     if ev.type == "tool_call":
         return {
             "type": "tool_call",

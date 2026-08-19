@@ -214,7 +214,16 @@ async def _post_message_nats(rt, conv, conv_id: str, text: str, user, title: str
 async def _proxy_turn(rt, subject: str, turn_id: str, title: str | None):
     """Browser-facing SSE proxy over a turn's JetStream subject. Read-only:
     persistence belongs to the persister task, so any number of these can
-    attach or vanish without consequence."""
+    attach or vanish without consequence.
+
+    Keeps a `TurnAccumulator` alongside the forwarding purely so a rewind
+    event can replay: on `vystak.turn.rewind` the browser has already
+    rendered events past the rollback point (a stale tool call, wrong text),
+    so a bare forward isn't enough — the proxy must tell the browser to
+    reset, then re-emit exactly the retained prefix so it rebuilds the
+    committed state.
+    """
+    acc = TurnAccumulator()
     try:
         async for seq, ev in rt.nats_client.stream_turn_events(subject):
             if ev.type == "done":
@@ -223,6 +232,13 @@ async def _proxy_turn(rt, subject: str, turn_id: str, title: str | None):
                     "response_id": ev.response_id, "title": title,
                 })
                 return
+            if ev.type == "rewind":
+                acc.rewind(ev.to_seq)
+                yield _sse(browser_frame(ev))
+                for _s, kept in acc.retained():
+                    yield _sse(browser_frame(kept))
+                continue
+            acc.feed_seq(seq, ev)
             frame = browser_frame(ev)
             frame["turn_id"] = turn_id
             frame["seq"] = seq

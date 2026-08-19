@@ -1,5 +1,6 @@
 """Shared fixtures for panel channel API tests."""
 
+import json as _json
 from types import SimpleNamespace
 
 import httpx
@@ -148,3 +149,45 @@ def persister_harness():
             self.rt = FakeRt()
 
     return Harness
+
+
+@pytest.fixture
+def sse_proxy_harness():
+    """Drives `_proxy_turn` (the NATS SSE proxy) directly against a scripted
+    batch of raw Responses-API-shaped event dicts — the same shape the real
+    agent stream sends over the wire. Each dict is run through
+    `translate_responses_event` (mirroring what `PanelNatsClient.stream_turn_events`
+    does internally) before being handed to the proxy as `(seq, PanelStreamEvent)`
+    pairs, so a scripted `vystak.turn.rewind` event exercises the real
+    translate -> accumulate -> replay path end to end. `collect()` parses the
+    proxy's `data: ...` SSE lines back into dicts for assertions."""
+    from vystak_channel_panel.routes_messages import _proxy_turn
+    from vystak_channel_panel.turn_stream import translate_responses_event
+
+    class Harness:
+        def __init__(self, *, events):
+            self._events = events
+
+        async def collect(self):
+            events = self._events
+
+            class FakeNatsClient:
+                async def stream_turn_events(self_nc, subject):
+                    pending_calls: dict = {}
+                    for seq, data in events:
+                        ev = translate_responses_event(data, pending_calls)
+                        if ev is not None:
+                            yield seq, ev
+
+            rt = SimpleNamespace(nats_client=FakeNatsClient())
+            frames = []
+            async for chunk in _proxy_turn(rt, "subject", "turn-1", "title"):
+                for line in chunk.splitlines():
+                    if line.startswith("data: "):
+                        frames.append(_json.loads(line[6:]))
+            return frames
+
+    def make(*, events):
+        return Harness(events=events)
+
+    return make
