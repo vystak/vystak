@@ -231,7 +231,7 @@ class ObservedSaver(BaseCheckpointSaver):
         return self._inner.get_next_version(current, channel)
 
     def with_allowlist(self, extra_allowlist):  # noqa: ANN001, ANN201
-        return self._inner.with_allowlist(extra_allowlist)
+        return ObservedSaver(self._inner.with_allowlist(extra_allowlist), self._observer)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

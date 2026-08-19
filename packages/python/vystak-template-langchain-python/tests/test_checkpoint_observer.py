@@ -13,6 +13,9 @@ class _FakeSaver:
     async def aget_tuple(self, config):
         return None
 
+    def with_allowlist(self, extra_allowlist):
+        return _FakeSaver()
+
 
 @pytest.mark.asyncio
 async def test_aput_delegates_and_records_id():
@@ -71,3 +74,27 @@ def test_observed_saver_is_accepted_as_a_checkpointer():
     from langgraph.checkpoint.base import BaseCheckpointSaver
 
     assert isinstance(ObservedSaver(_FakeSaver(), CheckpointObserver()), BaseCheckpointSaver)
+
+
+@pytest.mark.asyncio
+async def test_with_allowlist_stays_wrapped_and_keeps_observing():
+    """Regression guard: `with_allowlist` must return a still-wrapped
+    `ObservedSaver`, not the bare inner saver. LangGraph's
+    `apply_checkpointer_allowlist` uses the return value as the checkpointer
+    going forward (gated behind `LANGGRAPH_STRICT_MSGPACK`); an unwrapped
+    return would silently stop notifying the observer while checkpoints keep
+    committing — a stale-boundary durability lie."""
+    obs = CheckpointObserver()
+    saver = ObservedSaver(_FakeSaver(), obs)
+
+    reallowlisted = saver.with_allowlist([("some", "path")])
+
+    assert isinstance(reallowlisted, ObservedSaver)
+    assert reallowlisted._observer is obs
+
+    result = await reallowlisted.aput(
+        {"configurable": {"thread_id": "t1"}}, {"id": "ck-1"}, {}, {}
+    )
+
+    assert result == {"ok": True}
+    assert obs.drain("t1") == ["ck-1"]
