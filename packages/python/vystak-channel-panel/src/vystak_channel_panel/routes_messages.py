@@ -234,9 +234,15 @@ async def _proxy_turn(rt, subject: str, turn_id: str, title: str | None):
                 return
             if ev.type == "rewind":
                 acc.rewind(ev.to_seq)
-                yield _sse(browser_frame(ev))
-                for _s, kept in acc.retained():
-                    yield _sse(browser_frame(kept))
+                reset_frame = browser_frame(ev)
+                reset_frame["turn_id"] = turn_id
+                reset_frame["seq"] = seq
+                yield _sse(reset_frame)
+                for kept_seq, kept in acc.retained():
+                    kept_frame = browser_frame(kept)
+                    kept_frame["turn_id"] = turn_id
+                    kept_frame["seq"] = kept_seq
+                    yield _sse(kept_frame)
                 continue
             acc.feed_seq(seq, ev)
             frame = browser_frame(ev)
