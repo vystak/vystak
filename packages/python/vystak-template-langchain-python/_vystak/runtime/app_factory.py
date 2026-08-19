@@ -9,7 +9,7 @@ from a2a.server.request_handlers import DefaultRequestHandlerV2
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 # Importing a2a_native applies a runtime monkey-patch to a2a-sdk 1.0.2's
 # proto_utils that swaps `field.label` for `field.is_repeated` — without
@@ -261,5 +261,18 @@ def build_agent_app(agent: Any) -> FastAPI:
                 status_code=404,
                 detail=f"Response not found: {response_id}",
             ) from e
+
+    # Internal route the durable-execution bridge POSTs to continue an
+    # interrupted thread. Not advertised on the agent card.
+    @app.post("/v1/_vystak/resume")
+    async def _vystak_resume(request: Request):
+        payload = await request.json()
+        thread_id = payload.get("thread_id")
+        if not thread_id:
+            return JSONResponse({"error": "thread_id required"}, status_code=400)
+        return StreamingResponse(
+            responses_handler.resume_stream(thread_id, payload.get("resume")),
+            media_type="text/event-stream",
+        )
 
     return app

@@ -7,6 +7,8 @@ from typing import Any
 
 from _vystak.runtime.content import flatten_content
 
+_UNSET = object()
+
 
 class ResponsesHandler:
     """OpenAI Responses API — stateful via previous_response_id (LangGraph thread_id)."""
@@ -57,7 +59,19 @@ class ResponsesHandler:
     async def _create_stream(self, body: dict):
         return self._stream_iterator(body)
 
-    async def _stream_iterator(self, body: dict):
+    def resume_stream(self, thread_id: str, resume: Any | None = None):
+        """Continue an interrupted thread. `resume=None` replays from the last
+        checkpoint; a value drives a pending interrupt()."""
+        graph_input = None
+        if resume is not None:
+            from langgraph.types import Command
+
+            graph_input = Command(resume=resume)
+        return self._stream_iterator(
+            {"previous_response_id": thread_id}, graph_input=graph_input
+        )
+
+    async def _stream_iterator(self, body: dict, *, graph_input: Any = _UNSET):
         thread_id = body.get("previous_response_id") or _new_response_id()
         model = body.get("model", f"vystak/{self.agent.name}")
         created = int(time.time())
@@ -73,14 +87,16 @@ class ResponsesHandler:
             },
         })
 
-        messages = _normalize_input(body.get("input"))
+        if graph_input is _UNSET:
+            messages = _normalize_input(body.get("input"))
+            graph_input = {"messages": messages}
         config = {"configurable": {"thread_id": thread_id}}
         full_text = []
         item_id = f"msg_{uuid.uuid4().hex[:12]}"
 
         try:
             async for ev in self.graph.astream_events(
-                {"messages": messages}, config, version="v2"
+                graph_input, config, version="v2"
             ):
                 if self._observer is not None:
                     for checkpoint_id in self._observer.drain(thread_id):
