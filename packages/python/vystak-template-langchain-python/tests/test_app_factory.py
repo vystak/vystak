@@ -141,6 +141,24 @@ def test_app_chat_completions_route_exists():
     assert "/a2a" in routes
 
 
+def test_app_resume_route_exists_and_is_not_on_agent_card():
+    app = build_agent_app(_agent())
+    routes = [r.path for r in app.routes]
+    assert "/v1/_vystak/resume" in routes
+
+    client = TestClient(app)
+    card = client.get("/.well-known/agent.json").json()
+    card_text = str(card)
+    assert "_vystak/resume" not in card_text
+
+
+def test_app_resume_requires_thread_id():
+    app = build_agent_app(_agent())
+    client = TestClient(app)
+    r = client.post("/v1/_vystak/resume", json={})
+    assert r.status_code == 400
+
+
 def test_app_builds_with_sqlite_sessions_config():
     """Agent with sessions: sqlite must build without TypeError.
 
