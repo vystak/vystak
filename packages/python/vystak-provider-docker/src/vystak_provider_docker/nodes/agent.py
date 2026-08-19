@@ -116,12 +116,13 @@ class DockerAgentNode(Provisionable):
     def _build_volumes(self, context: dict) -> dict:
         """Assemble the container's volume mounts.
 
-        A declared `sessions:` service (checked via ``depends_on``/context)
-        provides the /data mount. Agents with no `sessions:` declaration
-        still get a durable /data volume — the langchain template writes
-        /data/sessions.db (checkpointer) and /data/turns.db (turn journal)
-        by default, so durability would otherwise silently evaporate on
-        container replacement.
+        The /data mount can come from any sqlite-backed dependency in
+        ``depends_on`` — a declared `sessions:` service, `memory:`, or a
+        sqlite entry in `services:` — not just `sessions:` specifically.
+        Agents where nothing claims /data still get a durable volume — the
+        langchain template writes /data/sessions.db (checkpointer) and
+        /data/turns.db (turn journal) by default, so durability would
+        otherwise silently evaporate on container replacement.
         """
         volumes: dict = {}
         for dep_name in self.depends_on:
@@ -305,7 +306,12 @@ class DockerAgentNode(Provisionable):
             # Build volumes. When nothing else claims /data (no `sessions:`
             # and no other sqlite-backed dependency bound there), this
             # creates (idempotently) the fallback per-agent data volume so
-            # /data is always durable across container replacement.
+            # /data is always durable across container replacement. Like
+            # DockerServiceNode's sqlite/postgres volumes, this volume
+            # survives `vystak destroy` by convention (see destroy() below)
+            # — a later `vystak apply` reusing the same agent name resumes
+            # against whatever /data/sessions.db and /data/turns.db already
+            # hold on this volume, not a clean slate.
             volumes = self._build_volumes(context)
             data_volume_name = self._default_data_volume_name()
             if data_volume_name in volumes:
@@ -360,12 +366,22 @@ class DockerAgentNode(Provisionable):
         """Stop and remove the agent container.
 
         Data-bearing volumes (both a declared `sessions:` volume and the
-        fallback per-agent data volume created when there's no `sessions:`
-        declaration) are intentionally left in place — this mirrors
-        DockerServiceNode.destroy(), which keeps sqlite/postgres volumes so
-        durable state survives a redeploy. Volume cleanup on destroy would
-        defeat the point of this task (durability across container
-        replacement).
+        fallback per-agent data volume `vystak-agent-<name>-data` created
+        when there's no `sessions:` declaration) are intentionally left in
+        place — this mirrors DockerServiceNode.destroy(), which keeps
+        sqlite/postgres volumes so durable state survives a redeploy.
+        Volume cleanup on destroy would defeat the point of this task
+        (durability across container replacement).
+
+        Operational consequence: `vystak destroy` followed by `vystak apply`
+        with the same agent name resumes against the stale
+        /data/sessions.db and /data/turns.db already on that volume — the
+        same stale-volume failure family CLAUDE.md documents for
+        `vault_clean`/`postgres_clean` (the `vystak-vault-data` and
+        `vystak-data-*` volumes surviving destroy across test runs). Any
+        release-test fixture that expects a clean /data per run for a
+        sessionless agent must clean `vystak-agent-*-data` the same way
+        `postgres_clean` cleans `vystak-data-*`.
         """
         container_name = self._container_name()
         try:
