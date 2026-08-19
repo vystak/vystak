@@ -19,6 +19,11 @@ class FakeNatsClient:
         if self._idle:
             raise TurnStreamIdle(subject)
 
+    async def turn_status(self, agent_name, turn_id):
+        # No agent to ask in these tests — a terminal status here preserves
+        # the pre-Task-10 idle-timeout persist-partial-and-conclude behavior.
+        return "failed"
+
 
 class FakeNatsClientRaises:
     """Simulates a transient infra failure (e.g. JetStream subscribe error)
@@ -46,6 +51,10 @@ class FakeRuntime:
         self.panel_store = store
         self.nats_client = nats_client
         self.turn_tasks = {}
+        self.routes = {"time-agent": {"canonical": "time-agent.agents.default"}}
+
+    def monotonic(self):
+        return 0.0
 
 
 @pytest.fixture

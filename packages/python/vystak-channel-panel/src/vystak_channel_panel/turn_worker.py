@@ -12,25 +12,83 @@ from vystak_channel_panel.turn_stream import TurnAccumulator
 
 logger = logging.getLogger("vystak.channel.panel.turns")
 
+# Idle no longer concludes a turn on its own — an agent restart plus re-drive
+# routinely exceeds the JetStream idle window. On TurnStreamIdle the
+# persister asks the agent for the turn's actual status via
+# `responses/turnStatus` and only concludes once that status (or the overall
+# deadline) says the turn is really over.
+WAITING_STATUSES = {"running", "parked"}
+DEFAULT_TURN_DEADLINE_S = 900.0
 
-async def run_turn_persister(rt: Any, conv_id: str, turn_id: str, subject: str) -> None:
+
+async def run_turn_persister(
+    rt: Any,
+    conv_id: str,
+    turn_id: str,
+    subject: str,
+    deadline_s: float = DEFAULT_TURN_DEADLINE_S,
+) -> None:
     acc = TurnAccumulator()
     response_id: str | None = None
     errored = False
     infra_failure = False
     try:
         try:
-            async for _seq, ev in rt.nats_client.stream_turn_events(subject):
-                if ev.type == "done":
-                    response_id = ev.response_id or None
+            # Resolved inside the outer try so a failure here (e.g. a store
+            # hiccup) still reaches the `finally` below and pops turn_tasks,
+            # same as every other failure path in this function.
+            started = rt.monotonic()
+            conv = await rt.panel_store.get_conversation(conv_id)
+            route = rt.routes.get(conv.agent_name, {}) if conv is not None else {}
+            agent_name = route.get("canonical", conv.agent_name if conv is not None else "")
+            if not route:
+                logger.warning(
+                    "no route for agent=%s conv=%s turn=%s — turnStatus "
+                    "lookups will fail closed until the deadline",
+                    conv.agent_name if conv is not None else "?", conv_id, turn_id,
+                )
+            while True:
+                # Re-attach replays the JetStream subject from seq 0, so the
+                # accumulator must be rebuilt for each attach or already-fed
+                # events would be double-counted.
+                acc = TurnAccumulator()
+                try:
+                    async for seq, ev in rt.nats_client.stream_turn_events(subject):
+                        if ev.type == "done":
+                            response_id = ev.response_id or None
+                            break
+                        if ev.type == "error":
+                            errored = True
+                            break
+                        if ev.type == "rewind":
+                            acc.rewind(ev.to_seq)
+                            continue
+                        acc.feed_seq(seq, ev)
+                    else:
+                        continue
                     break
-                if ev.type == "error":
+                except TurnStreamIdle:
+                    if rt.monotonic() - started >= deadline_s:
+                        logger.warning(
+                            "turn deadline conv=%s turn=%s", conv_id, turn_id
+                        )
+                        errored = True
+                        break
+                    try:
+                        status = await rt.nats_client.turn_status(agent_name, turn_id)
+                    except Exception:  # noqa: BLE001 — unreachable agent means keep waiting
+                        logger.info(
+                            "turnStatus unreachable conv=%s turn=%s", conv_id, turn_id
+                        )
+                        continue
+                    if status in WAITING_STATUSES:
+                        continue
+                    logger.warning(
+                        "turn idle timeout conv=%s turn=%s status=%s",
+                        conv_id, turn_id, status,
+                    )
                     errored = True
                     break
-                acc.feed(ev)
-        except TurnStreamIdle:
-            logger.warning("turn idle timeout conv=%s turn=%s", conv_id, turn_id)
-            errored = True
         except Exception:  # noqa: BLE001 — persister must reach the cleanup below
             # Unexpected failure (e.g. a transient JetStream subscribe error) is
             # not the turn concluding — the agent's output may still be sitting

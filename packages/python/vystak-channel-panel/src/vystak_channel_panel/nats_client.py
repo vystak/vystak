@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 
 from vystak.transport import AgentRef
@@ -27,10 +29,12 @@ class PanelNatsClient:
         *,
         timeout_s: float = 30.0,
         idle_timeout_s: float = 120.0,
+        status_timeout_s: float = 5.0,
     ) -> None:
         self._transport = NatsTransport(nats_url)
         self._timeout = timeout_s
         self.idle_timeout_s = idle_timeout_s
+        self._status_timeout = status_timeout_s
 
     @staticmethod
     def turn_subject_for(route_entry: dict, conversation_id: str, turn_id: str) -> str:
@@ -69,6 +73,38 @@ class PanelNatsClient:
             timeout=self._timeout,
         )
         return subject
+
+    async def turn_status(self, agent_name: str, turn_id: str) -> str:
+        """`responses/turnStatus {turn_id}` on the agent's tasks subject.
+
+        Used when a turn's JetStream subject goes idle: idle no longer means
+        the turn concluded, it means we ask the agent whether it's still
+        `running`/`parked` (keep waiting), `done`/`failed` (conclude), or
+        `unknown` (conclude — nothing to resume). *agent_name* is the
+        canonical name (`resolve_address` builds the tasks subject from it,
+        same as `create_response_detached`); the panel-side conversation
+        lookup that produces it lives in `turn_worker`, not here.
+        """
+        nc = await self._transport.nats_connection()
+        subject = self._transport.resolve_address(agent_name)
+        payload = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "responses/turnStatus",
+                "params": {"turn_id": turn_id},
+            }
+        ).encode()
+        try:
+            reply = await nc.request(subject, payload, timeout=self._status_timeout)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"NATS request to {subject} (responses/turnStatus) "
+                f"timed out after {self._status_timeout}s"
+            ) from e
+        body = json.loads(reply.data)
+        result = body.get("result") or {}
+        return result.get("status", "unknown")
 
     async def stream_turn_events(self, subject: str) -> AsyncIterator[tuple[int, PanelStreamEvent]]:
         nc = await self._transport.nats_connection()
