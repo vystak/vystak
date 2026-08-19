@@ -172,3 +172,18 @@ def test_app_builds_with_sqlite_sessions_config():
     # The graph compiled (we used checkpointer=None for the lazy case).
     routes = [r.path for r in app.routes]
     assert "/healthz" in routes
+
+
+def test_lifespan_wires_checkpoint_observer_onto_state():
+    """`build_checkpointer` is always lazy (durable-by-default, Task 1), so
+    the `is_lazy` branch in the lifespan always runs and always creates a
+    `CheckpointObserver`, regardless of whether the agent declares
+    `sessions`. This asserts that invariant directly rather than assuming
+    it — the Responses stream's checkpoint markers depend on it.
+    """
+    app = build_agent_app(_agent())
+    with TestClient(app):
+        assert hasattr(app.state, "checkpoint_observer")
+        from _vystak.runtime.store import CheckpointObserver
+
+        assert isinstance(app.state.checkpoint_observer, CheckpointObserver)
