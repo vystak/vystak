@@ -114,6 +114,18 @@ export function panelStreamToUIChunks(
               dynamic: true,
             });
           }
+        } else if (payload.type === 'reset') {
+          // A resumed turn rewinds and re-emits its retained prefix from
+          // scratch. Close out (and discard) whatever text/tool state was
+          // in flight, then emit the same chunk sequence a fresh resume
+          // attach produces — a new 'start' followed by a text part back at
+          // the base id — so the client renders the re-emitted frames as a
+          // brand-new assistant message instead of appending after stale
+          // content.
+          closeTextIfOpen();
+          textRunCount = 0;
+          textId = TEXT_ID_BASE;
+          controller.enqueue({ type: 'start' });
         }
         // 'done' carries persistence ids the UI refetches via the API.
       };
