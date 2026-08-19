@@ -85,3 +85,55 @@ async def test_get_unknown_turn_returns_none(tmp_path):
     j = SqliteTurnJournal(str(tmp_path / "turns.db"))
     assert await j.get("nope") is None
     await j.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+async def test_duplicate_create_preserves_original_row(tmp_path, kind):
+    j = dict(_journals(tmp_path))[kind]
+    await j.create("t1", "subj.a", {"input": "hello"})
+    await j.bump_attempts("t1")
+    await j.set_last_seq("t1", 5)
+    await j.create("t1", "subj.b", {"input": "goodbye"})
+    rec = await j.get("t1")
+    assert rec.stream_subject == "subj.a"
+    assert rec.request == {"input": "hello"}
+    assert rec.attempts == 1
+    assert rec.last_seq == 5
+    await j.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+async def test_unknown_turn_id_mutations_are_silent_noops(tmp_path, kind):
+    j = dict(_journals(tmp_path))[kind]
+    await j.set_thread_id("nope", "resp_abc")
+    await j.record_boundary("nope", "ck-1", 3)
+    await j.set_last_seq("nope", 5)
+    await j.set_status("nope", "done")
+    assert await j.get("nope") is None
+    assert await j.seq_for_checkpoint("nope", "ck-1") is None
+    await j.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+async def test_bump_attempts_on_unknown_turn_returns_zero(tmp_path, kind):
+    j = dict(_journals(tmp_path))[kind]
+    assert await j.bump_attempts("nope") == 0
+    assert await j.get("nope") is None
+    await j.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+async def test_get_result_mutation_does_not_affect_stored_state(tmp_path, kind):
+    j = dict(_journals(tmp_path))[kind]
+    await j.create("t1", "subj.a", {"input": "hello"})
+    rec = await j.get("t1")
+    rec.status = "done"
+    rec.attempts = 99
+    fresh = await j.get("t1")
+    assert fresh.status == "running"
+    assert fresh.attempts == 0
+    await j.close()

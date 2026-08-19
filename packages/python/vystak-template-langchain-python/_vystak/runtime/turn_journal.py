@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import aiosqlite
@@ -68,6 +68,8 @@ class InMemoryTurnJournal(TurnJournal):
         self._boundaries: dict[tuple[str, str], int] = {}
 
     async def create(self, turn_id: str, stream_subject: str, request: Any) -> None:
+        if turn_id in self._records:
+            return
         self._records[turn_id] = TurnRecord(
             turn_id=turn_id,
             stream_subject=stream_subject,
@@ -80,25 +82,37 @@ class InMemoryTurnJournal(TurnJournal):
         )
 
     async def set_thread_id(self, turn_id: str, thread_id: str) -> None:
-        self._records[turn_id].thread_id = thread_id
+        rec = self._records.get(turn_id)
+        if rec is not None:
+            rec.thread_id = thread_id
 
     async def record_boundary(self, turn_id: str, checkpoint_id: str, seq: int) -> None:
+        rec = self._records.get(turn_id)
+        if rec is None:
+            return
         self._boundaries[(turn_id, checkpoint_id)] = seq
-        self._records[turn_id].boundary_seq = seq
+        rec.boundary_seq = seq
 
     async def set_last_seq(self, turn_id: str, seq: int) -> None:
-        self._records[turn_id].last_seq = seq
+        rec = self._records.get(turn_id)
+        if rec is not None:
+            rec.last_seq = seq
 
     async def set_status(self, turn_id: str, status: str) -> None:
-        self._records[turn_id].status = status
+        rec = self._records.get(turn_id)
+        if rec is not None:
+            rec.status = status
 
     async def bump_attempts(self, turn_id: str) -> int:
-        rec = self._records[turn_id]
+        rec = self._records.get(turn_id)
+        if rec is None:
+            return 0
         rec.attempts += 1
         return rec.attempts
 
     async def get(self, turn_id: str) -> TurnRecord | None:
-        return self._records.get(turn_id)
+        rec = self._records.get(turn_id)
+        return replace(rec) if rec is not None else None
 
     async def list_running(self) -> list[TurnRecord]:
         return [r for r in self._records.values() if r.status == "running"]
@@ -150,7 +164,7 @@ class SqliteTurnJournal(TurnJournal):
         conn = await self._ensure()
         await conn.execute(
             """
-            INSERT INTO detached_turns
+            INSERT OR IGNORE INTO detached_turns
                 (turn_id, stream_subject, thread_id, request_json,
                  status, last_seq, boundary_seq, attempts)
             VALUES (?, ?, NULL, ?, 'running', -1, -1, 0)
@@ -169,6 +183,14 @@ class SqliteTurnJournal(TurnJournal):
 
     async def record_boundary(self, turn_id: str, checkpoint_id: str, seq: int) -> None:
         conn = await self._ensure()
+        cur = await conn.execute(
+            "UPDATE detached_turns SET boundary_seq=?,"
+            " updated_at=CURRENT_TIMESTAMP WHERE turn_id=?",
+            (seq, turn_id),
+        )
+        if cur.rowcount == 0:
+            await conn.commit()
+            return
         await conn.execute(
             """
             INSERT INTO turn_boundaries (turn_id, checkpoint_id, seq)
@@ -177,11 +199,6 @@ class SqliteTurnJournal(TurnJournal):
                 seq = excluded.seq
             """,
             (turn_id, checkpoint_id, seq),
-        )
-        await conn.execute(
-            "UPDATE detached_turns SET boundary_seq=?,"
-            " updated_at=CURRENT_TIMESTAMP WHERE turn_id=?",
-            (seq, turn_id),
         )
         await conn.commit()
 
@@ -213,7 +230,7 @@ class SqliteTurnJournal(TurnJournal):
             "SELECT attempts FROM detached_turns WHERE turn_id=?", (turn_id,)
         )
         row = await cur.fetchone()
-        return row[0]
+        return row[0] if row is not None else 0
 
     async def get(self, turn_id: str) -> TurnRecord | None:
         conn = await self._ensure()
