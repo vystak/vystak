@@ -104,6 +104,18 @@ class NatsHttpBridge:
         # should cancel it outright rather than making every stop() pay
         # that wait (see `stop()`).
         self._redrive_task: asyncio.Task | None = None
+        # Snapshot of turn_ids the journal considered `running` *before*
+        # this process subscribed — i.e. leftovers from a prior process,
+        # nothing this process is handling live. Taken in `start()` right
+        # before `subscribe()`. The (delayed, readiness-gated) sweep only
+        # ever re-drives turn_ids in this set, so a `responses/createDetached`
+        # that arrives after subscribe — and is handled live by
+        # `_run_detached` concurrently with the sweep — can never also be
+        # picked up by the sweep. `None` (the default, used by every caller
+        # that invokes `redrive_unfinished()` directly without going through
+        # `start()`, e.g. tests) means "no restriction" — every `running`
+        # turn is eligible.
+        self._orphaned_turn_ids: set[str] | None = None
 
     async def start(self) -> None:
         """Connect to NATS, subscribe, and return. Subscription callbacks
@@ -123,6 +135,17 @@ class NatsHttpBridge:
         # avoid per-message connection setup. Bridge timeout exceeds
         # typical agent latency (LLM round-trips + tool calls).
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        # Snapshot the orphan set *before* subscribing: every row the
+        # journal considers `running` at this instant predates this
+        # process — nothing here can be handling it yet, since we haven't
+        # subscribed (and therefore can't have received a message) yet.
+        # This is the invariant the sweep relies on: it only ever touches
+        # turns that predate this process's subscribe, so it can never
+        # race a live `_run_detached` handling a turn that arrives after.
+        if self._journal is not None:
+            self._orphaned_turn_ids = {r.turn_id for r in await self._journal.list_running()}
+        else:
+            self._orphaned_turn_ids = set()
         self._sub = await self._nc.subscribe(
             self._subject,
             queue=self._queue_group,
@@ -702,17 +725,30 @@ class NatsHttpBridge:
         await self._stream_from_resume_endpoint(rec, start_seq=seq + 1, to_seq=to_seq)
 
     async def redrive_unfinished(self) -> int:
-        """Re-drive every turn the journal still considers `running` — a
+        """Re-drive turns the journal still considers `running` — a
         crash/restart mid-turn is the expected way to land here. Turns that
         have already exhausted `MAX_REDRIVE_ATTEMPTS` are given up on and
         marked failed instead of retried forever. Returns the number of
         turns actually re-driven (not counting turns that hit the cap or
         that raised mid-redrive — one broken turn must not abort the sweep
-        of the rest)."""
+        of the rest).
+
+        Only touches turns whose turn_id is in `self._orphaned_turn_ids` —
+        the pre-subscribe snapshot `start()` takes — when that snapshot is
+        set. This is what stops the sweep from racing a `_run_detached` that
+        picks up a fresh `responses/createDetached` after subscribe: that
+        turn's `running` row postdates the snapshot, so it's invisible here
+        no matter how long the (readiness-gated) sweep is delayed. `None`
+        (never called through `start()`, e.g. most tests) means every
+        `running` turn is eligible.
+        """
         if self._journal is None:
             return 0
+        orphans = self._orphaned_turn_ids
         count = 0
         for rec in await self._journal.list_running():
+            if orphans is not None and rec.turn_id not in orphans:
+                continue  # created after this process subscribed — not ours
             try:
                 if rec.attempts >= MAX_REDRIVE_ATTEMPTS:
                     await self._publish_synthetic_failure(

@@ -1,5 +1,6 @@
 import json
 
+import httpx
 import pytest
 from _vystak.runtime.nats_bridge import MAX_REDRIVE_ATTEMPTS
 from _vystak.runtime.turn_journal import InMemoryTurnJournal
@@ -292,3 +293,137 @@ async def test_redrive_hits_checkpoint_then_resume_with_the_right_thread_id(brid
     resume_req = next(r for r in bridge.requests if r["path"] == "/v1/_vystak/resume")
     assert resume_req["method"] == "POST"
     assert resume_req["json"] == {"thread_id": "resp_1"}
+
+
+# ---------------------------------------------------------------------------
+# Follow-up fix: the readiness-gated sweep can lag up to _wait_until_ready's
+# timeout behind subscribe(). Without a snapshot, a `responses/createDetached`
+# that arrives right after subscribe would create a `running` journal row the
+# delayed sweep could then pick up while `_run_detached` is concurrently
+# handling it live — both paths publishing into the same stream_subject and
+# writing last_seq/status for the same turn_id. `start()` snapshots the set
+# of `running` turn_ids *before* subscribing; the sweep only ever touches
+# turn_ids in that snapshot.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redrive_unfinished_skips_turns_outside_the_orphan_snapshot(bridge_factory):
+    journal = InMemoryTurnJournal()
+    await journal.create("orphan", "s.orphan", {})
+    await journal.set_thread_id("orphan", "resp_orphan")
+    await journal.create("live", "s.live", {})
+    await journal.set_thread_id("live", "resp_live")
+
+    bridge = bridge_factory(journal=journal, resume_checkpoint_id="ck-1")
+    # Simulate what `start()` does before subscribing: snapshot only the
+    # pre-existing "orphan" row. "live" was (hypothetically) created by a
+    # message that arrived after subscribe and must never be swept.
+    bridge._orphaned_turn_ids = {"orphan"}
+
+    count = await bridge.redrive_unfinished()
+
+    assert count == 1
+    assert (await journal.get("orphan")).attempts == 1
+    assert (await journal.get("live")).attempts == 0
+    assert (await journal.get("live")).status == "running"
+
+
+@pytest.mark.asyncio
+async def test_orphan_snapshot_via_real_start_excludes_post_subscribe_turns(monkeypatch):
+    """Drives the real start() -> snapshot -> subscribe -> background-sweep
+    seam (not just redrive_unfinished() in isolation): a pre-existing orphan
+    gets swept, a turn "created" during the subscribe call (simulating a
+    message arriving the instant subscribe opens) does not.
+    """
+    import nats
+    from _vystak.runtime.nats_bridge import NatsHttpBridge
+
+    journal = InMemoryTurnJournal()
+    await journal.create(
+        "orphan", "vystak.default.agents.hero.streams.conv1.orphan", {}
+    )
+    await journal.set_thread_id("orphan", "resp_orphan")
+
+    class _FakeSub:
+        async def unsubscribe(self) -> None:
+            return None
+
+    class _FakeJetStream:
+        def __init__(self) -> None:
+            self.published: list[bytes] = []
+
+        async def add_stream(self, cfg):  # noqa: ANN001
+            return None
+
+        async def update_stream(self, cfg):  # noqa: ANN001
+            return None
+
+        async def publish(self, subject, payload):  # noqa: ANN001
+            self.published.append(payload)
+
+    js = _FakeJetStream()
+
+    class _FakeNc:
+        async def subscribe(self, subject, queue=None, cb=None):  # noqa: ANN001
+            # A fresh inbound createDetached, arriving the instant this
+            # process starts listening — strictly after the pre-subscribe
+            # snapshot was taken.
+            await journal.create(
+                "live", "vystak.default.agents.hero.streams.conv1.live", {}
+            )
+            await journal.set_thread_id("live", "resp_live")
+            return _FakeSub()
+
+        def jetstream(self):
+            return js
+
+        async def close(self) -> None:
+            return None
+
+    async def _fake_connect(url, *args, **kwargs):  # noqa: ANN001
+        return _FakeNc()
+
+    monkeypatch.setattr(nats, "connect", _fake_connect)
+
+    checkpoint_thread_ids: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(200)
+        if request.url.path == "/v1/_vystak/checkpoint":
+            checkpoint_thread_ids.append(request.url.params.get("thread_id"))
+            return httpx.Response(200, json={"checkpoint_id": None})
+        return httpx.Response(
+            200, content=b"data: [DONE]\n\n", headers={"content-type": "text/event-stream"}
+        )
+
+    _real_async_client = httpx.AsyncClient
+
+    def _fake_async_client(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _real_async_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_async_client)
+
+    bridge = NatsHttpBridge(
+        nats_url="nats://ignored:4222",
+        subject="vystak.default.agents.hero.tasks",
+        queue_group="agents.hero",
+        local_url="http://localhost:8000/a2a",
+        local_base="http://localhost:8000",
+        journal=journal,
+    )
+    await bridge.start()
+    assert bridge._redrive_task is not None
+    await bridge._redrive_task  # drive the background sweep to completion
+
+    orphan = await journal.get("orphan")
+    live = await journal.get("live")
+
+    assert orphan.attempts == 1  # pre-existing orphan: swept
+    assert live.attempts == 0  # created after subscribe: never swept
+    assert live.status == "running"
+    # The sweep only ever looked up the pre-existing turn's checkpoint.
+    assert checkpoint_thread_ids == ["resp_orphan"]
+
+    await bridge.stop()
