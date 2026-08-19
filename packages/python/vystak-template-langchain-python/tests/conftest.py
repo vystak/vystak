@@ -97,11 +97,14 @@ def bridge_factory(monkeypatch):
         journal=None,
         sse_events=None,
         resume_checkpoint_id=None,
+        checkpoint_interrupted: bool = False,
         healthz_failures: int = 0,
+        sse_done: bool = True,
     ):
         events = sse_events or []
         lines = [f"data: {json.dumps(e)}\n\n" for e in events]
-        lines.append("data: [DONE]\n\n")
+        if sse_done:
+            lines.append("data: [DONE]\n\n")
         sse_bytes = "".join(lines).encode()
 
         requests: list[dict[str, Any]] = []
@@ -123,7 +126,13 @@ def bridge_factory(monkeypatch):
                     return httpx.Response(503)
                 return httpx.Response(200)
             if request.url.path == "/v1/_vystak/checkpoint":
-                return httpx.Response(200, json={"checkpoint_id": resume_checkpoint_id})
+                return httpx.Response(
+                    200,
+                    json={
+                        "checkpoint_id": resume_checkpoint_id,
+                        "interrupted": checkpoint_interrupted,
+                    },
+                )
             return httpx.Response(
                 200, content=sse_bytes, headers={"content-type": "text/event-stream"}
             )
@@ -141,6 +150,24 @@ def bridge_factory(monkeypatch):
         bridge._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         bridge.published_payloads = js.published_payloads
         bridge.requests = requests
+        bridge.replies = []
+
+        async def _handle_envelope_for_test(envelope: dict, reply_subject: str) -> None:
+            """Test seam: dispatch a JSON-RPC envelope through the bridge's
+            real inbound path (`_forward`, the method containing the
+            `responses/createDetached` branch) with a stub NATS message, and
+            record every raw payload published to `reply_subject` onto
+            `bridge.replies` (decoded to str) for assertions."""
+            msg = SimpleNamespace(
+                data=json.dumps(envelope).encode(), reply=reply_subject, subject=""
+            )
+            before = len(bridge._nc.published)
+            await bridge._forward(msg)
+            for subject, payload in bridge._nc.published[before:]:
+                if subject == reply_subject:
+                    bridge.replies.append(payload.decode())
+
+        bridge._handle_envelope_for_test = _handle_envelope_for_test
         return bridge
 
     return _make

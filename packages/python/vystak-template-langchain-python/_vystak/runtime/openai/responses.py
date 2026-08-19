@@ -208,6 +208,25 @@ class ResponsesHandler:
             yield "data: [DONE]\n\n"
             return
 
+        # A node that calls `interrupt()` doesn't raise: LangGraph catches
+        # `GraphInterrupt` internally and the astream loop above just ends,
+        # indistinguishable (from here) from a normal completion. Ask the
+        # graph directly — a non-empty `.next` means a step is pending
+        # (durably parked, not finished) — and end the stream here with no
+        # terminal event so the durable-execution bridge's park detection
+        # (`_consume_response_stream`) can tell the difference from a
+        # genuine truncation. Guarded with `getattr`: fakes used by
+        # non-interrupt streaming tests don't implement `aget_state`, and
+        # that must keep behaving exactly as before (never interrupted).
+        aget_state = getattr(self.graph, "aget_state", None)
+        if aget_state is not None:
+            try:
+                snapshot = await aget_state(config)
+            except Exception:  # noqa: BLE001 — state lookup is best-effort here
+                snapshot = None
+            if snapshot is not None and snapshot.next:
+                return
+
         if self._observer is not None:
             for checkpoint_id in self._observer.drain(thread_id):
                 yield _sse({

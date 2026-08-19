@@ -245,6 +245,12 @@ class NatsHttpBridge:
             if method == "responses/createDetached":
                 await self._handle_responses_create_detached(envelope, reply_subject)
                 return
+            if method == "responses/turnStatus":
+                await self._handle_turn_status(envelope, reply_subject)
+                return
+            if method == "responses/resumeDetached":
+                await self._handle_resume_detached(envelope, reply_subject)
+                return
 
             # Extract the upstream W3C traceparent (if any) so the local
             # /a2a call continues the same trace. The publisher
@@ -462,6 +468,71 @@ class NatsHttpBridge:
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
 
+    async def _handle_turn_status(self, envelope: dict[str, Any], reply_subject: str) -> None:
+        """`responses/turnStatus {turn_id}` — a pure journal lookup, no HTTP
+        hop. `unknown` covers both a never-seen turn_id and a journal-less
+        bridge (HTTP transport doesn't build one)."""
+        params = envelope.get("params") or {}
+        rec = await self._journal.get(params.get("turn_id", "")) if self._journal else None
+        await self._publish_result(
+            reply_subject, envelope.get("id"),
+            {"status": rec.status if rec else "unknown"},
+        )
+
+    async def _handle_resume_detached(
+        self, envelope: dict[str, Any], reply_subject: str
+    ) -> None:
+        """`responses/resumeDetached {turn_id, resume}` — ack immediately,
+        then continue a parked turn from where it left off. Unlike a
+        crash re-drive, nothing was lost here (the graph is sitting at an
+        `interrupt()`, checkpointed by LangGraph itself), so there is no
+        rewind marker to publish and no seq to discard — just append from
+        `rec.last_seq + 1` onward."""
+        params = envelope.get("params") or {}
+        turn_id = params.get("turn_id", "")
+        rec = await self._journal.get(turn_id) if self._journal is not None else None
+        if rec is None:
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message=f"unknown turn_id: {turn_id}",
+                request_id=envelope.get("id"),
+            )
+            return
+        if self._journal is not None:
+            await self._journal.set_status(turn_id, "running")
+        await self._publish_result(
+            reply_subject, envelope.get("id"), {"turn_id": turn_id}
+        )
+        task = asyncio.create_task(
+            self._stream_from_resume_endpoint(
+                rec,
+                start_seq=rec.last_seq + 1,
+                # No rewind happened, so the original `response.created`
+                # published before the park is still what every consumer
+                # retains. `resume_stream` always re-emits one — it's a
+                # duplicate here (unlike a post-rewind redrive where it can
+                # be the only surviving copy) — so pass any `to_seq >= 0`
+                # to keep `_consume_response_stream` suppressing it. `0` is
+                # a pure boolean sentinel here, not a real rewind target
+                # (resumeDetached never publishes a `vystak.turn.rewind`).
+                to_seq=0,
+                resume=params.get("resume"),
+            )
+        )
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+
+    async def _publish_result(
+        self, reply_subject: str, request_id: Any, result: Any
+    ) -> None:
+        """Publish a successful JSON-RPC reply. No-op when the inbound
+        message had no reply subject (fire-and-forget)."""
+        if not reply_subject or self._nc is None:
+            return
+        reply = {"jsonrpc": "2.0", "id": request_id, "result": result}
+        await self._nc.publish(reply_subject, json.dumps(reply).encode())
+
     @staticmethod
     def _make_publisher(js: Any, stream_subject: str, start_seq: int = 0) -> Any:
         """Build an async `publish(event) -> int` closure over a JetStream
@@ -496,9 +567,18 @@ class NatsHttpBridge:
         published), captures `thread_id` from `response.created`, publishes
         every other event to JetStream, and journals `last_seq` / terminal
         status after each publish. A stream that ends without `[DONE]` or a
-        terminal event gets a synthetic `response.failed` so consumers still
-        terminate — the turn is left in a re-drive-eligible state, not
-        stamped failed, by the callers (see their comments).
+        terminal event is ambiguous: it could be a graph that just parked on
+        `interrupt()` (nothing wrong — the turn is waiting on
+        `responses/resumeDetached`) or a genuine crash/truncation. This is
+        resolved by asking the agent's own checkpoint state
+        (`GET /v1/_vystak/checkpoint`): `interrupted: True` means `next` is
+        non-empty on the LangGraph state — the graph is durably parked, so
+        the row is stamped `parked` and *no* terminal event is published
+        (the panel's `turnStatus`/`resumeDetached` poll is what keeps
+        consumers waiting, not a stream event). Otherwise the row is stamped
+        `failed` and a synthetic `response.failed` is published so consumers
+        still terminate. This only runs when a journal is configured — an
+        HTTP-only bridge has neither a journal nor anything to park.
 
         `suppress_created`: `resume_stream` always re-emits a
         `response.created` for the resumed thread. On a live detached run
@@ -511,6 +591,7 @@ class NatsHttpBridge:
         the same id).
         """
         last_seq: int | None = None
+        saw_terminal_event = False
         async for line in resp.aiter_lines():
             if not line.startswith("data: "):
                 continue
@@ -537,15 +618,35 @@ class NatsHttpBridge:
                     continue  # duplicate of the pre-crash original; drop it
 
             last_seq = await publish(event)
+            event_type = event.get("type")
+            if event_type in ("response.completed", "response.failed"):
+                # Tracked regardless of journal presence — an HTTP-only
+                # bridge (no journal) must not fall into the truncated-
+                # stream tail below just because it has nowhere to record
+                # status.
+                saw_terminal_event = True
             if self._journal is not None:
                 await self._journal.set_last_seq(turn_id, last_seq)
-                if event.get("type") == "response.completed":
+                if event_type == "response.completed":
                     await self._journal.set_status(turn_id, "done")
-                elif event.get("type") == "response.failed":
+                elif event_type == "response.failed":
                     await self._journal.set_status(turn_id, "failed")
 
-        # Truncated stream (no [DONE], no terminal event): make sure
-        # consumers still terminate.
+        if saw_terminal_event:
+            # Stream ended right after a terminal event without a trailing
+            # `[DONE]` — status already recorded above; nothing left to do.
+            return
+
+        if self._journal is not None:
+            rec = await self._journal.get(turn_id)
+            state = await self._agent_checkpoint_state(rec.thread_id if rec else None)
+            if state.get("interrupted"):
+                await self._journal.set_status(turn_id, "parked")
+                return  # graph is durably parked; no terminal event to publish
+            await self._journal.set_status(turn_id, "failed")
+
+        # Truncated stream (no [DONE], no terminal event, and not a park):
+        # make sure consumers still terminate.
         final_seq = await publish(_failed_event("agent stream ended without a terminal event"))
         if self._journal is not None:
             await self._journal.set_last_seq(turn_id, final_seq)
@@ -615,11 +716,13 @@ class NatsHttpBridge:
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_failed_publish")
 
-    async def _current_checkpoint_id(self, thread_id: str | None) -> str | None:
-        """Ask the local agent for the checkpoint LangGraph would resume
-        from for this thread — via `GET /v1/_vystak/checkpoint`."""
+    async def _agent_checkpoint_state(self, thread_id: str | None) -> dict[str, Any]:
+        """Ask the local agent about a thread's checkpoint state via
+        `GET /v1/_vystak/checkpoint` — `{"checkpoint_id": ..., "interrupted": ...}`.
+        Returns `{}` (falsy on every key) when there's no thread to ask
+        about or the call fails, so callers can `.get(...)` unconditionally."""
         if not thread_id:
-            return None
+            return {}
         assert self._http is not None
         try:
             resp = await self._http.get(
@@ -627,10 +730,15 @@ class NatsHttpBridge:
                 params={"thread_id": thread_id},
             )
             resp.raise_for_status()
-            return resp.json().get("checkpoint_id")
+            return resp.json()
         except Exception:  # noqa: BLE001
-            logger.exception("nats_bridge.current_checkpoint_lookup_failed")
-            return None
+            logger.exception("nats_bridge.checkpoint_state_lookup_failed")
+            return {}
+
+    async def _current_checkpoint_id(self, thread_id: str | None) -> str | None:
+        """Ask the local agent for the checkpoint LangGraph would resume
+        from for this thread — via `GET /v1/_vystak/checkpoint`."""
+        return (await self._agent_checkpoint_state(thread_id)).get("checkpoint_id")
 
     async def _publish_seq(self, stream_subject: str, seq: int, event: dict) -> None:
         js = self._nc.jetstream()
@@ -640,7 +748,7 @@ class NatsHttpBridge:
         await self._publish_seq(rec.stream_subject, rec.last_seq + 1, _failed_event(message))
 
     async def _stream_from_resume_endpoint(
-        self, rec: TurnRecord, *, start_seq: int, to_seq: int
+        self, rec: TurnRecord, *, start_seq: int, to_seq: int, resume: Any = None
     ) -> None:
         """POST `/v1/_vystak/resume` and consume the SSE stream through the
         same loop `_run_detached` uses, publishing at `start_seq` onward.
@@ -649,7 +757,17 @@ class NatsHttpBridge:
         `>= 0`, the original pre-crash `response.created` survived the
         rewind and the one `resume_stream` re-emits is a duplicate to drop;
         when `< 0` the rewind discarded everything and the re-emitted one
-        is the only copy consumers will retain, so it must publish.
+        is the only copy consumers will retain, so it must publish. A
+        `responses/resumeDetached` call (see `_handle_resume_detached`)
+        publishes no rewind at all — it passes a `to_seq >= 0` purely to
+        select the "duplicate, drop it" branch, since the original
+        `response.created` was never discarded on a park.
+
+        `resume`: `None` replays the pending step from its last checkpoint
+        (a crash re-drive); any other value drives a pending `interrupt()`
+        via `langgraph.types.Command(resume=...)` on the agent side. Only
+        included in the POST body when not `None`, so a plain re-drive's
+        request is unchanged from before this parameter existed.
         """
         try:
             js = self._nc.jetstream()
@@ -658,11 +776,14 @@ class NatsHttpBridge:
             return
         publish = self._make_publisher(js, rec.stream_subject, start_seq)
         assert self._http is not None
+        body: dict[str, Any] = {"thread_id": rec.thread_id}
+        if resume is not None:
+            body["resume"] = resume
         try:
             async with self._http.stream(
                 "POST",
                 f"{self._local_base}/v1/_vystak/resume",
-                json={"thread_id": rec.thread_id},
+                json=body,
                 timeout=httpx.Timeout(None, connect=10.0, read=300.0),
             ) as resp:
                 if resp.status_code != 200:

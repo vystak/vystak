@@ -284,8 +284,19 @@ def build_agent_app(agent: Any) -> FastAPI:
         config = {"configurable": {"thread_id": thread_id}}
         snapshot = await responses_handler.graph.aget_state(config)
         checkpoint_id = None
-        if snapshot is not None and snapshot.config:
-            checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
-        return {"checkpoint_id": checkpoint_id}
+        interrupted = False
+        if snapshot is not None:
+            if snapshot.config:
+                checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
+            # `.next` lists the pending nodes LangGraph would run on the next
+            # step. Non-empty means the graph is durably parked mid-step —
+            # either it called `interrupt()`, or (equivalently, from this
+            # endpoint's perspective) a resume is otherwise pending. Empty
+            # means either "never run" or "ran to completion" — the bridge's
+            # park-detection caller (`_consume_response_stream`) only ever
+            # asks this while a stream just ended with no terminal event, so
+            # "never run" isn't a real case there.
+            interrupted = bool(snapshot.next)
+        return {"checkpoint_id": checkpoint_id, "interrupted": interrupted}
 
     return app
