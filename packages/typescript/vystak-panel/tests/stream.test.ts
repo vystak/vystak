@@ -46,45 +46,23 @@ async function collect(stream: ReadableStream<unknown>): Promise<unknown[]> {
   return out;
 }
 
-// Renders the visible assistant text a `useChat`-style consumer would show:
-// a `start` chunk begins a fresh assistant message, so any text accumulated
-// before it (e.g. before a mid-stream `reset`) is discarded.
-function renderText(chunks: unknown[]): string {
-  let text = '';
-  for (const c of chunks) {
-    if (typeof c !== 'object' || c === null) continue;
-    const chunk = c as { type?: string; delta?: string };
-    if (chunk.type === 'start') {
-      text = '';
-    } else if (chunk.type === 'text-delta') {
-      text += chunk.delta ?? '';
-    }
-  }
-  return text;
-}
-
 describe('panelStreamToUIChunks', () => {
-  it('clears in-flight text on reset', async () => {
+  it('emits a data-reset marker on a reset frame', async () => {
     const chunks = await collect(
       panelStreamToUIChunks(
-        sseBody(
-          { type: 'delta', text: 'stale' },
-          { type: 'reset' },
-          { type: 'delta', text: 'fresh' },
-        ),
+        sseBody({ type: 'delta', text: 'stale' }, { type: 'reset' }, { type: 'delta', text: 'fresh' }),
       ),
     );
-    expect(renderText(chunks)).toBe('fresh');
+    expect(chunks).toContainEqual({ type: 'data-reset', data: {} });
   });
 
-  it('passes through streams with no reset unchanged', async () => {
-    const chunks = await collect(
-      panelStreamToUIChunks(sseBody({ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' })),
-    );
-    expect(renderText(chunks)).toBe('ab');
-  });
-
-  it('emits a fresh start and reopens the base text id after reset', async () => {
+  // The marker must land *after* a text-end for whatever was open, and the
+  // next delta must open a brand-new text part (not resume the pre-reset
+  // one) — see the comment on `visiblePartsAfterReset` in lib/messageParts.ts
+  // for why: reusing the pre-reset text id would let a post-reset delta
+  // mutate a part that sits *before* the marker, which the client's
+  // post-marker render filter would then never show at all.
+  it('closes the open text part and opens a fresh one around the reset marker', async () => {
     const chunks = await collect(
       panelStreamToUIChunks(
         sseBody(
@@ -100,12 +78,19 @@ describe('panelStreamToUIChunks', () => {
       { type: 'text-start', id: 'panel-text' },
       { type: 'text-delta', id: 'panel-text', delta: 'stale' },
       { type: 'text-end', id: 'panel-text' },
-      { type: 'start' },
+      { type: 'data-reset', data: {} },
       { type: 'text-start', id: 'panel-text' },
       { type: 'text-delta', id: 'panel-text', delta: 'fresh' },
       { type: 'text-end', id: 'panel-text' },
       { type: 'finish' },
     ]);
+  });
+
+  it('passes through streams with no reset unchanged', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(sseBody({ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' })),
+    );
+    expect(chunks).not.toContainEqual(expect.objectContaining({ type: 'data-reset' }));
   });
 
   it('maps deltas to a text part between start and finish', async () => {

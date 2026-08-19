@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mapPersistedParts } from '../lib/messageParts';
+import type { UIMessage } from 'ai';
+import { mapPersistedParts, visiblePartsAfterReset } from '../lib/messageParts';
 import type { MessagePart } from '../lib/types';
+
+type UIPart = UIMessage['parts'][number];
 
 describe('mapPersistedParts', () => {
   it('falls back to a single text part built from content when parts is null', () => {
@@ -96,5 +99,40 @@ describe('mapPersistedParts', () => {
     ];
     const mapped = mapPersistedParts(parts, '');
     expect(mapped.map(p => p.type)).toEqual(['text', 'dynamic-tool', 'text']);
+  });
+});
+
+describe('visiblePartsAfterReset', () => {
+  it('returns everything unchanged when there is no reset marker', () => {
+    const parts: UIPart[] = [
+      { type: 'text', text: 'a' },
+      { type: 'text', text: 'b' },
+    ];
+    expect(visiblePartsAfterReset(parts)).toEqual(parts);
+  });
+
+  it('drops everything up to and including the reset marker', () => {
+    const parts: UIPart[] = [
+      { type: 'text', text: 'stale' },
+      { type: 'data-reset', data: {} },
+      { type: 'text', text: 'fresh' },
+    ];
+    expect(visiblePartsAfterReset(parts)).toEqual([{ type: 'text', text: 'fresh' }]);
+  });
+
+  it('keeps only what follows the last of multiple reset markers', () => {
+    const parts: UIPart[] = [
+      { type: 'text', text: 'stale-1' },
+      { type: 'data-reset', data: {} },
+      { type: 'text', text: 'stale-2' },
+      { type: 'data-reset', data: {} },
+      { type: 'text', text: 'fresh' },
+    ];
+    expect(visiblePartsAfterReset(parts)).toEqual([{ type: 'text', text: 'fresh' }]);
+  });
+
+  it('returns an empty array when the marker is the last part', () => {
+    const parts: UIPart[] = [{ type: 'text', text: 'stale' }, { type: 'data-reset', data: {} }];
+    expect(visiblePartsAfterReset(parts)).toEqual([]);
   });
 });

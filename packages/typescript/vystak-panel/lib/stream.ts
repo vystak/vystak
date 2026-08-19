@@ -116,16 +116,26 @@ export function panelStreamToUIChunks(
           }
         } else if (payload.type === 'reset') {
           // A resumed turn rewinds and re-emits its retained prefix from
-          // scratch. Close out (and discard) whatever text/tool state was
-          // in flight, then emit the same chunk sequence a fresh resume
-          // attach produces — a new 'start' followed by a text part back at
-          // the base id — so the client renders the re-emitted frames as a
-          // brand-new assistant message instead of appending after stale
-          // content.
+          // scratch. The AI SDK's UIMessageChunk protocol has no chunk that
+          // clears an in-progress assistant message's parts — 'start' only
+          // touches id/metadata, and 'text-start' always appends a new part
+          // rather than replacing one (verified against the installed
+          // ai@5.0.220 processUIMessageStream). So instead of trying to
+          // erase state we can't reach, drop a marker data part into the
+          // stream: the client (components/chat.tsx) renders only the parts
+          // that come after the last 'data-reset' marker in a message.
+          //
+          // Close (and discard) any text part that was open when the reset
+          // arrived *before* emitting the marker, and reset this adapter's
+          // own run bookkeeping. Without this, a post-reset delta would
+          // resume writing into the still-open pre-reset text part (the AI
+          // SDK keys deltas by id via activeTextParts) — mutating content
+          // that sits *before* the marker in the parts array, which the
+          // client's post-marker filter would then never render at all.
           closeTextIfOpen();
           textRunCount = 0;
           textId = TEXT_ID_BASE;
-          controller.enqueue({ type: 'start' });
+          controller.enqueue({ type: 'data-reset', data: {} });
         }
         // 'done' carries persistence ids the UI refetches via the API.
       };
