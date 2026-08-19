@@ -275,4 +275,17 @@ def build_agent_app(agent: Any) -> FastAPI:
             media_type="text/event-stream",
         )
 
+    # Internal route the durable-execution bridge GETs on startup to find
+    # which checkpoint LangGraph would actually resume a thread from, so a
+    # re-drive rewinds to the right journaled seq. Not advertised on the
+    # agent card.
+    @app.get("/v1/_vystak/checkpoint")
+    async def _vystak_checkpoint(thread_id: str):
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await responses_handler.graph.aget_state(config)
+        checkpoint_id = None
+        if snapshot is not None and snapshot.config:
+            checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
+        return {"checkpoint_id": checkpoint_id}
+
     return app

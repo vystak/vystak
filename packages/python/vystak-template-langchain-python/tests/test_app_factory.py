@@ -159,6 +159,43 @@ def test_app_resume_requires_thread_id():
     assert r.status_code == 400
 
 
+def test_app_checkpoint_route_exists_and_is_not_on_agent_card():
+    app = build_agent_app(_agent())
+    routes = [r.path for r in app.routes]
+    assert "/v1/_vystak/checkpoint" in routes
+
+    client = TestClient(app)
+    card = client.get("/.well-known/agent.json").json()
+    assert "_vystak/checkpoint" not in str(card)
+
+
+def test_app_checkpoint_route_returns_null_for_unseen_thread():
+    app = build_agent_app(_agent())
+    with TestClient(app) as client:
+        r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "never-seen"})
+    assert r.status_code == 200
+    assert r.json() == {"checkpoint_id": None}
+
+
+def test_app_checkpoint_route_reflects_a_stored_checkpoint():
+    """Exercises the id-extraction branch (`snapshot.config` non-empty)
+    directly against a fake graph, without a real LLM round-trip — mirrors
+    how `_run_detached`'s SSE consumption is tested against fakes rather
+    than a live model."""
+    from _vystak.runtime.app_factory import build_agent_app
+
+    app = build_agent_app(_agent())
+    with TestClient(app) as client:
+        app.state.graph.aget_state = AsyncMock(
+            return_value=SimpleNamespace(
+                config={"configurable": {"checkpoint_id": "ck-9"}}
+            )
+        )
+        r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "resp_ck_1"})
+    assert r.status_code == 200
+    assert r.json() == {"checkpoint_id": "ck-9"}
+
+
 def test_app_builds_with_sqlite_sessions_config():
     """Agent with sessions: sqlite must build without TypeError.
 

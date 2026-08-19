@@ -34,14 +34,40 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 if TYPE_CHECKING:
-    from _vystak.runtime.turn_journal import TurnJournal
+    from _vystak.runtime.turn_journal import TurnJournal, TurnRecord
 
 logger = logging.getLogger("vystak.runtime.nats_bridge")
+
+# Caps how many times a single turn will be re-driven after a restart before
+# it's given up on and marked failed. Bounds a permanently-broken turn (e.g.
+# one whose resume endpoint always errors) from being retried forever.
+MAX_REDRIVE_ATTEMPTS = 3
+
+_DATA_DIR = "/data"
+
+
+def resolve_turns_path() -> str:
+    """Resolve the durable turn-journal's SQLite path.
+
+    The journal is always SQLite (independent of whichever engine the
+    session checkpointer uses) at `/data/turns.db` in a deployed container.
+    Chain: `VYSTAK_TURNS_PATH` -> `/data/turns.db` (when `/data` exists and
+    is writable) -> a temp-dir path (unit tests, dev machines, and any
+    platform that mounts no volume). Mirrors `resolve_sessions_path` in
+    `store.py`.
+    """
+    override = os.environ.get("VYSTAK_TURNS_PATH")
+    if override:
+        return override
+    if os.path.isdir(_DATA_DIR) and os.access(_DATA_DIR, os.W_OK):
+        return os.path.join(_DATA_DIR, "turns.db")
+    return os.path.join(tempfile.gettempdir(), "vystak-turns.db")
 
 
 class NatsHttpBridge:
@@ -91,6 +117,16 @@ class NatsHttpBridge:
         # avoid per-message connection setup. Bridge timeout exceeds
         # typical agent latency (LLM round-trips + tool calls).
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        # Re-drive any turns a prior process left mid-flight (crash/restart),
+        # after the NATS connection is live but *before* subscribing — so
+        # nothing new can be assigned to this bridge and race the sweep's
+        # own reads/writes of the same journal rows.
+        try:
+            redriven = await self.redrive_unfinished()
+            if redriven:
+                logger.info("nats_bridge.redrove_unfinished count=%d", redriven)
+        except Exception:  # noqa: BLE001 — startup must not crash on this
+            logger.exception("nats_bridge.redrive_unfinished_failed")
         self._sub = await self._nc.subscribe(
             self._subject,
             queue=self._queue_group,
@@ -364,6 +400,77 @@ class NatsHttpBridge:
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
 
+    @staticmethod
+    def _make_publisher(js: Any, stream_subject: str, start_seq: int = 0) -> Any:
+        """Build an async `publish(event) -> int` closure over a JetStream
+        publish sequence, starting at `start_seq`. Returns the seq the event
+        was assigned (i.e. "post-increments": the counter advances after
+        each call, but the return value is the seq just used) so callers can
+        journal `last_seq` and checkpoint boundaries against it.
+        """
+        seq = start_seq
+
+        async def publish(event: dict) -> int:
+            nonlocal seq
+            assigned = seq
+            await js.publish(stream_subject, json.dumps({"seq": seq, "event": event}).encode())
+            seq += 1
+            return assigned
+
+        return publish
+
+    async def _consume_response_stream(
+        self, resp: httpx.Response, turn_id: str, publish: Any
+    ) -> None:
+        """Shared SSE-consumption loop for both a live detached run
+        (`_run_detached`) and a re-driven resume (`_stream_from_resume_endpoint`).
+
+        Handles `vystak.checkpoint` markers (record boundary, never
+        published), captures `thread_id` from `response.created`, publishes
+        every other event to JetStream, and journals `last_seq` / terminal
+        status after each publish. A stream that ends without `[DONE]` or a
+        terminal event gets a synthetic `response.failed` so consumers still
+        terminate — the turn is left in a re-drive-eligible state, not
+        stamped failed, by the callers (see their comments).
+        """
+        last_seq: int | None = None
+        async for line in resp.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                return
+            try:
+                event = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            if event.get("type") == "vystak.checkpoint":
+                if self._journal is not None and last_seq is not None:
+                    await self._journal.record_boundary(
+                        turn_id, event.get("checkpoint_id", ""), last_seq
+                    )
+                continue  # internal: never published to JetStream
+
+            if event.get("type") == "response.created":
+                response_id = event.get("response", {}).get("id", "")
+                if response_id and self._journal is not None:
+                    await self._journal.set_thread_id(turn_id, response_id)
+
+            last_seq = await publish(event)
+            if self._journal is not None:
+                await self._journal.set_last_seq(turn_id, last_seq)
+                if event.get("type") == "response.completed":
+                    await self._journal.set_status(turn_id, "done")
+                elif event.get("type") == "response.failed":
+                    await self._journal.set_status(turn_id, "failed")
+
+        # Truncated stream (no [DONE], no terminal event): make sure
+        # consumers still terminate.
+        final_seq = await publish(_failed_event("agent stream ended without a terminal event"))
+        if self._journal is not None:
+            await self._journal.set_last_seq(turn_id, final_seq)
+
     async def _run_detached(
         self, request: dict[str, Any], stream_subject: str, turn_id: str
     ) -> None:
@@ -374,12 +481,7 @@ class NatsHttpBridge:
             # there's no subject to carry a failure event to.
             logger.exception("nats_bridge.detached_jetstream_failed")
             return
-        seq = 0
-
-        async def publish(event: dict) -> None:
-            nonlocal seq
-            await js.publish(stream_subject, json.dumps({"seq": seq, "event": event}).encode())
-            seq += 1
+        publish = self._make_publisher(js, stream_subject)
 
         try:
             await _ensure_turn_stream(js, _stream_base_of_turn_subject(stream_subject))
@@ -390,14 +492,14 @@ class NatsHttpBridge:
             # a best-effort attempt so the consumer doesn't hang until its
             # idle timeout.
             try:
-                await publish(_failed_event(str(e)))
+                seq = await publish(_failed_event(str(e)))
                 if self._journal is not None:
                     # Not stamped `failed` here: Task 7 owns re-drive
                     # semantics via list_running(), and this is exactly
                     # the kind of transient/infra failure re-drive exists
                     # to recover — leaving status `running` keeps the
                     # turn eligible for that sweep.
-                    await self._journal.set_last_seq(turn_id, seq - 1)
+                    await self._journal.set_last_seq(turn_id, seq)
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_ensure_stream_publish_failed")
             return
@@ -413,59 +515,130 @@ class NatsHttpBridge:
                 timeout=httpx.Timeout(None, connect=10.0, read=300.0),
             ) as resp:
                 if resp.status_code != 200:
-                    await publish(_failed_event(f"local /v1/responses returned {resp.status_code}"))
+                    seq = await publish(
+                        _failed_event(f"local /v1/responses returned {resp.status_code}")
+                    )
                     # Left `running` — see the ensure-stream failure comment
                     # above; this is a re-drive candidate, not a terminal
                     # failure.
                     if self._journal is not None:
-                        await self._journal.set_last_seq(turn_id, seq - 1)
+                        await self._journal.set_last_seq(turn_id, seq)
                     return
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        return
-                    try:
-                        event = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if event.get("type") == "vystak.checkpoint":
-                        if self._journal is not None:
-                            await self._journal.record_boundary(
-                                turn_id, event.get("checkpoint_id", ""), seq - 1
-                            )
-                        continue  # internal: never published to JetStream
-
-                    if event.get("type") == "response.created":
-                        response_id = event.get("response", {}).get("id", "")
-                        if response_id and self._journal is not None:
-                            await self._journal.set_thread_id(turn_id, response_id)
-
-                    await publish(event)
-                    if self._journal is not None:
-                        await self._journal.set_last_seq(turn_id, seq - 1)
-                        if event.get("type") == "response.completed":
-                            await self._journal.set_status(turn_id, "done")
-                        elif event.get("type") == "response.failed":
-                            await self._journal.set_status(turn_id, "failed")
-                # Truncated stream (no [DONE], no terminal event): make sure
-                # consumers still terminate. Left `running` in the journal —
-                # a re-drive candidate, not a terminal failure (see above).
-                await publish(_failed_event("agent stream ended without a terminal event"))
-                if self._journal is not None:
-                    await self._journal.set_last_seq(turn_id, seq - 1)
+                await self._consume_response_stream(resp, turn_id, publish)
         except Exception as e:  # noqa: BLE001 — the failure must reach consumers
             logger.exception("nats_bridge.detached_failed")
             try:
-                await publish(_failed_event(str(e)))
+                seq = await publish(_failed_event(str(e)))
                 # Left `running` — transient/infra failure, re-drive
                 # candidate (see above).
                 if self._journal is not None:
-                    await self._journal.set_last_seq(turn_id, seq - 1)
+                    await self._journal.set_last_seq(turn_id, seq)
             except Exception:  # noqa: BLE001 — nothing left to do
                 logger.exception("nats_bridge.detached_failed_publish")
+
+    async def _current_checkpoint_id(self, thread_id: str | None) -> str | None:
+        """Ask the local agent for the checkpoint LangGraph would resume
+        from for this thread — via `GET /v1/_vystak/checkpoint`."""
+        if not thread_id:
+            return None
+        assert self._http is not None
+        try:
+            resp = await self._http.get(
+                f"{self._local_base}/v1/_vystak/checkpoint",
+                params={"thread_id": thread_id},
+            )
+            resp.raise_for_status()
+            return resp.json().get("checkpoint_id")
+        except Exception:  # noqa: BLE001
+            logger.exception("nats_bridge.current_checkpoint_lookup_failed")
+            return None
+
+    async def _publish_seq(self, stream_subject: str, seq: int, event: dict) -> None:
+        js = self._nc.jetstream()
+        await js.publish(stream_subject, json.dumps({"seq": seq, "event": event}).encode())
+
+    async def _publish_synthetic_failure(self, rec: TurnRecord, message: str) -> None:
+        await self._publish_seq(rec.stream_subject, rec.last_seq + 1, _failed_event(message))
+
+    async def _stream_from_resume_endpoint(self, rec: TurnRecord, *, start_seq: int) -> None:
+        """POST `/v1/_vystak/resume` and consume the SSE stream through the
+        same loop `_run_detached` uses, publishing at `start_seq` onward."""
+        try:
+            js = self._nc.jetstream()
+        except Exception:
+            logger.exception("nats_bridge.redrive_jetstream_failed")
+            return
+        publish = self._make_publisher(js, rec.stream_subject, start_seq)
+        assert self._http is not None
+        try:
+            async with self._http.stream(
+                "POST",
+                f"{self._local_base}/v1/_vystak/resume",
+                json={"thread_id": rec.thread_id},
+                timeout=httpx.Timeout(None, connect=10.0, read=300.0),
+            ) as resp:
+                if resp.status_code != 200:
+                    seq = await publish(
+                        _failed_event(f"local /v1/_vystak/resume returned {resp.status_code}")
+                    )
+                    if self._journal is not None:
+                        await self._journal.set_last_seq(rec.turn_id, seq)
+                    return
+                await self._consume_response_stream(resp, rec.turn_id, publish)
+        except Exception as e:  # noqa: BLE001 — the failure must reach consumers
+            logger.exception("nats_bridge.redrive_stream_failed")
+            try:
+                seq = await publish(_failed_event(str(e)))
+                if self._journal is not None:
+                    await self._journal.set_last_seq(rec.turn_id, seq)
+            except Exception:  # noqa: BLE001 — nothing left to do
+                logger.exception("nats_bridge.redrive_stream_failed_publish")
+
+    async def _redrive_one(self, rec: TurnRecord) -> None:
+        if not rec.thread_id:
+            # response.created never arrived before the crash: there's no
+            # thread the resume endpoint can drive, and never will be (a
+            # fresh run would mint a new thread_id, not reuse this turn_id).
+            # Give up immediately rather than publish a rewind marker for a
+            # resume that's guaranteed to 400.
+            await self._publish_synthetic_failure(
+                rec, "turn crashed before a thread_id was captured; cannot resume"
+            )
+            if self._journal is not None:
+                await self._journal.set_status(rec.turn_id, "failed")
+            return
+        checkpoint_id = await self._current_checkpoint_id(rec.thread_id)
+        to_seq = None
+        if self._journal is not None and checkpoint_id is not None:
+            to_seq = await self._journal.seq_for_checkpoint(rec.turn_id, checkpoint_id)
+        if to_seq is None:
+            to_seq = rec.boundary_seq
+        seq = rec.last_seq + 1
+        await self._publish_seq(
+            rec.stream_subject, seq, {"type": "vystak.turn.rewind", "to_seq": to_seq}
+        )
+        await self._stream_from_resume_endpoint(rec, start_seq=seq + 1)
+
+    async def redrive_unfinished(self) -> int:
+        """Re-drive every turn the journal still considers `running` — a
+        crash/restart mid-turn is the expected way to land here. Turns that
+        have already exhausted `MAX_REDRIVE_ATTEMPTS` are given up on and
+        marked failed instead of retried forever. Returns the number of
+        turns actually re-driven (not counting turns that hit the cap)."""
+        if self._journal is None:
+            return 0
+        count = 0
+        for rec in await self._journal.list_running():
+            if rec.attempts >= MAX_REDRIVE_ATTEMPTS:
+                await self._publish_synthetic_failure(
+                    rec, "turn abandoned after repeated restarts"
+                )
+                await self._journal.set_status(rec.turn_id, "failed")
+                continue
+            await self._journal.bump_attempts(rec.turn_id)
+            await self._redrive_one(rec)
+            count += 1
+        return count
 
     async def _publish_error_async(
         self,
@@ -529,6 +702,11 @@ class NatsHttpBridge:
             except Exception:
                 logger.exception("nats_bridge.http_close_error")
             self._http = None
+        if self._journal is not None:
+            try:
+                await self._journal.close()
+            except Exception:
+                logger.exception("nats_bridge.journal_close_error")
 
 
 def maybe_build_bridge(agent: Any, port: int) -> NatsHttpBridge | None:
@@ -552,12 +730,16 @@ def maybe_build_bridge(agent: Any, port: int) -> NatsHttpBridge | None:
         return None
     queue_group = f"agents.{_slug(getattr(agent, 'name', 'agent'))}"
     local_url = f"http://localhost:{port}/a2a"
+    from _vystak.runtime.turn_journal import SqliteTurnJournal
+
+    journal = SqliteTurnJournal(resolve_turns_path())
     return NatsHttpBridge(
         nats_url=nats_url,
         subject=subject,
         queue_group=queue_group,
         local_url=local_url,
         local_base=f"http://localhost:{port}",
+        journal=journal,
     )
 
 

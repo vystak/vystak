@@ -92,13 +92,15 @@ def bridge_factory(monkeypatch):
         nats_bridge_module, "_stream_base_of_turn_subject", _noop_stream_base_of_turn_subject
     )
 
-    def _make(*, journal=None, sse_events=None):
+    def _make(*, journal=None, sse_events=None, resume_checkpoint_id=None):
         events = sse_events or []
         lines = [f"data: {json.dumps(e)}\n\n" for e in events]
         lines.append("data: [DONE]\n\n")
         sse_bytes = "".join(lines).encode()
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/_vystak/checkpoint":
+                return httpx.Response(200, json={"checkpoint_id": resume_checkpoint_id})
             return httpx.Response(
                 200, content=sse_bytes, headers={"content-type": "text/event-stream"}
             )
