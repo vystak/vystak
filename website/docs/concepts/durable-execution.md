@@ -94,8 +94,9 @@ or completing: no terminal event, journal status `parked`. Two RPCs:
 - `responses/resumeDetached {turn_id, resume}` — resumes a parked turn.
   No rewind published — nothing was lost on a park.
 
-Nothing ships an `interrupt()`-calling tool today; this is the foundation
-a future human-in-the-loop approval step would build on.
+This is the foundation [human-in-the-loop tool approvals](./approvals)
+build on: a gated skill tool calls `interrupt()` before executing, pausing
+the turn for a human decision.
 
 ## The panel: idle no longer means "done"
 
@@ -117,6 +118,7 @@ resume the turn instead of dropping it.
 
 ## Related
 
+- [Tool Approvals](./approvals) — the human-in-the-loop feature built on this page's park/resume mechanics
 - [Transport](./transport) — the NATS bridge this feature builds on
 - [Channels](../channels/panel) — the panel channel's rewind handling
 - `docs/durable-execution.md` in the repo — full implementation reference

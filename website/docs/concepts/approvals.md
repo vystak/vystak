@@ -13,7 +13,8 @@ to a denial string the model can reason about.
 **v1 scope: skill tools only, Docker, panel + Slack, both transports.** MCP
 tools aren't gateable — they attach via `McpServer`, not a skill's `tools`
 list. No approver allowlist, no argument-conditional gating, no auto-deny
-timeout, no Discord. Azure isn't part of this feature.
+timeout, no Discord. Verified on Docker only — no Azure release coverage
+or example.
 
 ## Declaring a gate
 

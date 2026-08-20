@@ -9,7 +9,10 @@ string the model can reason about.
 tools are not gateable (they attach to an agent via `McpServer`, not a
 skill's `tools` list — there's no hook point). There's no approver allowlist,
 no argument-conditional gating, no auto-deny timeout, and no Discord support.
-Azure isn't part of this feature.
+Verified on Docker; there is no Azure release coverage or example for this
+feature (the gate itself lives in the framework template's tool wrapper,
+which isn't provider-specific, but nothing here has been exercised against
+`vystak-provider-azure`).
 
 ## Declaring a gate
 
@@ -29,7 +32,7 @@ name a tool that's actually in that list — validated at schema load time
 anything deploys:
 
 ```
-skill 'ops': needs_approval names tools not in its own tools list: ['not_a_real_tool']
+skill 'ops': needs_approval names tools not in its tools list: not_a_real_tool
 ```
 
 `needs_approval` is part of the `Skill` object, which is hashed wholesale
@@ -110,9 +113,12 @@ Because the pause is a checkpoint, not in-memory state:
 If two people click Approve/Deny on the same pending approval, only the
 first one to land takes effect.
 
-- **NATS transport**: the panel's `resume_detached` call rejects a resume
-  against a turn that isn't parked with a `RuntimeError`, which the route
-  turns into `409`.
+- **NATS transport**: the bridge's `responses/resumeDetached` handler
+  (`_vystak/runtime/nats_bridge.py`) checks the journal row's status and
+  replies with a JSON-RPC error (`"turn is not parked"`) if it isn't
+  `parked` — a second resume for an already-resolved turn always hits this
+  check. The panel's `resume_detached` call surfaces that as a
+  `RuntimeError`, which the route turns into `409`.
 - **HTTP transport**: the panel claims an in-flight guard
   (`rt.turn_tasks[turn_id]`) synchronously, with no `await` between the
   membership check and the claim, so two concurrent POSTs for the same turn
@@ -122,10 +128,9 @@ first one to land takes effect.
 
 The loser's surface reflects this: in the panel, the losing request's
 `fetch` returns non-200 and `ApprovalActions` renders the response body as
-an inline error under the Approve/Deny controls (no page-level toast) — the
-panel does not use a toast component anywhere in the codebase. In Slack,
-the losing click gets an ephemeral message: *"Could not apply decision
-(already resolved or unavailable): ..."*.
+an inline error under the Approve/Deny controls. In Slack, the losing
+click gets an ephemeral message: *"Could not apply decision (already
+resolved or unavailable): ..."*.
 
 ## Surfaces
 
