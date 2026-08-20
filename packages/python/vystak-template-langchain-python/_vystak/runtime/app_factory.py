@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 # this every request crashes on validation. See a2a_native/_sdk_compat.py.
 from _vystak.runtime.a2a_native.card import build_agent_card
 from _vystak.runtime.a2a_native.executor import LangGraphExecutor
+from _vystak.runtime.approvals import load_approval_map, wrap_tools_with_approval
 from _vystak.runtime.compaction.compactor import ThresholdCompactor
 from _vystak.runtime.compaction.pruner import PreCallPruner
 from _vystak.runtime.graph import build_graph, pick_model_name
@@ -117,10 +118,19 @@ def build_agent_app(agent: Any) -> FastAPI:
     is_lazy = isinstance(checkpointer, _LazyCheckpointer)
     initial_checkpointer = None if is_lazy else checkpointer
 
+    # project_root: the directory holding the bundled agent.json (same
+    # convention `build_skill_tools` uses for folder skills — the process
+    # cwd is the deployed project root).
+    project_root = Path(".")
+    approval_map = load_approval_map(agent, project_root)
+    all_tools = wrap_tools_with_approval(
+        user_tools + workspace_tools + subagent_tools + skill_tools + schedule_tools,
+        approval_map,
+    )
     graph = build_graph(
         agent,
         prompt=prompt,
-        tools=user_tools + workspace_tools + subagent_tools + skill_tools + schedule_tools,
+        tools=all_tools,
         checkpointer=initial_checkpointer,
     )
 
@@ -169,8 +179,11 @@ def build_agent_app(agent: Any) -> FastAPI:
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
-                    tools=user_tools + workspace_tools + subagent_tools + skill_tools
-                    + schedule_tools + mcp_tools,
+                    tools=wrap_tools_with_approval(
+                        user_tools + workspace_tools + subagent_tools + skill_tools
+                        + schedule_tools + mcp_tools,
+                        approval_map,
+                    ),
                     checkpointer=resolved,
                 )
                 a2a_executor._graph = new_graph
@@ -285,6 +298,7 @@ def build_agent_app(agent: Any) -> FastAPI:
         snapshot = await responses_handler.graph.aget_state(config)
         checkpoint_id = None
         interrupted = False
+        interrupts: list = []
         if snapshot is not None:
             if snapshot.config:
                 checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
@@ -297,6 +311,18 @@ def build_agent_app(agent: Any) -> FastAPI:
             # asks this while a stream just ended with no terminal event, so
             # "never run" isn't a real case there.
             interrupted = bool(snapshot.next)
-        return {"checkpoint_id": checkpoint_id, "interrupted": interrupted}
+            # `.tasks[*].interrupts[*].value` carries the payload passed to
+            # `interrupt()` (e.g. the tool_approval request from
+            # approvals.py). Defensive getattr chain — plain fake snapshots
+            # in tests, and older LangGraph state shapes, may not have
+            # `tasks` at all.
+            for task in getattr(snapshot, "tasks", None) or ():
+                for intr in getattr(task, "interrupts", None) or ():
+                    interrupts.append(getattr(intr, "value", None))
+        return {
+            "checkpoint_id": checkpoint_id,
+            "interrupted": interrupted,
+            "interrupts": interrupts,
+        }
 
     return app
