@@ -206,7 +206,13 @@ durable_agent = ast.Agent(
     default_model=sonnet,
     platform=platform,
     skills=[ast.Skill(name="steps", tools=["slow_step"])],
-    secrets=[ast.Secret(name="ANTHROPIC_API_KEY")],
+    # ANTHROPIC_API_URL must reach the container too: the live fixture
+    # supports Anthropic-compatible endpoints (e.g. MiniMax), and without
+    # the URL the agent sends that key to api.anthropic.com and 401s.
+    secrets=[
+        ast.Secret(name="ANTHROPIC_API_KEY"),
+        ast.Secret(name="ANTHROPIC_API_URL"),
+    ],
 )
 
 panel = ast.Channel(
