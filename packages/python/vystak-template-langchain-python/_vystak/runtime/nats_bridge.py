@@ -552,7 +552,34 @@ class NatsHttpBridge:
         `stream_subject`), so this is keyed by `thread_id` alone. The
         caller (a channel runtime, e.g. Slack) blocks on the JSON-RPC
         reply the same way it blocks on `message/send` — no ack/park
-        split, no JetStream publish, just POST-and-collect."""
+        split, no JetStream publish, just POST-and-collect. Because a
+        gated tool can run real work before the graph parks again, this
+        RPC can take as long as the resume endpoint's read bound (see
+        `_resume_and_collect_text`'s ~300s timeout) — NATS callers must
+        set a request timeout comparable to that, not the short timeout
+        used for `message/send`.
+
+        Task-11 chaining contract: the reply always carries
+        `pending_approval`, `null` on normal completion. When the resumed
+        run parks AGAIN on a second gated tool, the SSE ends with no
+        terminal event (`response.completed`/`response.failed`) — that by
+        itself is indistinguishable from a genuine failure, so this
+        consults `_agent_checkpoint_state(thread_id)` (the same tri-state
+        helper `_consume_response_stream` uses for the detached path) to
+        tell the two apart:
+          - stream ended with a terminal event: normal completion,
+            `pending_approval: null`.
+          - stream ended without one, and the checkpoint state says the
+            graph is durably parked with a pending interrupt: reply
+            success with the partial text collected so far and
+            `pending_approval: {"payload": <interrupt value>, "thread_id":
+            ...}` — the Slack handler (Task 11) posts a NEW approval
+            message for this rather than treating it as done.
+          - stream ended without one, and the checkpoint state says
+            otherwise (not interrupted, or couldn't be consulted): a
+            genuine failure — reply `-32000`, never fake a success with a
+            silently-dropped partial message.
+        """
         params = envelope.get("params") or {}
         thread_id = params.get("thread_id")
         if not thread_id:
@@ -564,7 +591,9 @@ class NatsHttpBridge:
             )
             return
         try:
-            text = await self._resume_and_collect_text(thread_id, params.get("resume"))
+            text, saw_terminal = await self._resume_and_collect_text(
+                thread_id, params.get("resume")
+            )
         except Exception as e:  # noqa: BLE001 — surface as JSON-RPC error, never raise
             await self._publish_error_async(
                 reply_subject,
@@ -573,9 +602,33 @@ class NatsHttpBridge:
                 request_id=envelope.get("id"),
             )
             return
-        await self._publish_result(reply_subject, envelope.get("id"), {"text": text})
+        if saw_terminal:
+            await self._publish_result(
+                reply_subject, envelope.get("id"), {"text": text, "pending_approval": None}
+            )
+            return
+        state = await self._agent_checkpoint_state(thread_id)
+        if state is not None and state.get("interrupted") and state.get("interrupts"):
+            await self._publish_result(
+                reply_subject,
+                envelope.get("id"),
+                {
+                    "text": text,
+                    "pending_approval": {
+                        "payload": state["interrupts"][0],
+                        "thread_id": thread_id,
+                    },
+                },
+            )
+            return
+        await self._publish_error_async(
+            reply_subject,
+            code=-32000,
+            message="resume failed: stream ended without a terminal event",
+            request_id=envelope.get("id"),
+        )
 
-    async def _resume_and_collect_text(self, thread_id: str, resume: Any) -> str:
+    async def _resume_and_collect_text(self, thread_id: str, resume: Any) -> tuple[str, bool]:
         """POST `/v1/_vystak/resume` and concatenate every
         `response.output_text.delta` into the final assistant text.
 
@@ -583,9 +636,16 @@ class NatsHttpBridge:
         URL derivation (same as `_stream_from_resume_endpoint`) rather than
         constructing a new client. The read timeout is the same generous
         bound the detached resume path uses — real tool work can run during
-        the parked step before it completes."""
+        the parked step before it completes.
+
+        Returns `(text, saw_terminal)` — `saw_terminal` is `True` only if a
+        `response.completed`/`response.failed` event or `[DONE]` was
+        observed; the caller (`_handle_resume_thread`) uses `False` as the
+        signal to go consult checkpoint state, mirroring how
+        `_consume_response_stream` disambiguates a park from a truncation."""
         assert self._http is not None
         chunks: list[str] = []
+        saw_terminal = False
         async with self._http.stream(
             "POST",
             f"{self._local_base}/v1/_vystak/resume",
@@ -598,11 +658,15 @@ class NatsHttpBridge:
                     continue
                 data = line[len("data:") :].strip()
                 if data == "[DONE]":
+                    saw_terminal = True
                     break
                 event = json.loads(data)
-                if event.get("type") == "response.output_text.delta":
+                event_type = event.get("type")
+                if event_type == "response.output_text.delta":
                     chunks.append(event.get("delta", ""))
-        return "".join(chunks)
+                elif event_type in ("response.completed", "response.failed"):
+                    saw_terminal = True
+        return "".join(chunks), saw_terminal
 
     async def _publish_result(
         self, reply_subject: str, request_id: Any, result: Any
