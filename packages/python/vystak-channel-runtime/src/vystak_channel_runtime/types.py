@@ -24,6 +24,7 @@ class AgentReply(BaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     finish_reason: str | None = None
     raw: dict[str, Any] | None = None
+    pending_approval: dict[str, Any] | None = None
 
 
 class AgentChunk(BaseModel):

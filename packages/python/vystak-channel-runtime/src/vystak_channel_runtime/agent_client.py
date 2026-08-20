@@ -211,10 +211,32 @@ class A2AAgentClient:
         parts = status_msg.get("parts") or []
         if parts:
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            state_value = status.get("state")
+
+            # A LangGraphExecutor interrupt (human-in-the-loop tool approval)
+            # ends the task in input-required state with a single text part
+            # carrying a JSON marker instead of the normal reply text. Detect
+            # it before falling through to the plain-text AgentReply below.
+            if state_value in ("input-required", "input_required") and text:
+                try:
+                    marker = json.loads(text)
+                except (ValueError, TypeError):
+                    marker = None
+                if isinstance(marker, dict) and marker.get("kind") == "approval_pending":
+                    return AgentReply(
+                        text="",
+                        finish_reason="approval_pending",
+                        pending_approval={
+                            "payload": marker.get("payload"),
+                            "thread_id": marker.get("thread_id"),
+                        },
+                        raw=payload,
+                    )
+
             return AgentReply(
                 text=text,
                 tool_calls=result.get("tool_calls", []),
-                finish_reason=status.get("state") or result.get("finish_reason"),
+                finish_reason=state_value or result.get("finish_reason"),
                 raw=payload,
             )
 

@@ -13,6 +13,7 @@ any TaskStatusUpdateEvent the first time — otherwise it raises
 to TaskUpdater.start_work().
 """
 
+import json
 from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -106,6 +107,34 @@ class LangGraphExecutor(AgentExecutor):
                         )
 
             snapshot = await self._graph.aget_state(config)
+
+            # A LangGraph `interrupt()` call inside a tool pauses the graph
+            # mid-turn (used for human-in-the-loop tool approvals). `next`
+            # is non-empty when the graph has unfinished pending steps, and
+            # each paused task carries the interrupt payload it raised.
+            # Surface this as an `input_required` task end (not `complete`)
+            # so the channel can relay the approval request upstream instead
+            # of treating it as a normal reply.
+            interrupts = [
+                getattr(i, "value", None)
+                for task in (getattr(snapshot, "tasks", None) or ())
+                for i in (getattr(task, "interrupts", None) or ())
+            ]
+            if getattr(snapshot, "next", None) and interrupts:
+                marker = json.dumps(
+                    {
+                        "kind": "approval_pending",
+                        "payload": interrupts[0],
+                        "thread_id": context.task_id,
+                    }
+                )
+                pending_msg = updater.new_agent_message([Part(text=marker)])
+                await updater.update_status(
+                    TaskState.TASK_STATE_INPUT_REQUIRED,
+                    message=pending_msg,
+                )
+                return
+
             messages = (snapshot.values or {}).get("messages") or []
             final_text = flatten_content(
                 messages[-1].content if messages else ""
