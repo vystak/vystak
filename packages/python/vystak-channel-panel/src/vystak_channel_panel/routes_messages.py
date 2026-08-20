@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from vystak_channel_panel.models import PanelUser
-from vystak_channel_panel.responses_client import agent_base_url
+from vystak_channel_panel.responses_client import PanelStreamEvent, agent_base_url
 from vystak_channel_panel.routes_conversations import require_conversation_access
 from vystak_channel_panel.turn_stream import TurnAccumulator, browser_frame
 
@@ -118,21 +118,65 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                             # previous_response_id).
                             await persist(None)
                         yield _sse(browser_frame(ev))
-                if not done_seen and acc.has_output:
-                    # Truncated agent stream: `data: [DONE]` arrived with no
-                    # preceding response.completed/failed, so ResponsesClient
-                    # yields no terminal event. Persist what we streamed —
-                    # otherwise the user watches text (and any completed tool
-                    # calls) appear and finds it gone on reload.
-                    # last_response_id is left untouched: no new agent-side
-                    # response id was confirmed.
-                    msg = await persist(None)
-                    yield _sse({
-                        "type": "done",
-                        "message_id": msg.id,
-                        "response_id": conv.last_response_id or "",
-                        "title": title,
-                    })
+                if not done_seen:
+                    # Stream ended with no terminal event. Either the turn
+                    # parked mid-run (a HITL tool approval — Task 6/7) or the
+                    # agent's `data: [DONE]` simply arrived with no preceding
+                    # response.completed/failed. Ask the agent which one this
+                    # is: a parked turn survives a `checkpoint_id`/interrupted
+                    # state on its thread; anything else (including the
+                    # checkpoint call itself failing) falls through to the
+                    # truncated-stream handling below.
+                    # KNOWN GAP: gated on last_response_id, which the agent
+                    # uses as its LangGraph thread_id for turns 2+ (see
+                    # responses_client.py's ResponsesClient docstring). On a
+                    # conversation's very first turn there is no
+                    # last_response_id yet (the agent mints a fresh thread id
+                    # we never capture, since the panel only reads it off the
+                    # `done` terminal event) — a first-turn park on the HTTP
+                    # transport falls through to the truncated-stream branch
+                    # below and is currently invisible to the browser. Fixing
+                    # this would mean capturing `response.created`'s id
+                    # without teaching `translate_responses_event` to emit a
+                    # new frame for it (that would break the byte-exact
+                    # `test_panel_sse_matches_cross_language_fixture` pin and
+                    # add an unhandled event type to the NATS `_proxy_turn`).
+                    checkpoint = None
+                    if conv.last_response_id:
+                        try:
+                            checkpoint = await rt.responses_client.get_checkpoint(
+                                base_url, conv.last_response_id
+                            )
+                        except Exception:  # noqa: BLE001 — best-effort probe
+                            checkpoint = None
+                    if checkpoint and checkpoint.get("interrupted"):
+                        interrupts = checkpoint.get("interrupts") or []
+                        approval_ev = PanelStreamEvent(
+                            type="approval_requested",
+                            approval=(interrupts[0] if interrupts else {}),
+                        )
+                        acc.feed(approval_ev)
+                        await persist(None)
+                        turn_id = conv.last_response_id
+                        await rt.panel_store.set_active_turn(conv_id, turn_id)
+                        frame = browser_frame(approval_ev)
+                        frame["turn_id"] = turn_id
+                        yield _sse(frame)
+                    elif acc.has_output:
+                        # Truncated agent stream: `data: [DONE]` arrived with
+                        # no preceding response.completed/failed, so
+                        # ResponsesClient yields no terminal event. Persist
+                        # what we streamed — otherwise the user watches text
+                        # (and any completed tool calls) appear and finds it
+                        # gone on reload. last_response_id is left untouched:
+                        # no new agent-side response id was confirmed.
+                        msg = await persist(None)
+                        yield _sse({
+                            "type": "done",
+                            "message_id": msg.id,
+                            "response_id": conv.last_response_id or "",
+                            "title": title,
+                        })
             except Exception as exc:  # noqa: BLE001 — stream must not raise
                 logger.exception("panel stream failed for conv=%s", conv_id)
                 if acc.has_output:

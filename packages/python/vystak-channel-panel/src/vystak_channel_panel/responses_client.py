@@ -81,6 +81,44 @@ class ResponsesClient:
             "user_id": user_id,
             "project_id": project_id,
         }
+        async for ev in self._stream_sse(f"{base_url.rstrip('/')}/v1/responses", body):
+            yield ev
+
+    async def resume_stream(
+        self, base_url: str, thread_id: str, resume: dict
+    ) -> AsyncIterator[PanelStreamEvent]:
+        """POST /v1/_vystak/resume {thread_id, resume} — same SSE shape and
+        parsing as `stream_message`, used to consume a parked turn's
+        continuation after an approval decision."""
+        body = {"thread_id": thread_id, "resume": resume}
+        async for ev in self._stream_sse(
+            f"{base_url.rstrip('/')}/v1/_vystak/resume", body
+        ):
+            yield ev
+
+    async def get_checkpoint(self, base_url: str, thread_id: str) -> dict:
+        """GET /v1/_vystak/checkpoint?thread_id=... — the agent's current
+        LangGraph checkpoint state for a thread: `{checkpoint_id,
+        interrupted, interrupts: [payload...]}`."""
+        client = self._http_client or httpx.AsyncClient(timeout=self._timeout)
+        owns_client = self._http_client is None
+        try:
+            resp = await client.get(
+                f"{base_url.rstrip('/')}/v1/_vystak/checkpoint",
+                params={"thread_id": thread_id},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    async def _stream_sse(self, url: str, body: dict) -> AsyncIterator[PanelStreamEvent]:
+        """Shared SSE-consumption loop for `stream_message` and
+        `resume_stream`: POST *body* to *url*, translate each Responses-API
+        event into a `PanelStreamEvent`. Kept as one helper so the two paths
+        can never drift on error handling or event translation."""
         client = self._http_client or httpx.AsyncClient(timeout=self._timeout)
         owns_client = self._http_client is None
         closing = False
@@ -94,8 +132,7 @@ class ResponsesClient:
 
         try:
             async with client.stream(
-                "POST", f"{base_url.rstrip('/')}/v1/responses", json=body,
-                timeout=self._timeout,
+                "POST", url, json=body, timeout=self._timeout,
             ) as resp:
                 try:
                     if resp.status_code != 200:

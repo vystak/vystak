@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 def mount_routes(app: FastAPI, rt: PanelChannelRuntime, current_user, admin_user) -> None:
+    from vystak_channel_panel.routes_approvals import build_approvals_router
     from vystak_channel_panel.routes_conversations import build_conversations_router
     from vystak_channel_panel.routes_messages import build_messages_router
     from vystak_channel_panel.routes_projects import build_projects_router
@@ -20,3 +21,4 @@ def mount_routes(app: FastAPI, rt: PanelChannelRuntime, current_user, admin_user
     app.include_router(build_projects_router(rt, current_user))
     app.include_router(build_conversations_router(rt, current_user))
     app.include_router(build_messages_router(rt, current_user))
+    app.include_router(build_approvals_router(rt, current_user))

@@ -106,6 +106,27 @@ class PanelNatsClient:
         result = body.get("result") or {}
         return result.get("status", "unknown")
 
+    async def resume_detached(self, agent_name: str, turn_id: str, resume: dict) -> None:
+        """`responses/resumeDetached {turn_id, resume}` on the agent's tasks
+        subject — the bridge rejects this unless the turn is currently
+        parked (JSON-RPC error -32602 "turn is not parked"), which surfaces
+        here as a `RuntimeError` carrying the bridge's message so the
+        approval route can turn it into a 409."""
+        nc = await self._transport.nats_connection()
+        subject = self._transport.resolve_address(agent_name)
+        payload = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "responses/resumeDetached",
+                "params": {"turn_id": turn_id, "resume": resume},
+            }
+        ).encode()
+        reply = await nc.request(subject, payload, timeout=self._status_timeout)
+        body = json.loads(reply.data)
+        if body.get("error"):
+            raise RuntimeError(body["error"].get("message", "resume failed"))
+
     async def stream_turn_events(self, subject: str) -> AsyncIterator[tuple[int, PanelStreamEvent]]:
         nc = await self._transport.nats_connection()
         pending_calls: dict[str, dict] = {}
