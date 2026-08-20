@@ -150,12 +150,18 @@ class TurnAccumulator:
             # approval_requested event is synthesized. It never gets a real
             # result and would otherwise sit alongside the approval card
             # (and later the real result) as a phantom "completed" entry —
-            # drop it now, superseded by the pending approval part.
+            # drop it now, superseded by the pending approval part. Gated on
+            # is_error too: a DENIED gated tool also produces a resolved,
+            # same-tool-name part, but with is_error False (`_denied_result`
+            # returns normally) — that's a legitimate transcript entry, not
+            # an interrupt artifact, and must survive if the LLM retries the
+            # same tool later in the turn and parks again.
             if (
                 self.msg_parts
                 and self.msg_parts[-1].get("type") == "tool"
                 and self.msg_parts[-1].get("tool_name") == tool_name
                 and self.msg_parts[-1].get("state") != "approval-requested"
+                and self.msg_parts[-1].get("is_error")
             ):
                 self.msg_parts.pop()
             self.msg_parts.append({

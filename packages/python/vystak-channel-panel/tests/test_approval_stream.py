@@ -103,3 +103,27 @@ def test_prepark_interrupt_artifact_dropped_at_park_even_without_resume():
     tool_parts = [p for p in acc.parts() if p["type"] == "tool"]
     assert len(tool_parts) == 1
     assert tool_parts[0]["state"] == "approval-requested"
+
+
+def test_denied_tool_part_survives_a_later_park_of_the_same_tool():
+    """A DENIED gated tool produces a legitimate resolved part with
+    is_error False (`_denied_result` returns normally, it doesn't raise) —
+    that's a real transcript entry, not the pre-park interrupt artifact.
+    If the LLM retries the same tool later in the turn and it parks again,
+    the earlier denial result must survive, not be silently popped."""
+    acc = TurnAccumulator()
+    acc.feed_seq(0, PanelStreamEvent(type="tool_call", tool_call_id="c1",
+                                     tool_name="restart_service",
+                                     arguments='{"name": "web"}'))
+    acc.feed_seq(1, PanelStreamEvent(type="tool_result", tool_call_id="c1",
+                                     output="Denied by alice: not now",
+                                     is_error=False))
+    # Retried later in the same turn — parks again.
+    acc.feed_seq(2, PanelStreamEvent(type="approval_requested", approval=PAYLOAD))
+
+    tool_parts = [p for p in acc.parts() if p["type"] == "tool"]
+    assert len(tool_parts) == 2
+    assert tool_parts[0]["tool_call_id"] == "c1"
+    assert tool_parts[0]["output"] == "Denied by alice: not now"
+    assert tool_parts[0]["is_error"] is False
+    assert tool_parts[1]["state"] == "approval-requested"
