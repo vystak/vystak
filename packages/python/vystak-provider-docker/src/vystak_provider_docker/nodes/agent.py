@@ -110,6 +110,69 @@ class DockerAgentNode(Provisionable):
     def _container_name(self) -> str:
         return f"vystak-{self._agent.name}"
 
+    def _default_data_volume_name(self) -> str:
+        return f"vystak-agent-{self._agent.name}-data"
+
+    def _build_volumes(self, context: dict) -> dict:
+        """Assemble the container's volume mounts.
+
+        The /data mount can come from any sqlite-backed dependency in
+        ``depends_on`` — a declared `sessions:` service, `memory:`, or a
+        sqlite entry in `services:` — not just `sessions:` specifically.
+        Agents where nothing claims /data still get a durable volume — the
+        langchain template writes /data/sessions.db (checkpointer) and
+        /data/turns.db (turn journal) by default, so durability would
+        otherwise silently evaporate on container replacement.
+        """
+        volumes: dict = {}
+        for dep_name in self.depends_on:
+            if dep_name == "network":
+                continue
+            dep_result = context.get(dep_name)
+            if dep_result and dep_result.info.get("engine") == "sqlite":
+                volumes[dep_result.info["volume_name"]] = {
+                    "bind": "/data",
+                    "mode": "rw",
+                }
+        if not any(v.get("bind") == "/data" for v in volumes.values()):
+            # No sqlite dependency (sessions or otherwise) claimed /data —
+            # fall back to a per-agent volume so /data is always durable.
+            volumes[self._default_data_volume_name()] = {
+                "bind": "/data",
+                "mode": "rw",
+            }
+        if self._vault_secrets_volume:
+            # Vault path: entire /shared populated by Vault Agent sidecar.
+            volumes[self._vault_secrets_volume] = {
+                "bind": "/shared",
+                "mode": "ro",
+            }
+        elif self._default_path_ssh_host_dir:
+            # Default path: bind-mount individual SSH files to /shared/ssh/*.
+            from pathlib import Path as _Path
+
+            ssh_dir = _Path(self._default_path_ssh_host_dir)
+            volumes[str(ssh_dir / "client-key")] = {
+                "bind": "/shared/ssh/id_ed25519",
+                "mode": "ro",
+            }
+            volumes[str(ssh_dir / "host-key.pub")] = {
+                "bind": "/shared/ssh/host_key.pub",
+                "mode": "ro",
+            }
+            # Assemble known_hosts so the agent's asyncssh client can
+            # verify the workspace host key (test_plan gap #2 / V11).
+            host_key_pub_path = ssh_dir / "host-key.pub"
+            if self._workspace_host and host_key_pub_path.exists():
+                known_hosts_path = ssh_dir / "known_hosts"
+                host_key_pub = host_key_pub_path.read_text().strip()
+                known_hosts_path.write_text(f"{self._workspace_host} {host_key_pub}\n")
+                volumes[str(known_hosts_path)] = {
+                    "bind": "/shared/ssh/known_hosts",
+                    "mode": "ro",
+                }
+        return volumes
+
     def provision(self, context: dict) -> ProvisionResult:
         try:
             container_name = self._container_name()
@@ -240,49 +303,23 @@ class DockerAgentNode(Provisionable):
                 env["VYSTAK_SCHEDULER_URL"] = "http://vystak-heartbeat:8081"
                 env["VYSTAK_AGENT_CANONICAL"] = self._agent.canonical_name
 
-            # Build volumes
-            volumes = {}
-            for dep_name in self.depends_on:
-                if dep_name == "network":
-                    continue
-                dep_result = context.get(dep_name)
-                if dep_result and dep_result.info.get("engine") == "sqlite":
-                    volumes[dep_result.info["volume_name"]] = {
-                        "bind": "/data",
-                        "mode": "rw",
-                    }
-            if self._vault_secrets_volume:
-                # Vault path: entire /shared populated by Vault Agent sidecar.
-                volumes[self._vault_secrets_volume] = {
-                    "bind": "/shared",
-                    "mode": "ro",
-                }
-            elif self._default_path_ssh_host_dir:
-                # Default path: bind-mount individual SSH files to /shared/ssh/*.
-                from pathlib import Path as _Path
-
-                ssh_dir = _Path(self._default_path_ssh_host_dir)
-                volumes[str(ssh_dir / "client-key")] = {
-                    "bind": "/shared/ssh/id_ed25519",
-                    "mode": "ro",
-                }
-                volumes[str(ssh_dir / "host-key.pub")] = {
-                    "bind": "/shared/ssh/host_key.pub",
-                    "mode": "ro",
-                }
-                # Assemble known_hosts so the agent's asyncssh client can
-                # verify the workspace host key (test_plan gap #2 / V11).
-                host_key_pub_path = ssh_dir / "host-key.pub"
-                if self._workspace_host and host_key_pub_path.exists():
-                    known_hosts_path = ssh_dir / "known_hosts"
-                    host_key_pub = host_key_pub_path.read_text().strip()
-                    known_hosts_path.write_text(
-                        f"{self._workspace_host} {host_key_pub}\n"
-                    )
-                    volumes[str(known_hosts_path)] = {
-                        "bind": "/shared/ssh/known_hosts",
-                        "mode": "ro",
-                    }
+            # Build volumes. When nothing else claims /data (no `sessions:`
+            # and no other sqlite-backed dependency bound there), this
+            # creates (idempotently) the fallback per-agent data volume so
+            # /data is always durable across container replacement. Like
+            # DockerServiceNode's sqlite/postgres volumes, this volume
+            # survives `vystak destroy` by convention (see destroy() below)
+            # — a later `vystak apply` reusing the same agent name resumes
+            # against whatever /data/sessions.db and /data/turns.db already
+            # hold on this volume, not a clean slate.
+            volumes = self._build_volumes(context)
+            data_volume_name = self._default_data_volume_name()
+            if data_volume_name in volumes:
+                existing_volumes = self._client.volumes.list(
+                    filters={"name": data_volume_name}
+                )
+                if not existing_volumes:
+                    self._client.volumes.create(data_volume_name)
 
             # Run container
             host_port = self._agent.port if self._agent.port else None
@@ -326,6 +363,26 @@ class DockerAgentNode(Provisionable):
         return NoopHealthCheck()
 
     def destroy(self) -> None:
+        """Stop and remove the agent container.
+
+        Data-bearing volumes (both a declared `sessions:` volume and the
+        fallback per-agent data volume `vystak-agent-<name>-data` created
+        when there's no `sessions:` declaration) are intentionally left in
+        place — this mirrors DockerServiceNode.destroy(), which keeps
+        sqlite/postgres volumes so durable state survives a redeploy.
+        Volume cleanup on destroy would defeat the point of this task
+        (durability across container replacement).
+
+        Operational consequence: `vystak destroy` followed by `vystak apply`
+        with the same agent name resumes against the stale
+        /data/sessions.db and /data/turns.db already on that volume — the
+        same stale-volume failure family CLAUDE.md documents for
+        `vault_clean`/`postgres_clean` (the `vystak-vault-data` and
+        `vystak-data-*` volumes surviving destroy across test runs). Any
+        release-test fixture that expects a clean /data per run for a
+        sessionless agent must clean `vystak-agent-*-data` the same way
+        `postgres_clean` cleans `vystak-data-*`.
+        """
         container_name = self._container_name()
         try:
             container = self._client.containers.get(container_name)

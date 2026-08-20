@@ -211,6 +211,40 @@ def vault_clean():
 
 
 @pytest.fixture
+def durable_volume_clean():
+    """Ensure no stale per-agent durable-execution data pollutes this test.
+
+    The default agent data volume (`vystak-agent-<name>-data`, mounted at
+    `/data` for the turn journal + checkpointer) survives `vystak destroy`
+    by design — same persistence-by-design pattern as the session/memory/
+    workspace volumes this suite already guards against. Without this, a
+    prior run's `turns.db` rows (and attempt counters) leak into the next
+    run and the mechanical assertions (fresh journal row, attempts==0
+    pre-restart) go stale. Remove the container before the volume — Docker
+    refuses to remove a volume still mounted by a container, same
+    ordering constraint `scheduler_clean` documents.
+
+    Mirrors `vault_clean`'s pattern. Best-effort; tolerates missing
+    resources.
+    """
+    result = run(
+        ["docker", "volume", "ls", "--format", "{{.Name}}"],
+        check=False,
+    )
+    volumes = [
+        name
+        for name in result.stdout.splitlines()
+        if name.startswith("vystak-agent-") and name.endswith("-data")
+    ]
+    containers = [name[len("vystak-agent-") : -len("-data")] for name in volumes]
+    for agent_name in containers:
+        run(["docker", "rm", "-f", f"vystak-{agent_name}"], check=False)
+    for name in volumes:
+        run(["docker", "volume", "rm", name], check=False)
+    yield
+
+
+@pytest.fixture
 def scheduler_clean():
     """Ensure no stale scheduler state pollutes this test.
 
@@ -321,11 +355,16 @@ def assert_isolation(
 
 
 def assert_health(container: str, internal_port: int = 8000) -> None:
-    """V4: /health returns 200 {'status': 'ok'}."""
+    """V4: /healthz returns 200 {'status': 'ok'}.
+
+    The template runtime serves this at `/healthz` (see
+    `_vystak/runtime/app_factory.py`); older cells assumed `/health`,
+    which 404s against the current agent image.
+    """
     port = container_http_port(container, internal_port)
-    wait_for_http(f"http://localhost:{port}/health", timeout=30)
-    body = http_get_json(f"http://localhost:{port}/health")
-    assert body.get("status") == "ok", f"unexpected /health body: {body}"
+    wait_for_http(f"http://localhost:{port}/healthz", timeout=30)
+    body = http_get_json(f"http://localhost:{port}/healthz")
+    assert body.get("status") == "ok", f"unexpected /healthz body: {body}"
 
 
 def assert_agent_card(

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { visiblePartsAfterReset } from '../lib/messageParts';
 import { panelStreamToUIChunks } from '../lib/stream';
 
 function sseBody(...payloads: (object | string)[]): ReadableStream<Uint8Array> {
@@ -46,7 +47,158 @@ async function collect(stream: ReadableStream<unknown>): Promise<unknown[]> {
   return out;
 }
 
+type FoldedPart = {
+  type: string;
+  text?: string;
+  toolCallId?: string;
+  state?: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+  data?: unknown;
+};
+
+// Minimal stand-in for the relevant slice of the AI SDK's
+// `processUIMessageStream` reducer (installed ai@5.0.220): text parts fold
+// by id, and — this is the load-bearing bit for the rewound-tool-call
+// regression test below — a dynamic tool's 'tool-input-start' /
+// 'tool-input-available' / 'tool-output-*' updates the *existing* part
+// with a matching toolCallId anywhere in `parts` (this adapter never emits
+// 'step-start', so there's no per-step scoping) rather than always
+// appending. 'data-reset' always appends, matching the real reducer's
+// unconditional push for a non-transient data part with no id.
+function foldToParts(chunks: unknown[]): FoldedPart[] {
+  const parts: FoldedPart[] = [];
+  const activeText: Record<string, FoldedPart> = {};
+  for (const raw of chunks) {
+    const c = raw as {
+      type: string;
+      id?: string;
+      delta?: string;
+      toolCallId?: string;
+      input?: unknown;
+      output?: unknown;
+      errorText?: string;
+      data?: unknown;
+    };
+    if (c.type === 'text-start') {
+      const part: FoldedPart = { type: 'text', text: '' };
+      activeText[c.id ?? ''] = part;
+      parts.push(part);
+    } else if (c.type === 'text-delta') {
+      const part = activeText[c.id ?? ''];
+      if (part) part.text = (part.text ?? '') + (c.delta ?? '');
+    } else if (c.type === 'text-end') {
+      delete activeText[c.id ?? ''];
+    } else if (c.type === 'tool-input-start' || c.type === 'tool-input-available') {
+      const existing = parts.find(p => p.type === 'dynamic-tool' && p.toolCallId === c.toolCallId);
+      const state = c.type === 'tool-input-start' ? 'input-streaming' : 'input-available';
+      if (existing) {
+        existing.state = state;
+        if (c.type === 'tool-input-available') existing.input = c.input;
+      } else {
+        parts.push({ type: 'dynamic-tool', toolCallId: c.toolCallId, state, input: c.input });
+      }
+    } else if (c.type === 'tool-output-available' || c.type === 'tool-output-error') {
+      const existing = parts.find(p => p.type === 'dynamic-tool' && p.toolCallId === c.toolCallId);
+      if (existing) {
+        existing.state = c.type === 'tool-output-available' ? 'output-available' : 'output-error';
+        existing.output = c.output;
+        existing.errorText = c.errorText;
+      }
+    } else if (c.type.startsWith('data-')) {
+      parts.push({ type: c.type, data: c.data });
+    }
+  }
+  return parts;
+}
+
 describe('panelStreamToUIChunks', () => {
+  it('emits a data-reset marker on a reset frame', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody({ type: 'delta', text: 'stale' }, { type: 'reset' }, { type: 'delta', text: 'fresh' }),
+      ),
+    );
+    expect(chunks).toContainEqual({ type: 'data-reset', data: {} });
+  });
+
+  // The marker must land *after* a text-end for whatever was open, and the
+  // next delta must open a brand-new text part (not resume the pre-reset
+  // one) — see the comment on `visiblePartsAfterReset` in lib/messageParts.ts
+  // for why: reusing the pre-reset text id would let a post-reset delta
+  // mutate a part that sits *before* the marker, which the client's
+  // post-marker render filter would then never show at all.
+  it('closes the open text part and opens a fresh one around the reset marker', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          { type: 'delta', text: 'stale' },
+          { type: 'reset' },
+          { type: 'delta', text: 'fresh' },
+          { type: 'done', message_id: 'm2', response_id: 'r2', title: 'T' },
+        ),
+      ),
+    );
+    expect(chunks).toEqual([
+      { type: 'start' },
+      { type: 'text-start', id: 'panel-text' },
+      { type: 'text-delta', id: 'panel-text', delta: 'stale' },
+      { type: 'text-end', id: 'panel-text' },
+      { type: 'data-reset', data: {} },
+      { type: 'text-start', id: 'panel-text' },
+      { type: 'text-delta', id: 'panel-text', delta: 'fresh' },
+      { type: 'text-end', id: 'panel-text' },
+      { type: 'finish' },
+    ]);
+  });
+
+  // Regression for the final-review finding: a rewind replays retained
+  // tool_call/tool_result frames with their ORIGINAL toolCallId (the Python
+  // persister's accumulator is untouched by this adapter). Without
+  // prefixing, the replayed 'tool-input-available' would update the STALE
+  // pre-reset dynamic-tool part in place (matched by toolCallId, found
+  // anywhere in `parts` since no 'step-start' is ever emitted) instead of
+  // appending a fresh one after the marker — and `visiblePartsAfterReset`
+  // would then hide that (updated but still pre-marker) part forever.
+  it('replays a rewound tool call as a fresh post-reset part, not a stale in-place update', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          { type: 'tool_call', tool_call_id: 'c1', tool_name: 'foo', arguments: '{"x":1}' },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'stale-output', is_error: false },
+          { type: 'reset' },
+          // Retained-prefix replay: same original ids as the pre-reset run.
+          { type: 'tool_call', tool_call_id: 'c1', tool_name: 'foo', arguments: '{"x":1}' },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'ok', is_error: false },
+          { type: 'delta', text: 'done' },
+          { type: 'done', message_id: 'm3', response_id: 'r3', title: 'T' },
+        ),
+      ),
+    );
+    const parts = visiblePartsAfterReset(
+      foldToParts(chunks) as unknown as Parameters<typeof visiblePartsAfterReset>[0],
+    );
+    expect(parts).toEqual([
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'g1:c1',
+        state: 'output-available',
+        input: { x: 1 },
+        output: 'ok',
+        errorText: undefined,
+      },
+      { type: 'text', text: 'done' },
+    ]);
+  });
+
+  it('passes through streams with no reset unchanged', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(sseBody({ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' })),
+    );
+    expect(chunks).not.toContainEqual(expect.objectContaining({ type: 'data-reset' }));
+  });
+
   it('maps deltas to a text part between start and finish', async () => {
     const chunks = await collect(
       panelStreamToUIChunks(

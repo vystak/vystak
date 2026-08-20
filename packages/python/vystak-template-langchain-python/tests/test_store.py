@@ -1,5 +1,8 @@
 """build_checkpointer factory dispatches on agent.sessions.engine."""
 
+import os
+from unittest import mock
+
 from _vystak.runtime.store import build_checkpointer
 
 
@@ -17,11 +20,12 @@ def _agent(sessions=None):
     return a
 
 
-def test_no_sessions_returns_in_memory_saver():
-    cp = build_checkpointer(_agent(sessions=None))
-    # langgraph 1.x renamed MemorySaver -> InMemorySaver while keeping the
-    # MemorySaver alias importable. Accept either class name.
-    assert cp.__class__.__name__ in {"MemorySaver", "InMemorySaver"}
+def test_no_sessions_returns_durable_lazy_checkpointer(tmp_path):
+    # Durable by default: even with no sessions declared, build_checkpointer
+    # returns a _LazyCheckpointer wrapping AsyncSqliteSaver, never MemorySaver.
+    with mock.patch.dict(os.environ, {"VYSTAK_SESSIONS_PATH": str(tmp_path / "s.db")}):
+        cp = build_checkpointer(_agent(sessions=None))
+    assert cp.__class__.__name__ == "_LazyCheckpointer"
 
 
 def test_sqlite_returns_async_sqlite_saver_factory():

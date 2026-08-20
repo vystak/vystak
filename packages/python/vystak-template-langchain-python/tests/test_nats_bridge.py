@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 from typing import Any
 
@@ -59,6 +60,42 @@ def test_maybe_build_bridge_derives_subject_when_unset(monkeypatch):
     bridge = maybe_build_bridge(agent, port=8000)
     assert bridge is not None
     assert bridge._subject == "vystak-nats.multi-nats.agents.weather-agent.tasks"
+
+
+def test_maybe_build_bridge_wires_a_sqlite_journal(monkeypatch):
+    """Without a journal, everything from Task 6 onward (checkpoint
+    boundaries, re-drive on startup) is inert. Bridge construction must
+    default to a concrete SqliteTurnJournal."""
+    from _vystak.runtime.turn_journal import SqliteTurnJournal
+
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://localhost:4222")
+    monkeypatch.setenv("VYSTAK_NATS_SUBJECT", "explicit.subject")
+    agent = SimpleNamespace(name="hero")
+    bridge = maybe_build_bridge(agent, port=9000)
+    assert bridge is not None
+    assert isinstance(bridge._journal, SqliteTurnJournal)
+
+
+def test_resolve_turns_path_env_override(monkeypatch):
+    from _vystak.runtime.nats_bridge import resolve_turns_path
+
+    monkeypatch.setenv("VYSTAK_TURNS_PATH", "/tmp/custom-turns.db")
+    assert resolve_turns_path() == "/tmp/custom-turns.db"
+
+
+def test_resolve_turns_path_falls_back_to_tempdir_when_no_data_dir(monkeypatch, tmp_path):
+    import tempfile
+
+    from _vystak.runtime import nats_bridge as nats_bridge_module
+    from _vystak.runtime.nats_bridge import resolve_turns_path
+
+    missing = tmp_path / "nope"
+    monkeypatch.delenv("VYSTAK_TURNS_PATH", raising=False)
+    monkeypatch.setattr(nats_bridge_module, "_DATA_DIR", str(missing))
+    path = resolve_turns_path()
+    assert path == os.path.join(tempfile.gettempdir(), "vystak-turns.db")
+    assert not path.startswith(str(missing))
 
 
 # ---------------------------------------------------------------------------

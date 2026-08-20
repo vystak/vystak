@@ -56,6 +56,7 @@ channels:
       - {name: SLACK_APP_TOKEN}
 agents:
   - name: d7agent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -77,6 +78,7 @@ def slack_env(project):
 
 def test_D7_full_cycle(slack_env):
     project = slack_env
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D7_YAML)
 
     # NOTE: plan's EnvFiles section intentionally omits channel rows

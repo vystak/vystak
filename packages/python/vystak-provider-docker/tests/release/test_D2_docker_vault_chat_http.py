@@ -44,6 +44,7 @@ channels:
     platform: local
 agents:
   - name: vaultagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -53,6 +54,7 @@ agents:
 
 
 def test_D2_full_cycle(vault_clean, project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D2_YAML)
 
     # V1 — plan: Vault/AppRoles/Secrets/Policies sections present,

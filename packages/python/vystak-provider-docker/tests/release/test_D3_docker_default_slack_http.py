@@ -22,6 +22,7 @@ from .conftest import (
     assert_isolation,
     assert_plan_ok,
     docker_running,
+    vystak,
 )
 
 pytestmark = [
@@ -48,6 +49,7 @@ channels:
       - {name: SLACK_APP_TOKEN}
 agents:
   - name: slackagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -71,6 +73,7 @@ def slack_env(project):
 
 def test_D3_full_cycle(slack_env):
     project = slack_env
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D3_YAML_TEMPLATE)
 
     # V1 — plan

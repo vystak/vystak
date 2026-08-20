@@ -9,7 +9,7 @@ from a2a.server.request_handlers import DefaultRequestHandlerV2
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 # Importing a2a_native applies a runtime monkey-patch to a2a-sdk 1.0.2's
 # proto_utils that swaps `field.label` for `field.is_repeated` — without
@@ -33,6 +33,8 @@ from _vystak.runtime.prompt_callable import build_prompt
 from _vystak.runtime.schedules import build_schedule_tools
 from _vystak.runtime.skills import build_skill_tools
 from _vystak.runtime.store import (
+    CheckpointObserver,
+    ObservedSaver,
     _LazyCheckpointer,
     _LazyStore,
     build_checkpointer,
@@ -161,6 +163,9 @@ def build_agent_app(agent: Any) -> FastAPI:
                     if is_lazy
                     else checkpointer
                 )
+                observer = CheckpointObserver()
+                app_.state.checkpoint_observer = observer
+                resolved = ObservedSaver(resolved, observer)
                 new_graph = build_graph(
                     agent,
                     prompt=prompt,
@@ -170,6 +175,7 @@ def build_agent_app(agent: Any) -> FastAPI:
                 )
                 a2a_executor._graph = new_graph
                 responses_handler.graph = new_graph
+                responses_handler._observer = observer
                 chat_handler.graph = new_graph
                 app_.state.graph = new_graph
             else:
@@ -255,5 +261,42 @@ def build_agent_app(agent: Any) -> FastAPI:
                 status_code=404,
                 detail=f"Response not found: {response_id}",
             ) from e
+
+    # Internal route the durable-execution bridge POSTs to continue an
+    # interrupted thread. Not advertised on the agent card.
+    @app.post("/v1/_vystak/resume")
+    async def _vystak_resume(request: Request):
+        payload = await request.json()
+        thread_id = payload.get("thread_id")
+        if not thread_id:
+            return JSONResponse({"error": "thread_id required"}, status_code=400)
+        return StreamingResponse(
+            responses_handler.resume_stream(thread_id, payload.get("resume")),
+            media_type="text/event-stream",
+        )
+
+    # Internal route the durable-execution bridge GETs on startup to find
+    # which checkpoint LangGraph would actually resume a thread from, so a
+    # re-drive rewinds to the right journaled seq. Not advertised on the
+    # agent card.
+    @app.get("/v1/_vystak/checkpoint")
+    async def _vystak_checkpoint(thread_id: str):
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await responses_handler.graph.aget_state(config)
+        checkpoint_id = None
+        interrupted = False
+        if snapshot is not None:
+            if snapshot.config:
+                checkpoint_id = snapshot.config.get("configurable", {}).get("checkpoint_id")
+            # `.next` lists the pending nodes LangGraph would run on the next
+            # step. Non-empty means the graph is durably parked mid-step —
+            # either it called `interrupt()`, or (equivalently, from this
+            # endpoint's perspective) a resume is otherwise pending. Empty
+            # means either "never run" or "ran to completion" — the bridge's
+            # park-detection caller (`_consume_response_stream`) only ever
+            # asks this while a stream just ended with no terminal event, so
+            # "never run" isn't a real case there.
+            interrupted = bool(snapshot.next)
+        return {"checkpoint_id": checkpoint_id, "interrupted": interrupted}
 
     return app

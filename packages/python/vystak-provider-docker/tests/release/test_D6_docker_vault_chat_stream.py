@@ -53,6 +53,7 @@ channels:
     platform: local
 agents:
   - name: d6agent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -62,6 +63,7 @@ agents:
 
 
 def test_D6_full_cycle(vault_clean, project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D6_YAML)
 
     # V1 — both Vault and transport wiring reflected

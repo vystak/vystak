@@ -58,6 +58,7 @@ channels:
       - {name: SLACK_APP_TOKEN}
 agents:
   - name: d5agent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -79,6 +80,7 @@ def slack_env(project):
 
 def test_D5_full_cycle(vault_clean, slack_env):
     project = slack_env
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D5_YAML)
 
     # V1 — Hashi sections + slack channel principal in AppRoles

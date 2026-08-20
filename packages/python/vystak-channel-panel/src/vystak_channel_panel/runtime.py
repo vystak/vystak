@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import uvicorn
@@ -55,6 +56,11 @@ class PanelChannelRuntime(ChannelRuntime):
                 idle_timeout_s=float(self.config.get("turn_idle_timeout_s", 120.0)),
             )
         self.turn_tasks: dict[str, asyncio.Task] = {}
+
+    def monotonic(self) -> float:
+        """Deadline clock for `run_turn_persister` — a thin seam so tests
+        can inject a fake clock (see `persister_harness` in conftest.py)."""
+        return time.monotonic()
 
     # --- ChannelRuntime abstract hooks (unused request path) --------------
 

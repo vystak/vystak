@@ -35,6 +35,7 @@ channels:
     platform: local
 agents:
   - name: memoryagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -50,6 +51,7 @@ agents:
 
 
 def test_memory_postgres(postgres_clean, project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(MEMORY_YAML)
 
     assert_plan_ok(

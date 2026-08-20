@@ -25,6 +25,7 @@ from .conftest import (
     assert_plan_ok,
     docker_exec,
     docker_running,
+    vystak,
 )
 
 pytestmark = [pytest.mark.release_smoke, pytest.mark.docker]
@@ -52,6 +53,7 @@ channels:
     platform: local
 agents:
   - name: streamagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -61,6 +63,7 @@ agents:
 
 
 def test_D4_full_cycle(project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D4_YAML)
 
     # V1 — plan

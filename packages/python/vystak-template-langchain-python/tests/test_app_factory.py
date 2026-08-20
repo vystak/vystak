@@ -141,6 +141,74 @@ def test_app_chat_completions_route_exists():
     assert "/a2a" in routes
 
 
+def test_app_resume_route_exists_and_is_not_on_agent_card():
+    app = build_agent_app(_agent())
+    routes = [r.path for r in app.routes]
+    assert "/v1/_vystak/resume" in routes
+
+    client = TestClient(app)
+    card = client.get("/.well-known/agent.json").json()
+    card_text = str(card)
+    assert "_vystak/resume" not in card_text
+
+
+def test_app_resume_requires_thread_id():
+    app = build_agent_app(_agent())
+    client = TestClient(app)
+    r = client.post("/v1/_vystak/resume", json={})
+    assert r.status_code == 400
+
+
+def test_app_checkpoint_route_exists_and_is_not_on_agent_card():
+    app = build_agent_app(_agent())
+    routes = [r.path for r in app.routes]
+    assert "/v1/_vystak/checkpoint" in routes
+
+    client = TestClient(app)
+    card = client.get("/.well-known/agent.json").json()
+    assert "_vystak/checkpoint" not in str(card)
+
+
+def test_app_checkpoint_route_returns_null_for_unseen_thread():
+    app = build_agent_app(_agent())
+    with TestClient(app) as client:
+        r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "never-seen"})
+    assert r.status_code == 200
+    assert r.json() == {"checkpoint_id": None, "interrupted": False}
+
+
+def test_app_checkpoint_route_reflects_a_stored_checkpoint():
+    """Exercises the id-extraction branch (`snapshot.config` non-empty)
+    directly against a fake graph, without a real LLM round-trip — mirrors
+    how `_run_detached`'s SSE consumption is tested against fakes rather
+    than a live model."""
+    from _vystak.runtime.app_factory import build_agent_app
+
+    app = build_agent_app(_agent())
+    with TestClient(app) as client:
+        app.state.graph.aget_state = AsyncMock(
+            return_value=SimpleNamespace(
+                config={"configurable": {"checkpoint_id": "ck-9"}}, next=()
+            )
+        )
+        r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "resp_ck_1"})
+    assert r.status_code == 200
+    assert r.json() == {"checkpoint_id": "ck-9", "interrupted": False}
+
+
+def test_app_checkpoint_route_reports_interrupted_when_graph_is_parked():
+    from _vystak.runtime.app_factory import build_agent_app
+
+    app = build_agent_app(_agent())
+    with TestClient(app) as client:
+        app.state.graph.aget_state = AsyncMock(
+            return_value=SimpleNamespace(config={}, next=("approve",))
+        )
+        r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "resp_ck_2"})
+    assert r.status_code == 200
+    assert r.json() == {"checkpoint_id": None, "interrupted": True}
+
+
 def test_app_builds_with_sqlite_sessions_config():
     """Agent with sessions: sqlite must build without TypeError.
 
@@ -172,3 +240,18 @@ def test_app_builds_with_sqlite_sessions_config():
     # The graph compiled (we used checkpointer=None for the lazy case).
     routes = [r.path for r in app.routes]
     assert "/healthz" in routes
+
+
+def test_lifespan_wires_checkpoint_observer_onto_state():
+    """`build_checkpointer` is always lazy (durable-by-default, Task 1), so
+    the `is_lazy` branch in the lifespan always runs and always creates a
+    `CheckpointObserver`, regardless of whether the agent declares
+    `sessions`. This asserts that invariant directly rather than assuming
+    it — the Responses stream's checkpoint markers depend on it.
+    """
+    app = build_agent_app(_agent())
+    with TestClient(app):
+        assert hasattr(app.state, "checkpoint_observer")
+        from _vystak.runtime.store import CheckpointObserver
+
+        assert isinstance(app.state.checkpoint_observer, CheckpointObserver)

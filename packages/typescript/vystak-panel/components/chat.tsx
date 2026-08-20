@@ -26,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { AlertCircleIcon } from 'lucide-react';
+import { visiblePartsAfterReset } from '@/lib/messageParts';
 
 export function Chat({
   conversationId,
@@ -63,7 +64,7 @@ export function Chat({
           {messages.map(message => (
             <Message from={message.role} key={message.id}>
               <MessageContent>
-                {message.parts.map((part, i) => {
+                {visiblePartsAfterReset(message.parts).map((part, i) => {
                   if (part.type === 'text') {
                     return (
                       <MessageResponse key={`${message.id}-${i}`}>

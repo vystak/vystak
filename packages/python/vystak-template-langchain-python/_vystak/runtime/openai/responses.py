@@ -1,20 +1,33 @@
 """Stateful /v1/responses handler."""
 
 import json
+import logging
 import time
 import uuid
 from typing import Any
 
 from _vystak.runtime.content import flatten_content
 
+logger = logging.getLogger("vystak.runtime.openai.responses")
+
+_UNSET = object()
+
 
 class ResponsesHandler:
     """OpenAI Responses API — stateful via previous_response_id (LangGraph thread_id)."""
 
-    def __init__(self, agent: Any, graph: Any, *, store: Any | None) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        graph: Any,
+        *,
+        store: Any | None = None,
+        observer: Any | None = None,
+    ) -> None:
         self.agent = agent
         self.graph = graph
         self.store = store
+        self._observer = observer
 
     async def create(self, body: dict) -> dict | Any:
         if body.get("stream"):
@@ -49,7 +62,19 @@ class ResponsesHandler:
     async def _create_stream(self, body: dict):
         return self._stream_iterator(body)
 
-    async def _stream_iterator(self, body: dict):
+    def resume_stream(self, thread_id: str, resume: Any | None = None):
+        """Continue an interrupted thread. `resume=None` replays from the last
+        checkpoint; a value drives a pending interrupt()."""
+        graph_input = None
+        if resume is not None:
+            from langgraph.types import Command
+
+            graph_input = Command(resume=resume)
+        return self._stream_iterator(
+            {"previous_response_id": thread_id}, graph_input=graph_input
+        )
+
+    async def _stream_iterator(self, body: dict, *, graph_input: Any = _UNSET):
         thread_id = body.get("previous_response_id") or _new_response_id()
         model = body.get("model", f"vystak/{self.agent.name}")
         created = int(time.time())
@@ -65,15 +90,23 @@ class ResponsesHandler:
             },
         })
 
-        messages = _normalize_input(body.get("input"))
+        if graph_input is _UNSET:
+            messages = _normalize_input(body.get("input"))
+            graph_input = {"messages": messages}
         config = {"configurable": {"thread_id": thread_id}}
         full_text = []
         item_id = f"msg_{uuid.uuid4().hex[:12]}"
 
         try:
             async for ev in self.graph.astream_events(
-                {"messages": messages}, config, version="v2"
+                graph_input, config, version="v2"
             ):
+                if self._observer is not None:
+                    for checkpoint_id in self._observer.drain(thread_id):
+                        yield _sse({
+                            "type": "vystak.checkpoint",
+                            "checkpoint_id": checkpoint_id,
+                        })
                 ev_type = ev.get("event")
                 if ev_type == "on_chat_model_stream":
                     chunk = ev.get("data", {}).get("chunk")
@@ -177,6 +210,33 @@ class ResponsesHandler:
             })
             yield "data: [DONE]\n\n"
             return
+
+        # A node that calls `interrupt()` doesn't raise: LangGraph catches
+        # `GraphInterrupt` internally and the astream loop above just ends,
+        # indistinguishable (from here) from a normal completion. Ask the
+        # graph directly — a non-empty `.next` means a step is pending
+        # (durably parked, not finished) — and end the stream here with no
+        # terminal event so the durable-execution bridge's park detection
+        # (`_consume_response_stream`) can tell the difference from a
+        # genuine truncation. Guarded with `getattr`: fakes used by
+        # non-interrupt streaming tests don't implement `aget_state`, and
+        # that must keep behaving exactly as before (never interrupted).
+        aget_state = getattr(self.graph, "aget_state", None)
+        if aget_state is not None:
+            try:
+                snapshot = await aget_state(config)
+            except Exception:  # noqa: BLE001 — state lookup is best-effort here
+                logger.exception("responses.interrupt_state_lookup_failed")
+                snapshot = None
+            if snapshot is not None and snapshot.next:
+                return
+
+        if self._observer is not None:
+            for checkpoint_id in self._observer.drain(thread_id):
+                yield _sse({
+                    "type": "vystak.checkpoint",
+                    "checkpoint_id": checkpoint_id,
+                })
 
         final_text = "".join(full_text)
         yield _sse({
