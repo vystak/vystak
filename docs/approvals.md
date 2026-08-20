@@ -60,7 +60,8 @@ interrupt({
 ```
 
 `interrupt()` doesn't fail and doesn't complete the turn — it parks it. The
-graph state is checkpointed at that point (same SQLite checkpointer that
+graph state is checkpointed at that point (the same checkpointer — SQLite
+by default, Postgres when the agent declares Postgres sessions — that
 backs [durable execution](durable-execution.md)), so the pending decision
 survives an agent container restart, not just a browser tab close.
 
