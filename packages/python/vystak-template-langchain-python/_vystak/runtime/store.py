@@ -47,14 +47,39 @@ def resolve_sessions_path() -> str:
     return os.path.join(tempfile.gettempdir(), "vystak-sessions.db")
 
 
+def _resolve_connection_string(service: Any, injected_env_var: str) -> str | None:
+    """Resolve a Postgres connection string for a `sessions`/`memory` service.
+
+    Resolution order mirrors what the docker provider actually wires up:
+    1. `injected_env_var` (e.g. `SESSION_STORE_URL` / `MEMORY_STORE_URL`) —
+       set by the provider at deploy time from the provisioned service's
+       connection string (`nodes/agent.py`'s `dep_result.info["connection_string"]`).
+       This is the path every managed-service deploy takes.
+    2. `service.connection_string_env` — for BYO/unmanaged services (the
+       schema's `Service.is_managed` is False when this is set), the name of
+       an env var *this* process should read the connection string from.
+       Note this is a var *name*, not the connection string itself — there
+       is no `Service.connection_string` field.
+    """
+    value = os.environ.get(injected_env_var)
+    if value:
+        return value
+    env_name = getattr(service, "connection_string_env", None)
+    if env_name:
+        return os.environ.get(env_name)
+    return None
+
+
 def build_checkpointer(agent: Any):
     sessions = getattr(agent, "sessions", None)
     engine = getattr(sessions, "engine", None) if sessions is not None else None
 
     if engine == "postgres":
+        conn = _resolve_connection_string(sessions, "SESSION_STORE_URL")
+
         def _make_pg_cm():
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-            return AsyncPostgresSaver.from_conn_string(sessions.connection_string)
+            return AsyncPostgresSaver.from_conn_string(conn)
 
         return _LazyCheckpointer(_make_pg_cm)
 
@@ -91,8 +116,6 @@ def build_memory_store(agent: Any):
     Reads agent.memory.engine. Returns InMemoryStore (sync, no lifespan) or
     a _LazyStore wrapping AsyncPostgresStore (resolved via lifespan).
     """
-    import os
-
     memory = getattr(agent, "memory", None)
     if memory is None:
         return None
@@ -100,10 +123,7 @@ def build_memory_store(agent: Any):
     engine = getattr(memory, "engine", None)
 
     if engine == "postgres":
-        conn = (
-            os.environ.get("MEMORY_STORE_URL")
-            or getattr(memory, "connection_string", None)
-        )
+        conn = _resolve_connection_string(memory, "MEMORY_STORE_URL")
 
         def _make_cm():
             from langgraph.store.postgres.aio import AsyncPostgresStore
