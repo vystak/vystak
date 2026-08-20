@@ -82,7 +82,6 @@ PANEL_PORT = 18140
 SERVICE_TOKEN = "durable-test-panel-token"  # noqa: S105 — test fixture token, not a secret
 ADMIN = "admin@example.test"
 AGENT_CONTAINER = "vystak-durable-agent"
-AGENT_VOLUME = "vystak-agent-durable-agent-data"
 
 _SENTINEL_MARKERS = ("sentinel", "your-", "<your", "fake", "test-")
 
