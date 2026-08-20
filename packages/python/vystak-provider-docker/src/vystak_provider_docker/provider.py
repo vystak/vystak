@@ -122,6 +122,31 @@ CMD ["python", "{entrypoint}"]
 
 SECRETS_PATH = Path(".vystak") / "secrets.json"
 
+# Channels whose runtime mounts POST /deliver onto their own main FastAPI
+# app (DockerChannelNode's `container_port`, always 8080 today — see
+# ChatChannelRuntime._start_delivery_receiver / PanelChannelRuntime's
+# override of the same hook) rather than the default `ChannelRuntime`
+# sidecar receiver on `delivery_port` (default 9999; used by Slack,
+# Discord, and any future channel that doesn't override the hook). The
+# heartbeat scheduler's `channel_addresses` must route to whichever port
+# a given channel type actually listens on for delivery.
+_CHANNEL_MAIN_APP_DELIVERY_PORT = 8080
+_DEFAULT_CHANNEL_DELIVERY_PORT = 9999
+_CHANNELS_DELIVERING_ON_MAIN_APP = (ChannelType.CHAT, ChannelType.PANEL)
+
+
+def _heartbeat_delivery_port(channel_type: ChannelType) -> int:
+    """Delivery port for a channel's `vystak-channel-<name>` container.
+
+    Must match the port the channel's runtime actually binds `/deliver`
+    to (see `_CHANNELS_DELIVERING_ON_MAIN_APP`'s docstring) — not the
+    provider's own default sidecar-receiver assumption, which only holds
+    for channels that never override `_start_delivery_receiver`.
+    """
+    if channel_type in _CHANNELS_DELIVERING_ON_MAIN_APP:
+        return _CHANNEL_MAIN_APP_DELIVERY_PORT
+    return _DEFAULT_CHANNEL_DELIVERY_PORT
+
 
 class DockerProvider(PlatformProvider):
     """Deploys and manages agents as Docker containers."""
@@ -1298,7 +1323,9 @@ class DockerProvider(PlatformProvider):
                 for a in agents_with_schedules
             },
             channel_addresses={
-                c.canonical_name: f"http://vystak-channel-{c.name}:9999"
+                c.canonical_name: (
+                    f"http://vystak-channel-{c.name}:{_heartbeat_delivery_port(c.type)}"
+                )
                 for c in channels
             },
             transport_cfg=transport_cfg,
