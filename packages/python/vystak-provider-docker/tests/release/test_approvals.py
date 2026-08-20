@@ -27,27 +27,44 @@ container's env too (an agent that only gets the key sends it to
 `api.anthropic.com` and 401s against a MiniMax key).
 
 Why the park assertion is strict (parked *before* any side-effect log line
-exists), not just "eventually parked": this cell caught a real regression
-live during Task 13 development that a looser "eventually parked" check
-would have missed entirely -- see
-`vystak-template-langchain-python/_vystak/runtime/approvals.py`'s
-`_dispatch_name` docstring for the bug (gated `tools/*.py` functions,
-loaded as bare callables with no `.name`, never matched the approval map,
-so the gate silently no-opped and `restart_service` ran unparked). Fixed
-in the same commit that added this file. NOTE, corrected from an earlier
-draft of this docstring: the installed PyPI `vystak` in the deployed image
-(0.2.0 as of this writing) already carries the `needs_approval` field, so
-`load_approval_map`'s typed path resolves it directly -- the raw-
-`agent.json` fallback this cell was originally thought to be exercising
-is NOT what caught the regression above; the gate never even reached
-`load_approval_map`'s output before failing to wrap the tool. The
-fallback still exists for whenever the installed `vystak` genuinely
-predates the field, but this cell verified empirically that it isn't
-currently in play. Verified the assertion actually discriminates: reverted
-`_dispatch_name` locally, reinstalled the CLI's bundled template snapshot,
-and confirmed `test_live_approval_approve_runs_gated_tool_once` fails
-(never parks, 90s timeout) against the broken build before restoring the
-fix.
+exists), not just "eventually parked": the deployed agent image installs
+`vystak` unpinned from PyPI (`_vystak/requirements.txt` just says
+"vystak" -- no version bound), and the real published PyPI package
+(0.3.0 as of this writing -- confirmed by downloading the wheel and
+grepping its `schema/skill.py`) does NOT have the `needs_approval`
+field. `pydantic`'s `extra="ignore"` means the installed
+`vystak.schema.Skill` silently drops it, so `load_approval_map`'s TYPED
+branch (`getattr(skill, "needs_approval", None)`) returns nothing in
+every real deployment today, and the raw-`agent.json` fallback (written
+by the CLI's own, newer `vystak`, at `vystak init` time) is the ONLY
+branch that currently functions in a deployed container. This cell
+live-proves that fallback path end to end -- do not delete it as
+"redundant with the typed field" without first shipping a PyPI release
+that carries `needs_approval`; until then the typed branch has only
+unit coverage (`test_map_from_typed_field`), not a live one.
+
+(An earlier draft of this docstring claimed the opposite -- that a local
+sandbox deploy showed vystak 0.2.0 already carrying the field, so the
+fallback wasn't in play. That observation was real but not
+representative: it came from this development sandbox's package index,
+which apparently resolved `vystak` to some pre-0.3.0 snapshot with the
+field already present, not from the real PyPI index a normal `vystak
+init` + `docker build` hits outside this sandbox. Downloading the actual
+published `vystak==0.3.0` wheel from pypi.org and inspecting
+`schema/skill.py` directly confirms the field is absent there -- that's
+the version any real deployment gets.)
+
+Separately, this cell also caught a real regression during Task 13
+development that a looser "eventually parked" check would have missed:
+see `vystak-template-langchain-python/_vystak/runtime/approvals.py`'s
+`_dispatch_name` docstring (gated `tools/*.py` functions, loaded as bare
+callables with no `.name`, never matched the approval map -- from
+EITHER branch -- so the gate silently no-opped and `restart_service` ran
+unparked). Fixed in the same commit that added this file. Verified the
+assertion actually discriminates: reverted `_dispatch_name` locally,
+reinstalled the CLI's bundled template snapshot, and confirmed
+`test_live_approval_approve_runs_gated_tool_once` fails (never parks,
+90s timeout) against the broken build before restoring the fix.
 """
 
 from __future__ import annotations
@@ -321,13 +338,42 @@ def _parked_row(container: str, turn_id: str) -> dict | None:
 
 
 def _restart_invocations(container: str) -> list[str]:
+    """Lines in the side-effect log inside `container`. Returns `[]` ONLY
+    when the log genuinely doesn't exist yet (the tool hasn't run) -- any
+    other `docker exec` failure (container unreachable mid-restart, daemon
+    hiccup, wrong container name) raises instead of silently reading as
+    "zero restarts". Without this distinction the deny cell's
+    zero-side-effect assertions are unfailable: a docker-exec failure and
+    a genuine deny both produce `[]`, so a broken deny path (or a broken
+    test harness) would pass silently. Mirrors `_parked_row`'s earlier
+    fix for the same class of bug (a falsy-but-not-None result reading as
+    success)."""
     result = run(
         ["docker", "exec", container, "cat", SIDE_EFFECT_LOG],
         check=False,
     )
-    if result.returncode != 0:
+    if result.returncode == 0:
+        return [line for line in result.stdout.splitlines() if line]
+    if "No such file or directory" in result.stderr:
         return []
-    return [line for line in result.stdout.splitlines() if line]
+    raise RuntimeError(
+        f"docker exec cat {SIDE_EFFECT_LOG} failed in {container} "
+        f"(rc={result.returncode}): {result.stderr!r}"
+    )
+
+
+def _assert_data_dir_reachable(container: str) -> None:
+    """Positive control for `_restart_invocations`' zero-side-effect
+    assertions: proves `docker exec` against `container` actually works
+    (not just that the log file happens to be absent), by checking a
+    directory (`/data`, the agent's durable volume mount) that always
+    exists regardless of whether `restart_service` has ever run."""
+    result = run(["docker", "exec", container, "test", "-d", "/data"], check=False)
+    assert result.returncode == 0, (
+        f"docker exec against {container} is not working (rc={result.returncode}, "
+        f"stderr={result.stderr!r}) -- a zero-side-effect assertion right now "
+        "would be meaningless"
+    )
 
 
 def _deploy_live_approvals(project, monkeypatch, key: str, url: str):
@@ -479,6 +525,7 @@ def test_live_approval_deny_skips_gated_tool(
             interval=1.0,
         )
         assert parked_row is not None, "turn never parked on the gated tool"
+        _assert_data_dir_reachable(AGENT_CONTAINER)
         assert _restart_invocations(AGENT_CONTAINER) == [], (
             "restart_service ran before any decision was made"
         )
@@ -505,6 +552,10 @@ def test_live_approval_deny_skips_gated_tool(
             f"journal row didn't reach done (denial should not fail the turn): {final_row}"
         )
 
+        # Positive control: proves docker exec against this container still
+        # works at this point, so the zero-side-effect assertion below
+        # can't pass merely because docker exec is failing closed.
+        _assert_data_dir_reachable(AGENT_CONTAINER)
         assert _restart_invocations(AGENT_CONTAINER) == [], (
             f"restart_service ran despite denial: {_restart_invocations(AGENT_CONTAINER)}"
         )
