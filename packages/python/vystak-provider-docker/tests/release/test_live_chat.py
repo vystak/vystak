@@ -22,10 +22,10 @@ import pytest
 
 from .conftest import (
     assert_apply_ok,
+    assert_health,
     container_http_port,
     docker_running,
     vystak,
-    wait_for_http,
 )
 
 pytestmark = [pytest.mark.release_live_chat, pytest.mark.docker]
@@ -57,6 +57,7 @@ channels:
     platform: local
 agents:
   - name: livechat
+    framework: langchain-python
     instructions: |
       You are a test assistant. When you receive any user message,
       respond with EXACTLY the single word "pong" and nothing else.
@@ -87,25 +88,34 @@ def live_env(project):
 
 def test_live_chat_round_trip(live_env):
     project = live_env
+    # `vystak apply` requires a scaffolded `_vystak/` tree (the no-codegen
+    # pivot's apply-time validation added after this cell was written).
+    # Init first, then overwrite the template's default vystak.yaml.
+    # --force is required because the `live_env`/`project` fixture
+    # pre-creates `.env` + `tools/`, making the target dir non-empty.
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(LIVE_YAML)
 
     assert_apply_ok(cwd=project)
     assert docker_running("vystak-livechat"), "agent container not running"
 
     # Wait for the agent to be healthy before sending the prompt.
+    assert_health("vystak-livechat")
     port = container_http_port("vystak-livechat", 8000)
-    wait_for_http(f"http://localhost:{port}/health", timeout=30)
 
-    # Send the deterministic prompt via A2A.
+    # Send the deterministic prompt via A2A. Current a2a-sdk speaks the
+    # `message/send` JSON-RPC method (v0.3 protocol) — `tasks/send` is a
+    # stale pre-pivot method name and now 404s with "Method not found".
     body = {
         "jsonrpc": "2.0",
         "id": "live-1",
-        "method": "tasks/send",
+        "method": "message/send",
         "params": {
-            "id": "t-live-1",
             "message": {
+                "kind": "message",
+                "messageId": "m-live-1",
                 "role": "user",
-                "parts": [{"type": "text", "text": "respond now"}],
+                "parts": [{"kind": "text", "text": "respond now"}],
             },
         },
     }
