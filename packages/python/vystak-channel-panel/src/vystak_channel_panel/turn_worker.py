@@ -16,8 +16,9 @@ logger = logging.getLogger("vystak.channel.panel.turns")
 # routinely exceeds the JetStream idle window. On TurnStreamIdle the
 # persister asks the agent for the turn's actual status via
 # `responses/turnStatus` and only concludes once that status (or the overall
-# deadline) says the turn is really over.
-WAITING_STATUSES = {"running", "parked"}
+# deadline) says the turn is really over. "running" keeps waiting; "parked"
+# is handled explicitly above (it excludes time from the deadline); anything
+# else is treated as terminal.
 DEFAULT_TURN_DEADLINE_S = 900.0
 
 
@@ -42,9 +43,9 @@ async def run_turn_persister(
             # decision) doesn't count against the deadline — a park can
             # legitimately outlast the 900s idle budget. `parked_since` marks
             # the start of the current parked span (None while not parked);
-            # `_parked_total` accumulates completed spans.
+            # `parked_total` accumulates completed spans.
             parked_since: float | None = None
-            _parked_total = 0.0
+            parked_total = 0.0
             conv = await rt.panel_store.get_conversation(conv_id)
             route = rt.routes.get(conv.agent_name, {}) if conv is not None else {}
             agent_name = route.get("canonical", conv.agent_name if conv is not None else "")
@@ -82,11 +83,16 @@ async def run_turn_persister(
                         logger.info(
                             "turnStatus unreachable conv=%s turn=%s", conv_id, turn_id
                         )
-                        # An open parked span is deliberately NOT subtracted
-                        # here — if the agent is unreachable we can no longer
-                        # confirm the park is real, so letting the deadline
-                        # fire on stale parked time is the safe read.
-                        if (now - started) - _parked_total >= deadline_s:
+                        # If a park was already confirmed by a prior
+                        # successful poll, "park indefinitely" governs: leave
+                        # the open span alone (don't close it, don't count it)
+                        # and only bound the PRE-park active time — an
+                        # unconfirmed park doesn't get this benefit, since we
+                        # have no confirmation the agent is actually parked
+                        # rather than just unreachable.
+                        open_span = (now - parked_since) if parked_since is not None else 0.0
+                        active = (now - started) - parked_total - open_span
+                        if active >= deadline_s:
                             logger.warning(
                                 "turn deadline conv=%s turn=%s", conv_id, turn_id
                             )
@@ -98,16 +104,16 @@ async def run_turn_persister(
                             parked_since = now
                         continue
                     if parked_since is not None:
-                        _parked_total += now - parked_since
+                        parked_total += now - parked_since
                         parked_since = None
-                    active = (now - started) - _parked_total
+                    active = (now - started) - parked_total
                     if active >= deadline_s:
                         logger.warning(
                             "turn deadline conv=%s turn=%s", conv_id, turn_id
                         )
                         errored = True
                         break
-                    if status in WAITING_STATUSES:
+                    if status == "running":
                         continue
                     logger.warning(
                         "turn idle timeout conv=%s turn=%s status=%s",

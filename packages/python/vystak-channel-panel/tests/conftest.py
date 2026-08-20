@@ -62,7 +62,13 @@ def persister_harness():
     `nats_client.stream_turn_events` yields one configured batch of events
     then raises `TurnStreamIdle`; `nats_client.turn_status` returns (or
     raises) the configured status; `rt.monotonic()` is driven by an
-    injectable clock; `panel_store` records what got persisted/cleared."""
+    injectable clock; `panel_store` records what got persisted/cleared.
+
+    `turn_status` may be a single value/exception (returned/raised on every
+    call, the original behavior) or a list — each call consumes the next
+    entry, holding on the last one once exhausted — for scripting
+    interleavings like "confirmed parked, then a few unreachable polls, then
+    running again"."""
 
     class Harness:
         def __init__(self, *, event_batches, turn_status, clock=None):
@@ -71,6 +77,7 @@ def persister_harness():
             self.cleared_active_turn = False
             self._event_batches = event_batches
             self._turn_status = turn_status
+            self._status_calls = 0
             self._clock = list(clock) if clock is not None else None
             self._clock_calls = 0
 
@@ -101,9 +108,16 @@ def persister_harness():
                     raise TurnStreamIdle(subject)
 
                 async def turn_status(self_nc, agent_name, turn_id):
-                    if isinstance(harness._turn_status, BaseException):
-                        raise harness._turn_status
-                    return harness._turn_status
+                    ts = harness._turn_status
+                    if isinstance(ts, list):
+                        idx = min(harness._status_calls, len(ts) - 1)
+                        harness._status_calls += 1
+                        item = ts[idx]
+                    else:
+                        item = ts
+                    if isinstance(item, BaseException):
+                        raise item
+                    return item
 
             class FakePanelStore:
                 async def get_conversation(self_ps, conv_id):
