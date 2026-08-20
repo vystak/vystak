@@ -723,6 +723,28 @@ class SqlitePanelStore:
             row = await cur.fetchone()
         return self._message_from_row(row) if row else None
 
+    async def get_messages_by_turn_id(
+        self, conversation_id: str, turn_id: str
+    ) -> list[PanelMessage]:
+        """All assistant rows persisted for *turn_id*, oldest first.
+
+        Normally there's exactly one (the NATS persister upserts a single
+        row in place). But the HTTP resume path's `_run_resume_http`
+        inserts a NEW row via `add_message` on a chained park (a resumed
+        run that parks AGAIN on a second gated tool) rather than updating
+        the first park's row — both rows keep the same `turn_id`. A
+        `LIMIT 1` lookup (`get_message_by_turn_id`) can silently pick the
+        wrong one when resolving a pending approval part; callers that
+        need to find/flip a pending part for a turn should use this and
+        act on every match instead."""
+        async with self.db.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND turn_id = ? "
+            "AND role = 'assistant' ORDER BY created_at",
+            (conversation_id, turn_id),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [self._message_from_row(r) for r in rows]
+
     async def update_message(
         self,
         message_id: str,

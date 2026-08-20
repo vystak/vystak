@@ -31,10 +31,31 @@ from typing import Any
 
 import httpx
 from a2a.client import ClientConfig, create_client
-from a2a.types import Message, Part, Role, SendMessageRequest
+from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 from langchain_core.tools import tool
 
 logger = logging.getLogger("vystak.runtime.subagents")
+
+
+def _approval_pending_reply(marker: Any) -> str | None:
+    """If *marker* is the `{"kind": "approval_pending", ...}` JSON a gated
+    peer's `input-required` task end carries as its message text (see
+    `a2a_native/executor.py`'s interrupt handling, and the same detection
+    idiom in `vystak-channel-runtime/agent_client.py`'s
+    `_reply_from_jsonrpc`), return a friendly string for the calling LLM
+    instead of feeding it the raw marker JSON — an orchestrator has no way
+    to act on `{"kind": "approval_pending", "payload": {...}}` and would
+    otherwise either hallucinate a response or retry pointlessly. Returns
+    None when *marker* isn't that shape, so the caller falls through to
+    its normal text handling."""
+    if not isinstance(marker, dict) or marker.get("kind") != "approval_pending":
+        return None
+    payload = marker.get("payload") or {}
+    tool_name = payload.get("tool") or "a tool"
+    return (
+        f"The sub-agent is waiting for human approval of tool '{tool_name}' "
+        "and cannot proceed. A human must approve it in the panel or Slack."
+    )
 
 
 def build_subagent_tools(agent: Any) -> list[Any]:
@@ -258,20 +279,32 @@ def _make_tool(subagent_name: str, base_url: str, card_path: str, description: s
             # only the LAST status_update message — earlier ones may be
             # transient working-state pings without a message.
             final_text_parts: list[str] = []
+            last_state: int | None = None
             async for event in client.send_message(request):
                 kind = event.WhichOneof("payload")
                 if kind == "task":
+                    last_state = event.task.status.state
                     msg = event.task.status.message
                     if msg and msg.parts:
                         final_text_parts = [p.text for p in msg.parts if p.text]
                 elif kind == "status_update":
+                    last_state = event.status_update.status.state
                     msg = event.status_update.status.message
                     if msg and msg.parts:
                         # Replace, not append — last completed status wins.
                         final_text_parts = [p.text for p in msg.parts if p.text]
                 elif kind == "message":
                     final_text_parts = [p.text for p in event.message.parts if p.text]
-            return "".join(final_text_parts) or "(no response)"
+            text = "".join(final_text_parts)
+            if last_state == TaskState.TASK_STATE_INPUT_REQUIRED and text:
+                try:
+                    marker = json.loads(text)
+                except (ValueError, TypeError):
+                    marker = None
+                friendly = _approval_pending_reply(marker)
+                if friendly is not None:
+                    return friendly
+            return text or "(no response)"
         except Exception as e:  # noqa: BLE001
             return f"[{subagent_name} error] {e}"
         finally:
@@ -383,6 +416,15 @@ def _make_nats_tool(
             msg = status.get("message") or {}
             parts = msg.get("parts") or []
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            state_value = status.get("state")
+            if state_value in ("input-required", "input_required") and text:
+                try:
+                    marker = json.loads(text)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    marker = None
+                friendly = _approval_pending_reply(marker)
+                if friendly is not None:
+                    return friendly
             return text or "(no response)"
         except Exception as e:  # noqa: BLE001
             return f"[{subagent_name} error] {e}"

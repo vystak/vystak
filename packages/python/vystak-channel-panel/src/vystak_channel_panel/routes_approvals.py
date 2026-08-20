@@ -281,20 +281,28 @@ async def _run_resume_http(
 async def _resolve_pending_part(
     rt: PanelChannelRuntime, conv_id: str, turn_id: str | None
 ) -> None:
-    """Flip the parked message's persisted `approval-requested` part to
+    """Flip every parked message's persisted `approval-requested` part to
     `resolved` once its resume completes successfully, so a reload doesn't
     render a live approve/reject control for a decision that's already
-    been made (clicking it would just 422)."""
+    been made (clicking it would just 422).
+
+    Resolves ALL rows tagged with `turn_id`, not just one: a chained park
+    (a resumed run that parks AGAIN on a second gated tool) makes
+    `_run_resume_http` insert a SECOND row for the same `turn_id` (see
+    `get_messages_by_turn_id`'s docstring) rather than updating the first
+    park's row in place. A `LIMIT 1` lookup here could silently patch the
+    wrong row and leave the other one's approval-requested part stuck."""
     if turn_id is None:
         return
-    pending = await rt.panel_store.get_message_by_turn_id(conv_id, turn_id)
-    if pending is None or not pending.parts:
-        return
-    updated = [
-        {**p, "state": "resolved"}
-        if p.get("type") == "tool" and p.get("state") == "approval-requested"
-        else p
-        for p in pending.parts
-    ]
-    if updated != pending.parts:
-        await rt.panel_store.update_message_parts(pending.id, updated)
+    pending_messages = await rt.panel_store.get_messages_by_turn_id(conv_id, turn_id)
+    for pending in pending_messages:
+        if not pending.parts:
+            continue
+        updated = [
+            {**p, "state": "resolved"}
+            if p.get("type") == "tool" and p.get("state") == "approval-requested"
+            else p
+            for p in pending.parts
+        ]
+        if updated != pending.parts:
+            await rt.panel_store.update_message_parts(pending.id, updated)

@@ -113,6 +113,16 @@ class TurnAccumulator:
             self._current_text.append(ev.text)
         elif ev.type == "tool_call":
             self._flush_text()
+            # A stale, never-resolved pending call for the same tool name
+            # (the pre-park attempt, whose matching tool_result never
+            # arrived on this stream) would otherwise sit in the pending
+            # map forever — drop it so it can't be confused with the new
+            # in-flight call.
+            for stale_id in [
+                cid for cid, call in self._pending_tool_calls.items()
+                if call["tool_name"] == ev.tool_name
+            ]:
+                self._pending_tool_calls.pop(stale_id, None)
             self._pending_tool_calls[ev.tool_call_id] = {
                 "tool_name": ev.tool_name,
                 "arguments": ev.arguments,
@@ -130,11 +140,29 @@ class TurnAccumulator:
             ]
         elif ev.type == "approval_requested":
             self._flush_text()
+            tool_name = ev.approval.get("tool", "")
+            # The tool part immediately preceding this park (if any, same
+            # tool name) is the pre-park attempt that got interrupted
+            # mid-execution: LangChain's callback layer sees the raised
+            # GraphInterrupt like any other tool exception and the runtime
+            # turns it into a resolved, is_error tool part for the SAME
+            # tool_name before the graph-level park is detected and this
+            # approval_requested event is synthesized. It never gets a real
+            # result and would otherwise sit alongside the approval card
+            # (and later the real result) as a phantom "completed" entry —
+            # drop it now, superseded by the pending approval part.
+            if (
+                self.msg_parts
+                and self.msg_parts[-1].get("type") == "tool"
+                and self.msg_parts[-1].get("tool_name") == tool_name
+                and self.msg_parts[-1].get("state") != "approval-requested"
+            ):
+                self.msg_parts.pop()
             self.msg_parts.append({
                 "type": "tool",
                 "state": "approval-requested",
                 "tool_call_id": _approval_call_id(ev),
-                "tool_name": ev.approval.get("tool", ""),
+                "tool_name": tool_name,
                 "input": json.dumps(ev.approval.get("args", {})),
                 "output": "",
                 "is_error": False,

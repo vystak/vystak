@@ -73,6 +73,14 @@ inline error under the controls; Slack replies with an ephemeral
 
 ## Surfaces
 
+**v1 decision surfaces are panel and Slack only.** A gated agent driven
+from the chat channel, Discord, a heartbeat trigger, the `vystak-chat`
+REPL, or a subagent orchestrator still parks correctly, but none of those
+surfaces can approve or deny it — the turn just waits until someone
+resolves it from the panel (or Slack, if configured). A subagent
+orchestrator calling a gated peer gets a friendly waiting message instead
+of the raw approval marker, not a way to decide it itself.
+
 - **Panel** — an Awaiting Approval card in the transcript: tool name, args,
   an optional note field, Approve/Deny buttons. `decided_by` is filled in
   server-side from the authenticated user's email, not sent by the client.
@@ -100,6 +108,16 @@ runs against the local dev `vystak`, which does have the field — so plan
 correctly rejects an unknown tool name even though the *deployed*
 container is on the fallback path. The typed field takes over
 transparently once a release ships it.
+
+## Security and trust boundary
+
+The agent's `/v1/_vystak/resume` and `/v1/_vystak/checkpoint` endpoints are
+unauthenticated within the deployment network (same posture as durable
+execution) — the approval guarantee is only as strong as the network
+isolation around the agent container; the panel and Slack authenticate
+their own users before calling those endpoints, and a shared-secret
+hardening of the `_vystak` routes is a planned follow-up, not implemented
+yet. See `docs/approvals.md` in the repo for the full writeup.
 
 ## Try it
 

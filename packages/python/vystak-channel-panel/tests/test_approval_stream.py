@@ -52,3 +52,54 @@ def test_resolved_approval_replaces_pending_part():
     tool_parts = [p for p in acc.parts() if p["type"] == "tool"]
     assert len(tool_parts) == 1
     assert tool_parts[0].get("state") != "approval-requested"
+
+
+def test_prepark_interrupt_artifact_is_superseded():
+    """Full NATS-path sequence: a pre-park tool_call/tool_result pair whose
+    result is the raised Interrupt (LangChain's callback layer sees the
+    GraphInterrupt as any other tool error before the graph-level park is
+    detected), THEN the approval_requested park marker, THEN the resumed
+    run's real tool_call/tool_result pair for the same tool. parts() must
+    contain exactly one tool part for that tool, and it must be the
+    completed one — not the interrupt artifact, not the approval card."""
+    acc = TurnAccumulator()
+    # Pre-park attempt: tool_call + tool_result carrying the interrupt.
+    acc.feed_seq(0, PanelStreamEvent(type="tool_call", tool_call_id="pre",
+                                     tool_name="restart_service",
+                                     arguments='{"name": "web"}'))
+    acc.feed_seq(1, PanelStreamEvent(type="tool_result", tool_call_id="pre",
+                                     output="Interrupt(value={...})", is_error=True))
+    # Park.
+    acc.feed_seq(2, PanelStreamEvent(type="approval_requested", approval=PAYLOAD))
+    # Resume: a fresh tool_call/tool_result pair for the same tool.
+    acc.feed_seq(3, PanelStreamEvent(type="tool_call", tool_call_id="post",
+                                     tool_name="restart_service",
+                                     arguments='{"name": "web"}'))
+    acc.feed_seq(4, PanelStreamEvent(type="tool_result", tool_call_id="post",
+                                     output="restarted web", is_error=False))
+
+    tool_parts = [p for p in acc.parts() if p["type"] == "tool"]
+    assert len(tool_parts) == 1
+    assert tool_parts[0]["tool_call_id"] == "post"
+    assert tool_parts[0]["output"] == "restarted web"
+    assert tool_parts[0]["is_error"] is False
+    assert tool_parts[0].get("state") != "approval-requested"
+
+
+def test_prepark_interrupt_artifact_dropped_at_park_even_without_resume():
+    """The interrupt artifact is superseded the moment the park is
+    recorded, not deferred until a resume shows up — so even if the turn
+    never resumes on this stream instance (e.g. a page reload mid-park),
+    only the approval-requested card is shown, not a spurious errored
+    entry."""
+    acc = TurnAccumulator()
+    acc.feed_seq(0, PanelStreamEvent(type="tool_call", tool_call_id="pre",
+                                     tool_name="restart_service",
+                                     arguments='{"name": "web"}'))
+    acc.feed_seq(1, PanelStreamEvent(type="tool_result", tool_call_id="pre",
+                                     output="Interrupt(value={...})", is_error=True))
+    acc.feed_seq(2, PanelStreamEvent(type="approval_requested", approval=PAYLOAD))
+
+    tool_parts = [p for p in acc.parts() if p["type"] == "tool"]
+    assert len(tool_parts) == 1
+    assert tool_parts[0]["state"] == "approval-requested"

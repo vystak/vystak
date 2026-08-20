@@ -135,6 +135,22 @@ resolved or unavailable): ..."*.
 
 ## Surfaces
 
+**v1 decision surfaces are panel and Slack only.** A gated agent driven
+from any other surface — the chat channel (`vystak-channel-chat`'s
+OpenAI-compatible endpoint), Discord, a heartbeat-triggered invocation, the
+`vystak-chat` terminal REPL, or a subagent orchestrator calling a gated peer
+— has no decision path on that surface. The turn still parks correctly
+(the gate mechanism doesn't care who or what drove the turn), but nothing on
+those surfaces can approve or deny it: the caller just sees the turn go
+`input-required`/never complete, and the pending decision waits until
+someone opens the panel (or the Slack thread, if that channel is also
+configured) and resolves it there. An orchestrator whose subagent call hits
+a gated peer gets a friendly waiting message instead of the raw approval
+marker (`"The sub-agent is waiting for human approval of tool '<tool>' and
+cannot proceed. A human must approve it in the panel or Slack."`) rather
+than a way to decide it itself — subagent orchestration is a caller of a
+gated turn, never a decision surface for one.
+
 ### Panel
 
 `vystak-panel`'s `ApprovalActions` component (`components/approval-actions.tsx`)
@@ -227,6 +243,31 @@ and finding the same pending card on return.
 Release coverage: `packages/python/vystak-provider-docker/tests/release/test_approvals.py` —
 two `release_live_chat` cells (approve, deny) against a real deployed
 container, plus a `release_slack` smoke cell.
+
+## Security and trust boundary
+
+The agent's `POST /v1/_vystak/resume` and `GET /v1/_vystak/checkpoint`
+endpoints are **unauthenticated within the deployment network** — same
+posture as the durable-execution machinery they're part of (see
+[`docs/durable-execution.md`](durable-execution.md)). Any process that can
+reach the agent container's port can call `resume` with an arbitrary
+decision (approving or denying on someone else's behalf) and can read
+`checkpoint` to see a pending tool call's full arguments, including
+whatever sensitive values were about to be passed to a gated tool.
+
+This means the approval guarantee — "a human must decide before this tool
+runs" — is only as strong as the network isolation around the agent
+container. It does not, on its own, protect against another workload on
+the same Docker network or a compromised sibling container. What actually
+authenticates a decision is the *surface*: the panel authenticates its
+users (session/password auth) and stamps `decided_by` from that identity
+server-side; Slack authenticates via its own bot/app tokens and OAuth
+scopes. Neither the panel nor Slack sends its authentication through to
+the agent's `_vystak` routes — those routes trust whatever calls them.
+
+A shared-secret (or similar) hardening of the `_vystak` routes is a
+planned follow-up, not implemented here — don't build against an assumed
+token today.
 
 ## Related
 

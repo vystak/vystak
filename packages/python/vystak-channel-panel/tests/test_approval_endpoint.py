@@ -555,6 +555,89 @@ async def test_http_approval_second_park_persists_pending_and_stays_parked(
     assert pending["tool_name"] == "deploy_service"
 
 
+async def test_http_chained_park_second_approval_resolves_both_pending_rows(
+    api, panel_rt, monkeypatch
+):
+    """Important-finding regression: a chained park (resume parks AGAIN on
+    a second gated tool) makes `_run_resume_http` insert a SECOND
+    assistant row tagged with the SAME turn_id rather than updating the
+    first park's row in place. When the turn finally concludes,
+    `_resolve_pending_part` must flip the pending part on BOTH rows — a
+    `LIMIT 1` lookup could silently patch only one, leaving the other
+    stuck showing a live approve/reject control for an already-decided
+    turn (clicking it would 422)."""
+    owner, pid, cid = await _ready(api)
+    fake = FakeResponsesClientHttp()
+    panel_rt.responses_client = fake
+
+    await panel_rt.panel_store.update_conversation(cid, last_response_id="resp_1")
+    await panel_rt.panel_store.set_active_turn(cid, "resp_1")
+    first_pending = await panel_rt.panel_store.add_message(
+        cid, "assistant", "",
+        parts=[{
+            "type": "tool", "state": "approval-requested",
+            "tool_call_id": "approval:restart_service",
+            "tool_name": "restart_service",
+            "input": json.dumps({"name": "web"}),
+            "output": "", "is_error": False,
+        }],
+        turn_id="resp_1",
+    )
+
+    tasks = _capture_tasks(monkeypatch)
+
+    # First approval: the resumed run parks AGAIN on a second gated tool —
+    # inserts a second row, still tagged turn_id=resp_1.
+    fake._resume_events = [PanelStreamEvent(type="token", text="restarting, now deploying ")]
+    fake._checkpoint = {
+        "checkpoint_id": "ckpt_2",
+        "interrupted": True,
+        "interrupts": [
+            {"kind": "tool_approval", "tool": "deploy_service",
+             "args": {"name": "web"}, "skill": "ops"},
+        ],
+    }
+    resp1 = await api.post(
+        f"/api/conversations/{cid}/approval",
+        json={"turn_id": "resp_1", "approved": True, "note": None},
+        headers=as_user(owner),
+    )
+    assert resp1.status_code == 200
+    for t in tasks:
+        await t
+    tasks.clear()
+
+    msgs = (
+        await api.get(f"/api/conversations/{cid}/messages", headers=as_user(owner))
+    ).json()["messages"]
+    second_pending_id = next(
+        m["id"] for m in msgs if m["id"] != first_pending.id and m["role"] == "assistant"
+    )
+
+    # Second approval: this time the run concludes — must resolve BOTH
+    # rows' pending parts, not just whichever one a LIMIT-1 lookup finds.
+    fake._resume_events = [
+        PanelStreamEvent(type="token", text="deployed."),
+        PanelStreamEvent(type="done", response_id="resp_2"),
+    ]
+    resp2 = await api.post(
+        f"/api/conversations/{cid}/approval",
+        json={"turn_id": "resp_1", "approved": True, "note": None},
+        headers=as_user(owner),
+    )
+    assert resp2.status_code == 200
+    for t in tasks:
+        await t
+
+    msgs = (
+        await api.get(f"/api/conversations/{cid}/messages", headers=as_user(owner))
+    ).json()["messages"]
+    first_row = next(m for m in msgs if m["id"] == first_pending.id)
+    second_row = next(m for m in msgs if m["id"] == second_pending_id)
+    assert first_row["parts"][0]["state"] == "resolved"
+    assert second_row["parts"][-1]["state"] == "resolved"
+
+
 async def test_http_approval_concurrent_posts_one_wins(api, panel_rt, monkeypatch):
     """Important-2: first-decision-wins. Two concurrent approval POSTs for
     the same turn must not both spawn a resume — one 200s, the other 409s,
