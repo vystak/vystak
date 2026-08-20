@@ -12,6 +12,7 @@ from slack_bolt.async_app import AsyncApp
 from vystak.schema.common import ChannelType
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.types import (
+    AgentCallError,
     AgentReply,
     InboundEvent,
     Message,
@@ -324,7 +325,7 @@ class SlackChannelRuntime(ChannelRuntime):
             await self._set_assistant_status(channel_id, thread_ts, "")
 
         if reply.pending_approval:
-            await self._post_approval_request(event, reply.pending_approval)
+            await self._post_approval_request(event, route, reply.pending_approval)
             return
 
         say = event.metadata.get("say")
@@ -340,22 +341,32 @@ class SlackChannelRuntime(ChannelRuntime):
     # --- HITL tool approvals (Task 11) --------------------------------------
 
     @staticmethod
-    def _approval_blocks(pending: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    def _approval_blocks(
+        pending: dict[str, Any], agent: str | None
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Build the Block Kit message (text + blocks) for a pending
         approval. Shared between the initial post (`_post_approval_request`,
         driven by an `InboundEvent`'s `say`) and a chained re-park posted
         from `_handle_approval_action` (driven by the Slack Web API client
         directly — no `InboundEvent` exists at that point).
 
-        The button `value` json-decodes to exactly `{"thread_id", "tool"}`
-        — no channel/message context is folded in there because the action
-        `body` slack-bolt hands back already carries `channel.id` and
-        `message.ts`/`message.thread_ts` (see `_handle_approval_action`).
+        The button `value` json-decodes to `{"thread_id", "tool", "agent"}`.
+        `agent` (the routes.json key) is folded in — not derivable from the
+        action `body` alone — so a resume after a channel restart (an empty
+        `_known_bases`/`_known_subjects` cache) can still resolve the
+        agent's URL/subject via `_resolve_agent_url` instead of failing.
+        Channel/message context (`channel.id`, `message.ts`/`thread_ts`) is
+        NOT folded in here because the action `body` slack-bolt hands back
+        already carries it (see `_handle_approval_action`).
         """
         payload = pending.get("payload") or {}
         tool = payload.get("tool", "?")
         args = payload.get("args", {})
-        value = json.dumps({"thread_id": pending.get("thread_id"), "tool": payload.get("tool", "")})
+        value = json.dumps({
+            "thread_id": pending.get("thread_id"),
+            "tool": payload.get("tool", ""),
+            "agent": agent,
+        })
         text = (
             f":lock: *Approval required* — `{tool}`\n"
             f"```{json.dumps(args, indent=2)}```"
@@ -388,9 +399,9 @@ class SlackChannelRuntime(ChannelRuntime):
         return text, blocks
 
     async def _post_approval_request(
-        self, event: InboundEvent, pending: dict[str, Any]
+        self, event: InboundEvent, route: str, pending: dict[str, Any]
     ) -> None:
-        text, blocks = self._approval_blocks(pending)
+        text, blocks = self._approval_blocks(pending, route)
         say = event.metadata.get("say")
         if say is None:
             logger.warning(
@@ -409,13 +420,16 @@ class SlackChannelRuntime(ChannelRuntime):
         """`@app.action("vystak_approve"/"vystak_deny")` handler body.
 
         `body` is slack-bolt's block-actions payload: `body["actions"][0]`
-        is the clicked button (its `value` carries `{"thread_id", "tool"}`
-        json), `body["user"]` carries `username`/`id`, `body["channel"]`
-        carries the posting channel, and `body["message"]` is the button
-        message itself — `message["thread_ts"]` is set when that message
-        was posted into a thread (Slack stamps it on any message posted
-        with a `thread_ts` kwarg), falling back to `message["ts"]` for a
-        top-level (non-threaded) approval message.
+        is the clicked button (its `value` carries `{"thread_id", "tool",
+        "agent"}` json), `body["user"]` carries `username`/`id`,
+        `body["channel"]` carries the posting channel, and `body["message"]`
+        is the button message itself — `message["thread_ts"]` is set when
+        that message was posted into a thread (Slack stamps it on any
+        message posted with a `thread_ts` kwarg), falling back to
+        `message["ts"]` for a top-level (non-threaded) approval message.
+
+        Never lets an exception escape: a dead button with no feedback is
+        worse than a slightly-generic ephemeral message.
         """
         action = (body.get("actions") or [{}])[0]
         try:
@@ -423,6 +437,7 @@ class SlackChannelRuntime(ChannelRuntime):
         except json.JSONDecodeError:
             value = {}
         thread_id = value.get("thread_id")
+        agent = value.get("agent")
 
         user = body.get("user") or {}
         decided_by = "@" + (user.get("username") or user.get("id") or "")
@@ -433,14 +448,35 @@ class SlackChannelRuntime(ChannelRuntime):
         message_ts = message.get("ts")
         conversation_thread_ts = message.get("thread_ts") or message_ts
 
+        # The button carries the agent route, so a resume still works after
+        # a channel restart wiped the client's process-local base-URL/
+        # subject cache. `_resolve_agent_url` raises AgentCallError for an
+        # unknown/unrouted agent name -- fall back to the (possibly empty)
+        # cache in that case rather than failing the whole action outright.
+        agent_url: str | None = None
+        if agent:
+            try:
+                agent_url = self._resolve_agent_url(agent)
+            except AgentCallError:
+                agent_url = None
+
         try:
-            result = await self._agent_client.resume_turn(thread_id, decision)
+            result = await self._agent_client.resume_turn(thread_id, decision, agent_url)
         except RuntimeError as exc:
             if channel_id and user.get("id"):
                 await client.chat_postEphemeral(
                     channel=channel_id,
                     user=user["id"],
                     text=f"Could not apply decision (already resolved or unavailable): {exc}",
+                )
+            return
+        except Exception as exc:  # noqa: BLE001 — never leave the button dead
+            logger.exception("approval action failed thread_id=%s agent=%s", thread_id, agent)
+            if channel_id and user.get("id"):
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user["id"],
+                    text=f"Approval could not be delivered: {exc}",
                 )
             return
 
@@ -459,9 +495,9 @@ class SlackChannelRuntime(ChannelRuntime):
         pending_approval = getattr(result, "pending_approval", None)
         if pending_approval:
             # Chaining contract: the resumed run parked AGAIN on another
-            # gated tool -- post a NEW approval message rather than the
-            # final text.
-            text, blocks = self._approval_blocks(pending_approval)
+            # gated tool -- post a NEW approval message (same agent route)
+            # rather than the final text.
+            text, blocks = self._approval_blocks(pending_approval, agent)
             kwargs: dict[str, Any] = {"channel": channel_id, "text": text, "blocks": blocks}
             if conversation_thread_ts:
                 kwargs["thread_ts"] = conversation_thread_ts

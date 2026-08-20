@@ -521,3 +521,54 @@ def test_default_agent_client_nats_without_url_raises(monkeypatch):
         )
 
 
+# ---------------------------------------------------------------------------
+# Critical 1 fix-round -- stream_agent propagates approval_pending
+# ---------------------------------------------------------------------------
+
+
+class _ApprovalStreamingClient:
+    """Fake AgentClient whose stream_turn yields tokens then parks."""
+
+    async def send_turn(self, *a, **kw):
+        raise NotImplementedError
+
+    async def stream_turn(self, agent_url, text, thread_id, history=None, metadata=None):
+        from vystak_channel_runtime.types import AgentChunk
+
+        yield AgentChunk(type="token", delta="working on it...")
+        yield AgentChunk(
+            type="approval_pending",
+            delta="",
+            data={"payload": {"tool": "restart_service", "args": {}}, "thread_id": "task-1"},
+            finish_reason="approval_pending",
+            final=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_propagates_pending_approval_and_drops_partial_text():
+    """The default Slack agent_protocol is a2a-stream -- stream_agent must
+    surface an approval_pending chunk as AgentReply.pending_approval, and
+    must not leak the pre-park streamed text as the reply's `.text` (the
+    approval message is the only thing that should be posted)."""
+    rt = TrivialRuntime(
+        config=_config(agent_protocol="a2a-stream"),
+        routes=_routes(),
+        store=MemoryChannelStore(),
+        agent_client=_ApprovalStreamingClient(),
+    )
+    ev = InboundEvent(
+        channel_type=ChannelType.SLACK, scope_id="C1", thread_id="T:1",
+        user_id="U", text="hi", is_dm=False, mentions_bot=True,
+        metadata={},
+    )
+    reply = await rt.stream_agent(ev, "hero", history=[])
+
+    assert reply.pending_approval == {
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-1",
+    }
+    assert reply.finish_reason == "approval_pending"
+    assert reply.text == ""
+
+

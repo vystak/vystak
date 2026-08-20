@@ -351,6 +351,7 @@ class ChannelRuntime(ABC):
         final_text: str | None = None
         tool_calls: list[dict[str, Any]] = []
         finish_reason: str | None = None
+        pending_approval: dict[str, Any] | None = None
 
         async for chunk in self._agent_client.stream_turn(
             self._resolve_agent_url(route),
@@ -377,6 +378,14 @@ class ChannelRuntime(ABC):
                     "tool_name": chunk.tool_name,
                     "data": chunk.data,
                 })
+            elif chunk.type == "approval_pending":
+                # HITL tool-approval park (Task 11's streaming-path fix):
+                # `chunk.data` is already `{"payload", "thread_id"}`, the
+                # same shape as `AgentReply.pending_approval`. Never folded
+                # into `final_text`/`accumulated` — the marker carries no
+                # user-facing text (`chunk.delta` is always "").
+                pending_approval = chunk.data
+                finish_reason = chunk.finish_reason or "approval_pending"
             elif chunk.type == "final":
                 finish_reason = chunk.finish_reason or "completed"
                 if chunk.delta:
@@ -384,9 +393,10 @@ class ChannelRuntime(ABC):
 
         text = final_text if final_text is not None else "".join(accumulated)
         return AgentReply(
-            text=text,
+            text="" if pending_approval else text,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            pending_approval=pending_approval,
         )
 
     async def _call_route_for_event(

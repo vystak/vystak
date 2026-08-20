@@ -182,6 +182,57 @@ async def test_chunk_from_sse_parses_status_final():
     assert chunk.final is True
 
 
+@pytest.mark.asyncio
+async def test_chunk_from_sse_parses_approval_pending_marker():
+    """Critical-1 fix-round: an input-required status update whose message
+    text is the approval_pending marker must become a typed
+    approval_pending chunk, not a plain "status" chunk carrying the raw
+    marker JSON as delta text."""
+    marker = json.dumps({
+        "kind": "approval_pending",
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-1",
+    })
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "input-required",
+                "message": {"parts": [{"text": marker}]},
+            }
+        },
+    }
+    chunk = A2AAgentClient._chunk_from_sse(json.dumps(payload))
+    assert chunk is not None
+    assert chunk.type == "approval_pending"
+    assert chunk.delta == ""
+    assert chunk.data == {
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chunk_from_sse_input_required_without_marker_stays_status():
+    """input-required with non-marker text (a real human-input prompt) must
+    not be swallowed into approval_pending -- falls through to plain status."""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "input-required",
+                "message": {"parts": [{"text": "what's your name?"}]},
+            }
+        },
+    }
+    chunk = A2AAgentClient._chunk_from_sse(json.dumps(payload))
+    assert chunk is not None
+    assert chunk.type == "status"
+    assert chunk.delta == "what's your name?"
+
+
 # ---------------------------------------------------------------------------
 # NatsAgentClient
 # ---------------------------------------------------------------------------

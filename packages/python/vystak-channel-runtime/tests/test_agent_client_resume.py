@@ -284,3 +284,143 @@ async def test_nats_resume_turn_raises_without_known_subject():
     client = NatsAgentClient("nats://localhost:4222")
     with pytest.raises(RuntimeError):
         await client.resume_turn("unknown-thread", {"approved": True})
+
+
+# ---------------------------------------------------------------------------
+# Critical 1 fix-round -- streaming path carries approval_pending
+# ---------------------------------------------------------------------------
+
+
+async def test_a2a_stream_turn_yields_approval_pending_chunk_and_aliases_base(monkeypatch):
+    marker = json.dumps({
+        "kind": "approval_pending",
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-77",
+    })
+    sse_payload = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "input-required",
+                "message": {"parts": [{"text": marker}]},
+            }
+        },
+    }
+
+    sse_line = f"data: {json.dumps(sse_payload)}"
+
+    def fake_stream(self, method, url, *, json, timeout):  # noqa: A002 -- shadows module, unused
+        return _FakeStreamResponse(200, lines=[sse_line])
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    client = A2AAgentClient()
+    chunks = []
+    async for c in client.stream_turn("http://hero:8000", text="do it", thread_id="C1:1.0"):
+        chunks.append(c)
+
+    assert len(chunks) == 1
+    assert chunks[0].type == "approval_pending"
+    assert chunks[0].delta == ""
+    assert chunks[0].data == {
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-77",
+    }
+    # Aliased under the MARKER's thread_id (task-77), not the call's own
+    # contextId (C1:1.0) -- same rationale as send_turn's aliasing.
+    assert client._known_bases["task-77"] == "http://hero:8000"
+
+
+async def test_nats_stream_turn_yields_approval_pending_when_send_turn_parks(monkeypatch):
+    fake = _FakeNatsClient()
+    marker = json.dumps({
+        "kind": "approval_pending",
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-88",
+    })
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "input-required",
+                "message": {"parts": [{"text": marker}]},
+            }
+        },
+    }).encode()
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")
+    chunks = []
+    async for c in client.stream_turn(
+        "vystak.default.agents.hero.tasks", text="do it", thread_id="C1:1.0"
+    ):
+        chunks.append(c)
+
+    assert len(chunks) == 1
+    assert chunks[0].type == "approval_pending"
+    assert chunks[0].data == {
+        "payload": {"tool": "restart_service", "args": {}},
+        "thread_id": "task-88",
+    }
+    # send_turn's own aliasing already covers the NATS subject.
+    assert client._known_subjects["task-88"] == "vystak.default.agents.hero.tasks"
+
+
+# ---------------------------------------------------------------------------
+# Important 2 fix-round -- resume_turn(agent_url=...) survives a restart
+# ---------------------------------------------------------------------------
+
+
+async def test_a2a_resume_turn_uses_explicit_agent_url_after_cache_clear(monkeypatch):
+    def fake_stream(self, method, url, *, json, timeout):
+        lines = [
+            'data: {"type":"response.output_text.delta","delta":"back"}',
+            'data: {"type":"response.completed"}',
+            "data: [DONE]",
+        ]
+        return _FakeStreamResponse(200, lines=lines)
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    client = A2AAgentClient()  # fresh client -- empty _known_bases (restart)
+    result = await client.resume_turn(
+        "task-1", {"approved": True}, agent_url="http://hero:8000"
+    )
+    assert result.text == "back"
+    assert client._known_bases["task-1"] == "http://hero:8000"
+
+
+async def test_nats_resume_turn_uses_explicit_subject_after_cache_clear(monkeypatch):
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0", "id": "x",
+        "result": {"text": "back", "pending_approval": None},
+    }).encode()
+    _patch_nats_connect(monkeypatch, fake)
+
+    client = NatsAgentClient("nats://localhost:4222")  # empty _known_subjects
+    result = await client.resume_turn(
+        "task-1", {"approved": True}, agent_url="vystak.default.agents.hero.tasks"
+    )
+    assert result.text == "back"
+    assert client._known_subjects["task-1"] == "vystak.default.agents.hero.tasks"
+
+
+# ---------------------------------------------------------------------------
+# Important 3 fix-round -- resume_turn wraps httpx.HTTPError broadly
+# ---------------------------------------------------------------------------
+
+
+async def test_a2a_resume_turn_wraps_generic_httpx_error(monkeypatch):
+    def fake_stream(self, method, url, *, json, timeout):
+        raise httpx.RemoteProtocolError("peer closed connection")
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    client = A2AAgentClient()
+    client._known_bases["t1"] = "http://hero:8000"
+
+    with pytest.raises(RuntimeError):
+        await client.resume_turn("t1", {"approved": True})
