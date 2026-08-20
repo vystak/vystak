@@ -251,6 +251,9 @@ class NatsHttpBridge:
             if method == "responses/resumeDetached":
                 await self._handle_resume_detached(envelope, reply_subject)
                 return
+            if method == "responses/resumeThread":
+                await self._handle_resume_thread(envelope, reply_subject)
+                return
 
             # Extract the upstream W3C traceparent (if any) so the local
             # /a2a call continues the same trace. The publisher
@@ -540,6 +543,66 @@ class NatsHttpBridge:
         )
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+
+    async def _handle_resume_thread(self, envelope: dict, reply_subject: str) -> None:
+        """`responses/resumeThread {thread_id, resume}` — resume a parked
+        A2A-originated thread and reply with the final assistant text.
+
+        A2A turns have no detached-journal row (no `turn_id`, no
+        `stream_subject`), so this is keyed by `thread_id` alone. The
+        caller (a channel runtime, e.g. Slack) blocks on the JSON-RPC
+        reply the same way it blocks on `message/send` — no ack/park
+        split, no JetStream publish, just POST-and-collect."""
+        params = envelope.get("params") or {}
+        thread_id = params.get("thread_id")
+        if not thread_id:
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message="thread_id required",
+                request_id=envelope.get("id"),
+            )
+            return
+        try:
+            text = await self._resume_and_collect_text(thread_id, params.get("resume"))
+        except Exception as e:  # noqa: BLE001 — surface as JSON-RPC error, never raise
+            await self._publish_error_async(
+                reply_subject,
+                code=-32000,
+                message=f"resume failed: {e}",
+                request_id=envelope.get("id"),
+            )
+            return
+        await self._publish_result(reply_subject, envelope.get("id"), {"text": text})
+
+    async def _resume_and_collect_text(self, thread_id: str, resume: Any) -> str:
+        """POST `/v1/_vystak/resume` and concatenate every
+        `response.output_text.delta` into the final assistant text.
+
+        Reuses the bridge's shared `self._http` client and `self._local_base`
+        URL derivation (same as `_stream_from_resume_endpoint`) rather than
+        constructing a new client. The read timeout is the same generous
+        bound the detached resume path uses — real tool work can run during
+        the parked step before it completes."""
+        assert self._http is not None
+        chunks: list[str] = []
+        async with self._http.stream(
+            "POST",
+            f"{self._local_base}/v1/_vystak/resume",
+            json={"thread_id": thread_id, "resume": resume},
+            timeout=httpx.Timeout(None, connect=10.0, read=300.0),
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                if data == "[DONE]":
+                    break
+                event = json.loads(data)
+                if event.get("type") == "response.output_text.delta":
+                    chunks.append(event.get("delta", ""))
+        return "".join(chunks)
 
     async def _publish_result(
         self, reply_subject: str, request_id: Any, result: Any

@@ -102,6 +102,7 @@ def bridge_factory(monkeypatch):
         checkpoint_state: dict[str, Any] | None = None,
         healthz_failures: int = 0,
         sse_done: bool = True,
+        resume_status: int = 200,
     ):
         events = sse_events or []
         lines = [f"data: {json.dumps(e)}\n\n" for e in events]
@@ -139,6 +140,8 @@ def bridge_factory(monkeypatch):
                         "interrupted": checkpoint_interrupted,
                     },
                 )
+            if request.url.path == "/v1/_vystak/resume" and resume_status != 200:
+                return httpx.Response(resume_status)
             return httpx.Response(
                 200, content=sse_bytes, headers={"content-type": "text/event-stream"}
             )
