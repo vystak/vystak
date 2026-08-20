@@ -21,6 +21,23 @@ export function panelStreamToUIChunks(
   // with single-text-run callers/tests; later runs get a numbered suffix.
   let textRunCount = 0;
   let textId = TEXT_ID_BASE;
+  // Replayed tool_call/tool_result frames after a rewind carry their
+  // ORIGINAL toolCallId (the Python persister's own accumulator, untouched
+  // by this adapter). Verified against installed ai@5.0.220: a dynamic
+  // tool's 'tool-input-available' goes through `updateDynamicToolPart`,
+  // which finds the *existing* part with that toolCallId anywhere in the
+  // message (this adapter never emits 'step-start', so the search spans
+  // the whole parts array) and updates it in place — including the stale
+  // copy sitting BEFORE the 'data-reset' marker. `visiblePartsAfterReset`
+  // then hides that (updated-but-still-pre-marker) part forever instead of
+  // showing a fresh post-marker tool block. Prefixing the outgoing id by a
+  // reset generation counter forces the replayed tool part to be treated
+  // as new (no existing part has that prefixed id), so it gets pushed
+  // fresh — after the marker. Rendering-only: persistence keys off the
+  // Python side's own unprefixed ids, never this adapter's output.
+  let resetGeneration = 0;
+  const outgoingToolCallId = (id: string) =>
+    resetGeneration === 0 ? id : `g${resetGeneration}:${id}`;
 
   return new ReadableStream<UIMessageChunk>({
     async start(controller) {
@@ -71,7 +88,7 @@ export function panelStreamToUIChunks(
         } else if (payload.type === 'tool_call') {
           // A tool part must not open inside an unclosed text part.
           closeTextIfOpen();
-          const toolCallId = payload.tool_call_id ?? '';
+          const toolCallId = outgoingToolCallId(payload.tool_call_id ?? '');
           const toolName = payload.tool_name ?? '';
           const rawArguments = payload.arguments ?? '';
           let input: unknown = rawArguments;
@@ -98,7 +115,7 @@ export function panelStreamToUIChunks(
           });
         } else if (payload.type === 'tool_result') {
           closeTextIfOpen();
-          const toolCallId = payload.tool_call_id ?? '';
+          const toolCallId = outgoingToolCallId(payload.tool_call_id ?? '');
           if (payload.is_error) {
             controller.enqueue({
               type: 'tool-output-error',
@@ -135,6 +152,7 @@ export function panelStreamToUIChunks(
           closeTextIfOpen();
           textRunCount = 0;
           textId = TEXT_ID_BASE;
+          resetGeneration += 1;
           controller.enqueue({ type: 'data-reset', data: {} });
         }
         // 'done' carries persistence ids the UI refetches via the API.
