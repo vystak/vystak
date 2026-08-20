@@ -469,14 +469,24 @@ class NatsHttpBridge:
         task.add_done_callback(self._inflight.discard)
 
     async def _handle_turn_status(self, envelope: dict[str, Any], reply_subject: str) -> None:
-        """`responses/turnStatus {turn_id}` — a pure journal lookup, no HTTP
-        hop. `unknown` covers both a never-seen turn_id and a journal-less
-        bridge (HTTP transport doesn't build one)."""
+        """`responses/turnStatus {turn_id}` — a journal lookup; `unknown`
+        covers both a never-seen turn_id and a journal-less bridge (HTTP
+        transport doesn't build one). When the row is `parked`, also makes
+        one HTTP hop to `GET /v1/_vystak/checkpoint` (via
+        `_agent_checkpoint_state`) to surface the first pending interrupt
+        payload — `self._http` is always set by this point (assigned in
+        `start()` before the NATS subscription that can deliver this
+        envelope)."""
         params = envelope.get("params") or {}
         rec = await self._journal.get(params.get("turn_id", "")) if self._journal else None
+        interrupt_payload = None
+        if rec is not None and rec.status == "parked":
+            state = await self._agent_checkpoint_state(rec.thread_id)
+            if state and state.get("interrupts"):
+                interrupt_payload = state["interrupts"][0]
         await self._publish_result(
             reply_subject, envelope.get("id"),
-            {"status": rec.status if rec else "unknown"},
+            {"status": rec.status if rec else "unknown", "interrupt": interrupt_payload},
         )
 
     async def _handle_resume_detached(
@@ -496,6 +506,14 @@ class NatsHttpBridge:
                 reply_subject,
                 code=-32602,
                 message=f"unknown turn_id: {turn_id}",
+                request_id=envelope.get("id"),
+            )
+            return
+        if rec.status != "parked":
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message="turn is not parked",
                 request_id=envelope.get("id"),
             )
             return
@@ -666,6 +684,18 @@ class NatsHttpBridge:
                 return
             if state.get("interrupted"):
                 await self._journal.set_status(turn_id, "parked")
+                interrupts = state.get("interrupts") or []
+                if interrupts:
+                    # Non-terminal seq'd event so a polling/subscribed
+                    # consumer learns a tool call is awaiting approval.
+                    # Mirrors the truncated-tail publish below: publish via
+                    # the same seq-counter closure, then advance the
+                    # journal's last_seq so a later resume continues after
+                    # this event.
+                    seq = await publish(
+                        {"type": "vystak.approval.requested", "payload": interrupts[0]}
+                    )
+                    await self._journal.set_last_seq(turn_id, seq)
                 return  # graph is durably parked; no terminal event to publish
             await self._journal.set_status(turn_id, "failed")
 
