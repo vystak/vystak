@@ -4,6 +4,8 @@ JetStream path so the two can never drift."""
 
 from __future__ import annotations
 
+import json
+
 from vystak_channel_panel.responses_client import PanelStreamEvent
 
 
@@ -67,7 +69,16 @@ def translate_responses_event(
         return PanelStreamEvent(type="error", text=err)
     if event_type == "vystak.turn.rewind":
         return PanelStreamEvent(type="rewind", to_seq=int(data.get("to_seq", -1)))
+    if event_type == "vystak.approval.requested":
+        return PanelStreamEvent(
+            type="approval_requested", approval=data.get("payload") or {}
+        )
     return None
+
+
+def _approval_call_id(ev: PanelStreamEvent) -> str:
+    # Deterministic id — one pending approval per park in v1.
+    return f"approval:{ev.approval.get('tool', '')}"
 
 
 class TurnAccumulator:
@@ -106,6 +117,28 @@ class TurnAccumulator:
                 "tool_name": ev.tool_name,
                 "arguments": ev.arguments,
             }
+            # A resolved tool_call/tool_result pair for the same tool name
+            # supersedes any pending approval-requested part left over from
+            # the park — drop it so the transcript shows one entry.
+            self.msg_parts = [
+                p for p in self.msg_parts
+                if not (
+                    p.get("type") == "tool"
+                    and p.get("state") == "approval-requested"
+                    and p.get("tool_name") == ev.tool_name
+                )
+            ]
+        elif ev.type == "approval_requested":
+            self._flush_text()
+            self.msg_parts.append({
+                "type": "tool",
+                "state": "approval-requested",
+                "tool_call_id": _approval_call_id(ev),
+                "tool_name": ev.approval.get("tool", ""),
+                "input": json.dumps(ev.approval.get("args", {})),
+                "output": "",
+                "is_error": False,
+            })
         elif ev.type == "tool_result":
             call = self._pending_tool_calls.pop(ev.tool_call_id, None)
             self.msg_parts.append({
@@ -176,5 +209,12 @@ def browser_frame(ev: PanelStreamEvent) -> dict:
             "tool_call_id": ev.tool_call_id,
             "output": ev.output,
             "is_error": ev.is_error,
+        }
+    if ev.type == "approval_requested":
+        return {
+            "type": "approval",
+            "tool_call_id": _approval_call_id(ev),
+            "tool_name": ev.approval.get("tool", ""),
+            "input": ev.approval.get("args", {}),
         }
     return {"type": "error", "message": ev.text}

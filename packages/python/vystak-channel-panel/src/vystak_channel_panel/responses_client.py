@@ -11,7 +11,10 @@ from pydantic import BaseModel
 
 
 class PanelStreamEvent(BaseModel):
-    type: Literal["token", "done", "error", "tool_call", "tool_result", "rewind"]
+    type: Literal[
+        "token", "done", "error", "tool_call", "tool_result", "rewind",
+        "approval_requested",
+    ]
     text: str = ""
     response_id: str = ""
     tool_call_id: str = ""
@@ -19,6 +22,10 @@ class PanelStreamEvent(BaseModel):
     arguments: str = ""
     output: str = ""
     is_error: bool = False
+    # Only set on `approval_requested` events — the raw payload from the
+    # bridge's `vystak.approval.requested` JetStream event: {kind, tool,
+    # args, skill}.
+    approval: dict = {}
     # Only set on `rewind` events (Task 11 produces these) — the accumulator
     # seq to roll back to, so a resumed run's re-emitted events don't
     # duplicate what was already accumulated before a restart.
