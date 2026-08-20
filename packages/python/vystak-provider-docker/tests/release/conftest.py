@@ -355,11 +355,16 @@ def assert_isolation(
 
 
 def assert_health(container: str, internal_port: int = 8000) -> None:
-    """V4: /health returns 200 {'status': 'ok'}."""
+    """V4: /healthz returns 200 {'status': 'ok'}.
+
+    The template runtime serves this at `/healthz` (see
+    `_vystak/runtime/app_factory.py`); older cells assumed `/health`,
+    which 404s against the current agent image.
+    """
     port = container_http_port(container, internal_port)
-    wait_for_http(f"http://localhost:{port}/health", timeout=30)
-    body = http_get_json(f"http://localhost:{port}/health")
-    assert body.get("status") == "ok", f"unexpected /health body: {body}"
+    wait_for_http(f"http://localhost:{port}/healthz", timeout=30)
+    body = http_get_json(f"http://localhost:{port}/healthz")
+    assert body.get("status") == "ok", f"unexpected /healthz body: {body}"
 
 
 def assert_agent_card(

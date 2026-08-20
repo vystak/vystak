@@ -59,6 +59,7 @@ channels:
       - {name: SLACK_APP_TOKEN}
 agents:
   - name: d8agent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -80,6 +81,7 @@ def slack_env(project):
 
 def test_D8_full_cycle(vault_clean, slack_env):
     project = slack_env
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D8_YAML)
 
     assert_plan_ok(

@@ -23,6 +23,7 @@ from .conftest import (
     assert_isolation,
     assert_plan_ok,
     docker_running,
+    vystak,
 )
 
 pytestmark = [pytest.mark.release_smoke, pytest.mark.docker]
@@ -42,6 +43,7 @@ channels:
     platform: local
 agents:
   - name: smokeagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -54,6 +56,12 @@ def test_D1_full_cycle(project):
     """V1 → V9 in one pass. Running the stages as separate tests would
     mean 7× `vystak apply` per cell — unacceptable wall time.
     """
+    # `vystak apply` requires a scaffolded `_vystak/` tree (the no-codegen
+    # pivot's apply-time validation added after this cell was written).
+    # Init first, then overwrite the template's default vystak.yaml.
+    # --force is required because the `project` fixture pre-creates
+    # `.env` + `tools/`, making the target dir non-empty.
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(D1_YAML)
 
     # V1 — plan: default-path EnvFiles section, no Vault sections,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import assert_apply_ok, docker_running
+from .conftest import assert_apply_ok, docker_running, vystak
 
 pytestmark = [pytest.mark.release_integration, pytest.mark.docker]
 
@@ -72,8 +72,13 @@ def _wait_for(name: str, needle: str, t: int) -> bool:
     return False
 
 
-def test_heartbeat_v2_full_cycle(project: Path):
+def test_heartbeat_v2_full_cycle(project: Path, docker_required, scheduler_clean):
     """v2 end-to-end: heartbeat service fires, delivers, pins model on session."""
+    # `vystak apply` requires a scaffolded `_vystak/` tree (the no-codegen
+    # pivot's apply-time validation). Init first, then overwrite the
+    # template's default vystak.yaml with our own. --force is required
+    # because the `project` fixture pre-creates `.env` + `tools/`.
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(YAML)
     assert_apply_ok(cwd=project)
 

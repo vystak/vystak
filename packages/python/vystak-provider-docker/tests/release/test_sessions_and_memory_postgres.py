@@ -41,6 +41,7 @@ channels:
     platform: local
 agents:
   - name: smagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -62,6 +63,7 @@ agents:
 
 
 def test_sessions_and_memory_postgres(postgres_clean, project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(COMBINED_YAML)
 
     assert_plan_ok(

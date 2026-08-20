@@ -44,6 +44,7 @@ channels:
     platform: local
 agents:
   - name: sessionsagent
+    framework: langchain-python
     default_model: sonnet
     platform: local
     secrets:
@@ -59,6 +60,7 @@ agents:
 
 
 def test_sessions_postgres(postgres_clean, project):
+    vystak(["init", "--framework", "langchain-python", "--force", "."], cwd=project)
     (project / "vystak.yaml").write_text(SESSIONS_YAML)
 
     assert_plan_ok(
