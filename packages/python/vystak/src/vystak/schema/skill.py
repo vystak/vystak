@@ -23,6 +23,7 @@ class Skill(NamedModel):
     """
 
     tools: list[str] = []
+    needs_approval: list[str] = []
     prompt: str | None = None
     description: str | None = None
     path: str | None = None
@@ -31,3 +32,13 @@ class Skill(NamedModel):
     requires: SkillRequirements | None = None
     version: str = "0.1.0"
     dependencies: list[str] | None = None
+
+
+def validate_needs_approval(skill: "Skill") -> None:
+    """Every needs_approval entry must be one of the skill's own tools."""
+    unknown = [t for t in skill.needs_approval if t not in skill.tools]
+    if unknown:
+        raise ValueError(
+            f"skill '{skill.name}': needs_approval names tools not in its "
+            f"tools list: {', '.join(unknown)}"
+        )

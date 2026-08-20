@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from vystak.schema.agent import Agent
-from vystak.schema.skill import Skill
+from vystak.schema.skill import Skill, validate_needs_approval
 
 ALLOWED_FRONTMATTER_KEYS = {"name", "description", "tools"}
 
@@ -70,11 +70,27 @@ def compute_skill_digest(folder: Path) -> str:
 
 
 def resolve_folder_skills(agents: list[Agent], project_dir: Path) -> None:
-    """Fill folder-skill fields in place for agents and their subagents."""
+    """Fill folder-skill fields in place for agents and their subagents.
+
+    Also runs `validate_needs_approval` on every skill after resolution, so
+    folder-skill tools merged in from SKILL.md frontmatter are accounted
+    for — this is the single funnel both `loader.load_agent` and
+    `vystak_cli.loader.load_definitions` (multi-doc path) pass through.
+    """
     for agent in agents:
         for skill in agent.skills:
             _resolve_one(agent, skill, project_dir)
+            validate_needs_approval(skill)
         resolve_folder_skills(agent.subagents, project_dir)
+
+
+def is_unresolved_folder_skill(skill: Skill) -> bool:
+    """True if `skill` is a folder skill whose tools/description have not
+    yet been merged in by `resolve_folder_skills` (e.g. before the CLI's
+    post-`load_multi_yaml` resolution pass runs)."""
+    if skill.content_digest is not None:
+        return False
+    return not (skill.path is None and (skill.tools or skill.prompt))
 
 
 def _resolve_one(agent: Agent, skill: Skill, project_dir: Path) -> None:

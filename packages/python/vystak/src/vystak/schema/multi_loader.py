@@ -5,8 +5,28 @@ from vystak.schema.channel import Channel
 from vystak.schema.model import Model
 from vystak.schema.platform import Platform
 from vystak.schema.provider import Provider
+from vystak.schema.skill import validate_needs_approval
+from vystak.schema.skill_resolver import is_unresolved_folder_skill
 from vystak.schema.vault import Vault
 from vystak.schema.volume import Volume
+
+
+def _validate_agent_skills(agents: list[Agent]) -> None:
+    """Validate needs_approval for skills already fully resolved.
+
+    Folder skills declared here (path or bare `- name: x` convention) may
+    still be waiting on `resolve_folder_skills` to merge in SKILL.md
+    frontmatter tools — that happens later, in the CLI loader, after
+    `load_multi_yaml` returns. Validating them now would false-positive on
+    tools that only exist in the not-yet-loaded frontmatter, so they're
+    skipped here and re-validated by `resolve_folder_skills` itself.
+    """
+    for agent in agents:
+        for skill in agent.skills:
+            if is_unresolved_folder_skill(skill):
+                continue
+            validate_needs_approval(skill)
+        _validate_agent_skills(agent.subagents)
 
 
 def _validate_vault_provider_pairing(vault: Vault) -> None:
@@ -294,6 +314,7 @@ def load_multi_yaml(
     agents: list[Agent] = [Agent.model_validate(d) for d in agent_data_list]
     for agent in agents:
         _validate_workspace_platform_volume(agent)
+    _validate_agent_skills(agents)
     agents_by_name = {a.name: a for a in agents}
 
     # Phase 2: re-attach subagents now that all agents exist.
@@ -307,6 +328,7 @@ def load_multi_yaml(
         agent.subagents = resolved_payload["subagents"]
         # Re-run after-validators (self-reference + duplicate-name checks)
         Agent.model_validate(agent.model_dump())
+        _validate_agent_skills(agent.subagents)
 
     channels: list[Channel] = []
     for channel_data in data.get("channels", []):
