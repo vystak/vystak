@@ -75,10 +75,10 @@ the full deploy → verify → destroy lifecycle. The canonical reference is
 `test_plan.md` (repo root): **stack × secrets × channel × transport**, cells
 D1–D8 (Docker) and A1–A8 (Azure), plus extra lifecycle cells beyond the grid:
 
-- Docker (`vystak-provider-docker/tests/release/`, 18 files): `test_D1..D8_*`,
+- Docker (`vystak-provider-docker/tests/release/`, 19 files): `test_D1..D8_*`,
   `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_skills_folder.py`,
   `test_live_chat.py`, `test_schedules.py`, `test_panel_nats_resume.py`,
-  `test_workspace_tools_v11.py`, and three Postgres variants
+  `test_workspace_tools_v11.py`, `test_durable_turns.py`, and three Postgres variants
   (`test_sessions_postgres.py`, `test_memory_postgres.py`,
   `test_sessions_and_memory_postgres.py`).
 - Azure (`vystak-provider-azure/tests/release/`, 8 files): `test_A1..A8_*`.
@@ -270,15 +270,16 @@ Loading paths:
 
 ## Examples
 
-`examples/` (37 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+`examples/` (38 dirs) maps onto the feature axes: `docker-*` / `azure-*`
 (provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
 `heartbeat-*` / `docker-schedules` (scheduled tasks — see `docs/schedules.md`),
 `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
 `docker-multi-chat-nats` for the NATS transport), `*multi-channel*`,
 `docker-skills` / `docker-skills-slack` (folder skills), `mcp-files`,
 `memory-agent`, `sessions-postgres` / `docker-compaction` (sessions),
-`docker-panel` (control panel). When modifying core behavior, update or run the matching example
-to verify end-to-end.
+`docker-panel` (control panel), `docker-panel-durable` (durable/checkpointed
+execution — see `docs/durable-execution.md`). When modifying core behavior,
+update or run the matching example to verify end-to-end.
 
 **When implementing a specific feature, create (or update) an agents
 configuration under `examples/` that simulates real usage of that feature** —
