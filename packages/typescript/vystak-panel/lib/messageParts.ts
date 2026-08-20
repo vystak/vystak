@@ -33,6 +33,30 @@ export function mapPersistedParts(
       return { type: 'text', text: part.text };
     }
     const input = safeParseJson(part.input);
+    if (part.state === 'approval-requested') {
+      // Parked HITL tool call awaiting a decision — no output yet. 'ai'@5
+      // doesn't declare this state (it's a v6 addition the vendored
+      // tool.tsx already anticipates via `@ts-expect-error`), so this cast
+      // follows that same local-augmentation convention rather than
+      // upgrading the package.
+      return {
+        type: 'dynamic-tool',
+        toolCallId: part.tool_call_id,
+        toolName: part.tool_name,
+        // @ts-expect-error state only available in AI SDK v6
+        state: 'approval-requested',
+        input,
+      };
+    }
+    // A 'resolved' part (the decision has been made — see
+    // routes_approvals.py's _resolve_pending_part) intentionally falls
+    // through to the same finished-part shape as any other completed tool
+    // call below: it renders as a normal/neutral tool block (no live
+    // buttons) rather than a distinct visual state. Its `output` is
+    // typically empty (the real result lives in a later message's own
+    // tool_call/tool_result pair — see task-9's resume path), which
+    // ToolOutput already renders as nothing, so this reads as a quiet
+    // "completed" block instead of a duplicate of that later part.
     if (part.is_error) {
       return {
         type: 'dynamic-tool',
@@ -81,6 +105,52 @@ export function mapPersistedParts(
  * stream. Parts before the last marker are stale pre-rewind content and are
  * simply never rendered; nothing needs to be mutated or removed.
  */
+/**
+ * Live-path approval bookkeeping: maps each still-unresolved 'data-approval'
+ * marker's toolCallId to its turnId (see lib/stream.ts's 'approval' branch
+ * — it enqueues a marker alongside a pending dynamic-tool part whose
+ * toolCallId is `approval:<tool>`, distinct from the real tool_call's own
+ * id once the turn resumes).
+ *
+ * A marker resolves the same way the Python persister already resolves it
+ * server-side for the live-NATS path (`turn_stream.py`'s `feed`, lines
+ * ~120-130: a `tool_call` for the same tool_name supersedes the pending
+ * `approval-requested` part) — by TOOL NAME, not toolCallId, since the
+ * resumed call gets its own agent-minted id. A marker whose pending part's
+ * toolName has a LATER completed ('output-available' | 'output-error')
+ * dynamic-tool part anywhere in `parts` is dropped from the result.
+ *
+ * Without this, a resumed HTTP-path turn (which persists the resume as a
+ * separate message rather than rewriting this one — see task-9's
+ * `_resolve_pending_part`) would leave a NATS-live client showing
+ * Approve/Deny controls forever on a call that already has a real answer
+ * sitting right next to it.
+ */
+export function pendingApprovalTurns(parts: UIPart[]): Map<string, string> {
+  const markers = new Map<string, string>();
+  const toolNameByCallId = new Map<string, string>();
+  const resolvedToolNames = new Set<string>();
+  for (const part of parts) {
+    if (part.type === 'data-approval') {
+      const data = part.data as { toolCallId: string; turnId: string };
+      markers.set(data.toolCallId, data.turnId);
+    } else if (part.type === 'dynamic-tool') {
+      const state = part.state as string;
+      toolNameByCallId.set(part.toolCallId, part.toolName);
+      if (state === 'output-available' || state === 'output-error') {
+        resolvedToolNames.add(part.toolName);
+      }
+    }
+  }
+  const pending = new Map<string, string>();
+  for (const [toolCallId, turnId] of markers) {
+    const toolName = toolNameByCallId.get(toolCallId);
+    if (toolName && resolvedToolNames.has(toolName)) continue;
+    pending.set(toolCallId, turnId);
+  }
+  return pending;
+}
+
 export function visiblePartsAfterReset(parts: UIPart[]): UIPart[] {
   let lastResetIndex = -1;
   for (let i = 0; i < parts.length; i++) {

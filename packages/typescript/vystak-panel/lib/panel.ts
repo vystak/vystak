@@ -135,6 +135,19 @@ export const streamConversationMessage = (
 export const resumeConversationStream = (email: string, convId: string) =>
   panelFetch(email, `/api/conversations/${convId}/stream`);
 
+// Returns the raw Response (not `json()`/`ok()`) — the Next route forwards
+// its status/body verbatim so the client sees the panel's own 409/422/503
+// distinctions instead of a generic thrown error.
+export const postApproval = (
+  email: string,
+  convId: string,
+  body: { turn_id: string; approved: boolean; note: string | null },
+) =>
+  panelFetch(email, `/api/conversations/${convId}/approval`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
 export const setUserPassword = (email: string, userId: string, password: string) =>
   ok(email, `/api/users/${userId}/password`, {
     method: 'PUT',

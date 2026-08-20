@@ -362,6 +362,68 @@ describe('panelStreamToUIChunks', () => {
     );
   });
 
+  it('emits tool input and a data-approval marker on approval frame', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody({
+          type: 'approval',
+          tool_call_id: 'approval:restart_service',
+          tool_name: 'restart_service',
+          input: { name: 'web' },
+          turn_id: 't1',
+          seq: 5,
+        }),
+      ),
+    );
+    expect(chunks).toContainEqual({
+      type: 'tool-input-start',
+      toolCallId: 'approval:restart_service',
+      toolName: 'restart_service',
+      dynamic: true,
+    });
+    expect(chunks).toContainEqual({
+      type: 'tool-input-available',
+      toolCallId: 'approval:restart_service',
+      toolName: 'restart_service',
+      input: { name: 'web' },
+      dynamic: true,
+    });
+    expect(chunks).toContainEqual({
+      type: 'data-approval',
+      data: { toolCallId: 'approval:restart_service', turnId: 't1' },
+    });
+  });
+
+  it('tool result for the same call resolves the approval (no dangling marker semantics change)', async () => {
+    const chunks = await collect(
+      panelStreamToUIChunks(
+        sseBody(
+          {
+            type: 'approval',
+            tool_call_id: 'approval:restart_service',
+            tool_name: 'restart_service',
+            input: { name: 'web' },
+            turn_id: 't1',
+            seq: 5,
+          },
+          {
+            type: 'tool_call',
+            tool_call_id: 'c1',
+            tool_name: 'restart_service',
+            arguments: '{"name":"web"}',
+          },
+          { type: 'tool_result', tool_call_id: 'c1', output: 'restarted web', is_error: false },
+        ),
+      ),
+    );
+    expect(chunks).toContainEqual({
+      type: 'tool-output-available',
+      toolCallId: 'c1',
+      output: 'restarted web',
+      dynamic: true,
+    });
+  });
+
   it('passes non-JSON arguments through as a raw string without throwing', async () => {
     const chunks = await collect(
       panelStreamToUIChunks(

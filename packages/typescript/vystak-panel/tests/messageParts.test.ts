@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UIMessage } from 'ai';
-import { mapPersistedParts, visiblePartsAfterReset } from '../lib/messageParts';
+import { mapPersistedParts, pendingApprovalTurns, visiblePartsAfterReset } from '../lib/messageParts';
 import type { MessagePart } from '../lib/types';
 
 type UIPart = UIMessage['parts'][number];
@@ -84,6 +84,56 @@ describe('mapPersistedParts', () => {
     expect(mapped).toMatchObject({ input: 'not json' });
   });
 
+  it('maps a persisted approval-requested part to an awaiting-approval tool part', () => {
+    const parts: MessagePart[] = [
+      {
+        type: 'tool',
+        state: 'approval-requested',
+        tool_call_id: 'a1',
+        tool_name: 'restart_service',
+        input: '{"name":"web"}',
+        output: '',
+        is_error: false,
+      },
+    ];
+    const mapped = mapPersistedParts(parts, '');
+    expect(mapped[0].type).toBe('dynamic-tool');
+    expect((mapped[0] as { state?: string }).state).toBe('approval-requested');
+    expect(mapped).toEqual([
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'a1',
+        toolName: 'restart_service',
+        state: 'approval-requested',
+        input: { name: 'web' },
+      },
+    ]);
+  });
+
+  it('maps a persisted resolved approval part as a normal completed tool part', () => {
+    const parts: MessagePart[] = [
+      {
+        type: 'tool',
+        state: 'resolved',
+        tool_call_id: 'a1',
+        tool_name: 'restart_service',
+        input: '{"name":"web"}',
+        output: '',
+        is_error: false,
+      },
+    ];
+    expect(mapPersistedParts(parts, '')).toEqual([
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'a1',
+        toolName: 'restart_service',
+        state: 'output-available',
+        input: { name: 'web' },
+        output: '',
+      },
+    ]);
+  });
+
   it('preserves ordering across interleaved text and tool parts', () => {
     const parts: MessagePart[] = [
       { type: 'text', text: 'checking...' },
@@ -99,6 +149,46 @@ describe('mapPersistedParts', () => {
     ];
     const mapped = mapPersistedParts(parts, '');
     expect(mapped.map(p => p.type)).toEqual(['text', 'dynamic-tool', 'text']);
+  });
+});
+
+describe('pendingApprovalTurns', () => {
+  it('reports a marker with no later same-tool output as pending', () => {
+    const parts: UIPart[] = [
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'approval:restart_service',
+        toolName: 'restart_service',
+        state: 'input-available',
+        input: { name: 'web' },
+      },
+      { type: 'data-approval', data: { toolCallId: 'approval:restart_service', turnId: 't1' } },
+    ];
+    expect(pendingApprovalTurns(parts)).toEqual(
+      new Map([['approval:restart_service', 't1']]),
+    );
+  });
+
+  it('drops a marker once a later same-tool-name part has output', () => {
+    const parts: UIPart[] = [
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'approval:restart_service',
+        toolName: 'restart_service',
+        state: 'input-available',
+        input: { name: 'web' },
+      },
+      { type: 'data-approval', data: { toolCallId: 'approval:restart_service', turnId: 't1' } },
+      {
+        type: 'dynamic-tool',
+        toolCallId: 'c1',
+        toolName: 'restart_service',
+        state: 'output-available',
+        input: { name: 'web' },
+        output: 'restarted web',
+      },
+    ];
+    expect(pendingApprovalTurns(parts)).toEqual(new Map());
   });
 });
 
