@@ -51,9 +51,22 @@ def build_approvals_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
             "note": body.note,
         }
         if rt.nats_client is not None:
+            # `resume_detached` forwards to `NatsClient.resolve_address`,
+            # which needs the CANONICAL name (`{name}.{kind}.{namespace}`),
+            # not the plain `conv.agent_name` -- same distinction
+            # `turn_status`'s docstring documents and `turn_worker.py`
+            # already resolves via `rt.routes[...]["canonical"]`. Passing
+            # the plain name raised a `ValueError` inside
+            # `parse_canonical_name` on every approval/denial over NATS.
+            route_entry = rt.routes.get(conv.agent_name)
+            if route_entry is None:
+                raise HTTPException(
+                    status_code=503, detail=f"agent not routed: {conv.agent_name}"
+                )
+            canonical = route_entry.get("canonical", conv.agent_name)
             try:
                 await rt.nats_client.resume_detached(
-                    conv.agent_name, body.turn_id, decision
+                    canonical, body.turn_id, decision
                 )
             except TimeoutError as e:
                 # Distinct from "already resolved" (RuntimeError below): the

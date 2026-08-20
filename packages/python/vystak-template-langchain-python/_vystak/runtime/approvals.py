@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import StructuredTool
+from langchain_core.tools import tool as _tool_decorator
 from langgraph.types import interrupt
 
 
@@ -46,17 +47,40 @@ def _denied_result(decision: dict) -> str:
     return f"Denied by {who}: {note}"
 
 
+def _dispatch_name(t: Any) -> str | None:
+    """The name LangGraph will register `t` under once it's actually a
+    tool. LangChain tool objects (StructuredTool, `@tool`-decorated) carry
+    `.name`. Plain callables from `load_user_tools` (raw `async def`
+    functions loaded straight from `tools/*.py` -- the common case for
+    every `Skill.tools` entry) don't; `create_react_agent` coerces those
+    into tools internally using the function's `__name__`, so that's the
+    name to match against here too. Without this fallback, every plain
+    `tools/*.py` function silently passes the gate unwrapped -- verified
+    live: `getattr(fn, "name", None)` is always `None` for a bare function,
+    so it never matched an entry in `approval_map` and the gate was a
+    no-op for exactly the tools the docker-approvals example demonstrates.
+    """
+    name = getattr(t, "name", None)
+    if name is not None:
+        return name
+    return getattr(t, "__name__", None)
+
+
 def wrap_tools_with_approval(tools: list, approval_map: dict[str, str]) -> list:
     if not approval_map:
         return list(tools)
 
     wrapped = []
     for t in tools:
-        name = getattr(t, "name", None)
+        name = _dispatch_name(t)
         if name not in approval_map:
             wrapped.append(t)
             continue
-        wrapped.append(_wrap_one(t, approval_map[name]))
+        # Coerce a plain callable into a real LangChain tool before
+        # wrapping -- `_wrap_one` reads `.name` / `.description` /
+        # `.args_schema` / `.ainvoke`, none of which a bare function has.
+        original = t if hasattr(t, "name") else _tool_decorator(t)
+        wrapped.append(_wrap_one(original, approval_map[name]))
     return wrapped
 
 

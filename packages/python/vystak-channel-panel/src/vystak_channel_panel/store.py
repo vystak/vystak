@@ -723,6 +723,33 @@ class SqlitePanelStore:
             row = await cur.fetchone()
         return self._message_from_row(row) if row else None
 
+    async def update_message(
+        self,
+        message_id: str,
+        *,
+        content: str,
+        parts: list[dict] | None,
+        response_id: str | None = None,
+    ) -> None:
+        """Overwrite one message's `content`/`parts`/`response_id` in
+        place. Used by `turn_worker.run_turn_persister` to upsert the
+        SAME row (found via `get_message_by_turn_id`) as a turn progresses
+        from parked (a pending `approval-requested` part) through to its
+        final resumed content, instead of leaving a stale pending row
+        behind and inserting a second, untagged one -- see that module's
+        docstring for why a single upserted row is the design here rather
+        than the two-row pattern the HTTP transport path uses."""
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE messages SET content = ?, parts = ?, response_id = ? WHERE id = ?",
+                (
+                    content,
+                    json.dumps(parts) if parts is not None else None,
+                    response_id,
+                    message_id,
+                ),
+            )
+
     async def update_message_parts(
         self, message_id: str, parts: list[dict] | None
     ) -> None:

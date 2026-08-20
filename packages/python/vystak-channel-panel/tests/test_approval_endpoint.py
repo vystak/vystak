@@ -96,8 +96,14 @@ async def test_approval_resumes_parked_turn_nats(panel_app_harness):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+    # Regression: `resume_detached` forwards to `resolve_address`, which
+    # needs the CANONICAL name (`{name}.{kind}.{namespace}`), not the
+    # plain `conv.agent_name` -- passing the plain name raised a
+    # `ValueError` inside `parse_canonical_name` on every real NATS
+    # approval/denial (this fake doesn't validate the format, so it never
+    # caught the mismatch; a live deploy did).
     assert h.nats_client.resume_calls == [
-        ("durable-agent", "t1",
+        ("durable-agent.agents.default", "t1",
          {"approved": True, "decided_by": h.user_email, "note": None}),
     ]
 

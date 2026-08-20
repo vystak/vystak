@@ -93,6 +93,39 @@ async def test_denied_decision_returns_denied_string(monkeypatch):
     assert result == "Denied by qa@example.com: too risky"
 
 
+async def _raw_restart(name: str) -> str:
+    """Restart a service."""
+    return f"restarted {name}"
+
+
+def test_raw_callable_is_matched_and_coerced():
+    """`load_user_tools` returns bare functions (no `.name`, only
+    `__name__`) -- the common case for every `Skill.tools` entry, not an
+    edge case. Regression test for a real bug caught live: `_dispatch_name`
+    must fall back to `__name__` so these get matched against
+    `approval_map` and coerced into a real tool before wrapping."""
+    (wrapped,) = wrap_tools_with_approval([_raw_restart], {"_raw_restart": "ops"})
+    assert wrapped is not _raw_restart
+    assert wrapped.name == "_raw_restart"
+    assert wrapped.args_schema is not None
+
+
+@pytest.mark.asyncio
+async def test_raw_callable_approved_decision_executes_original(monkeypatch):
+    monkeypatch.setattr(
+        "_vystak.runtime.approvals.interrupt",
+        lambda payload: {"approved": True, "decided_by": "qa@example.com", "note": None},
+    )
+    (wrapped,) = wrap_tools_with_approval([_raw_restart], {"_raw_restart": "ops"})
+    result = await wrapped.ainvoke({"name": "web"})
+    assert result == "restarted web"
+
+
+def test_raw_callable_ungated_passes_through_unchanged():
+    out = wrap_tools_with_approval([_raw_restart], {"other": "ops"})
+    assert out == [_raw_restart]
+
+
 @pytest.mark.asyncio
 async def test_denied_without_note_uses_default(monkeypatch):
     monkeypatch.setattr(
