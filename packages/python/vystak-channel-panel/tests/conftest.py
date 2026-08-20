@@ -237,12 +237,17 @@ async def panel_app_harness(tmp_path, monkeypatch):
         """Mirrors PanelNatsClient.resume_detached's public surface without
         touching JetStream."""
 
-        def __init__(self, *, resume_error: str | None = None):
+        def __init__(
+            self, *, resume_error: str | None = None, resume_timeout: bool = False
+        ):
             self.resume_calls: list[tuple[str, str, dict]] = []
             self._resume_error = resume_error
+            self._resume_timeout = resume_timeout
 
         async def resume_detached(self, agent_name: str, turn_id: str, resume: dict) -> None:
             self.resume_calls.append((agent_name, turn_id, resume))
+            if self._resume_timeout:
+                raise TimeoutError("NATS request timed out")
             if self._resume_error:
                 raise RuntimeError(self._resume_error)
 
@@ -274,7 +279,12 @@ async def panel_app_harness(tmp_path, monkeypatch):
 
     harnesses: list[Harness] = []
 
-    async def factory(*, transport: str = "nats", resume_error: str | None = None) -> Harness:
+    async def factory(
+        *,
+        transport: str = "nats",
+        resume_error: str | None = None,
+        resume_timeout: bool = False,
+    ) -> Harness:
         panel_store = SqlitePanelStore(tmp_path / f"panel-{len(harnesses)}.db")
         await panel_store.connect()
         rt = PanelChannelRuntime(
@@ -285,7 +295,9 @@ async def panel_app_harness(tmp_path, monkeypatch):
             responses_client=ResponsesClient(),
         )
         if transport == "nats":
-            rt.nats_client = FakeResumeNatsClient(resume_error=resume_error)
+            rt.nats_client = FakeResumeNatsClient(
+                resume_error=resume_error, resume_timeout=resume_timeout
+            )
         app = build_app(rt)
         asgi_transport = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(

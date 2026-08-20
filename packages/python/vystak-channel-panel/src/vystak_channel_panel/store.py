@@ -723,6 +723,21 @@ class SqlitePanelStore:
             row = await cur.fetchone()
         return self._message_from_row(row) if row else None
 
+    async def update_message_parts(
+        self, message_id: str, parts: list[dict] | None
+    ) -> None:
+        """Overwrite one message's `parts` in place — `content` is untouched.
+
+        Used to flip a parked message's persisted `approval-requested` part
+        to a resolved state once its resume completes (a reload otherwise
+        shows an approve/reject control for a decision that's already been
+        made, which would 422 if clicked)."""
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE messages SET parts = ? WHERE id = ?",
+                (json.dumps(parts) if parts is not None else None, message_id),
+            )
+
     @staticmethod
     def _message_from_row(row) -> PanelMessage:
         d = dict(row)

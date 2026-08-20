@@ -28,6 +28,30 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+async def detect_park(rt, base_url: str, thread_id: str | None) -> dict | None:
+    """Best-effort probe of the agent's `/v1/_vystak/checkpoint` for
+    *thread_id*. Returns the checkpoint dict when the thread is durably
+    interrupted (a HITL tool-approval park), `None` otherwise — including
+    when there is no thread_id yet, or the probe itself fails (agent
+    unreachable, malformed response, etc — a probe failure must not turn
+    into a raised exception here, the caller falls back to its own
+    truncated-stream handling).
+
+    Shared between `post_message`'s HTTP branch (detecting the first park
+    on a fresh turn) and `routes_approvals._consume_resume` (detecting a
+    SECOND park mid-resume, when the resumed run interrupts again on
+    another gated tool)."""
+    if not thread_id:
+        return None
+    try:
+        checkpoint = await rt.responses_client.get_checkpoint(base_url, thread_id)
+    except Exception:  # noqa: BLE001 — best-effort probe
+        return None
+    if checkpoint and checkpoint.get("interrupted"):
+        return checkpoint
+    return None
+
+
 class MessageIn(BaseModel):
     text: str
 
@@ -62,18 +86,33 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
         async def gen():
             acc = TurnAccumulator()
             done_seen = False
+            # Captures response.created's id off the raw SSE stream (see
+            # ResponsesClient._stream_sse's on_response_id hook) without
+            # teaching translate_responses_event to emit a new frame for it
+            # — that would break the byte-exact
+            # test_panel_sse_matches_cross_language_fixture pin and add an
+            # unhandled event type to the NATS _proxy_turn. This is the
+            # thread id the agent mints for a conversation's very first
+            # turn, before any `done` event has given the panel one via
+            # last_response_id.
+            created_response_id: list[str] = []
 
-            async def persist(response_id: str | None):
+            async def persist(response_id: str | None, *, turn_id: str | None = None):
                 # The single persistence path for every branch below (done,
-                # error, truncated-stream, dropped-connection). They have
-                # disagreed with each other before (discarding text on an
-                # error event, then again on a dropped connection); routing
-                # all four through one function makes that drift impossible
-                # rather than relying on each branch to stay in sync by hand.
+                # error, truncated-stream, dropped-connection, park). They
+                # have disagreed with each other before (discarding text on
+                # an error event, then again on a dropped connection);
+                # routing all of them through one function makes that drift
+                # impossible rather than relying on each branch to stay in
+                # sync by hand. `turn_id` is only ever set on the park
+                # branch — it tags the pending-approval row so a later
+                # successful resume can find and resolve it (see
+                # routes_approvals._consume_resume).
                 return await rt.panel_store.add_message(
                     conv_id, "assistant", acc.content,
                     response_id=response_id,
                     parts=acc.parts(),
+                    turn_id=turn_id,
                 )
 
             try:
@@ -83,6 +122,7 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                     previous_response_id=conv.last_response_id,
                     user_id=user.id,
                     project_id=conv.project_id,
+                    on_response_id=created_response_id.append,
                 ):
                     if ev.type in ("token", "tool_call", "tool_result"):
                         acc.feed(ev)
@@ -127,37 +167,35 @@ def build_messages_router(rt: PanelChannelRuntime, current_user) -> APIRouter:
                     # state on its thread; anything else (including the
                     # checkpoint call itself failing) falls through to the
                     # truncated-stream handling below.
-                    # KNOWN GAP: gated on last_response_id, which the agent
-                    # uses as its LangGraph thread_id for turns 2+ (see
-                    # responses_client.py's ResponsesClient docstring). On a
-                    # conversation's very first turn there is no
-                    # last_response_id yet (the agent mints a fresh thread id
-                    # we never capture, since the panel only reads it off the
-                    # `done` terminal event) — a first-turn park on the HTTP
-                    # transport falls through to the truncated-stream branch
-                    # below and is currently invisible to the browser. Fixing
-                    # this would mean capturing `response.created`'s id
-                    # without teaching `translate_responses_event` to emit a
-                    # new frame for it (that would break the byte-exact
-                    # `test_panel_sse_matches_cross_language_fixture` pin and
-                    # add an unhandled event type to the NATS `_proxy_turn`).
-                    checkpoint = None
-                    if conv.last_response_id:
-                        try:
-                            checkpoint = await rt.responses_client.get_checkpoint(
-                                base_url, conv.last_response_id
-                            )
-                        except Exception:  # noqa: BLE001 — best-effort probe
-                            checkpoint = None
-                    if checkpoint and checkpoint.get("interrupted"):
+                    #
+                    # thread_id: last_response_id for turns 2+ (the agent
+                    # reuses it as its LangGraph thread_id — see
+                    # ResponsesClient's docstring); on a conversation's very
+                    # first turn there is no last_response_id yet, so fall
+                    # back to the id captured off this turn's own
+                    # response.created event.
+                    thread_id = conv.last_response_id or (
+                        created_response_id[-1] if created_response_id else None
+                    )
+                    checkpoint = await detect_park(rt, base_url, thread_id)
+                    if checkpoint:
                         interrupts = checkpoint.get("interrupts") or []
                         approval_ev = PanelStreamEvent(
                             type="approval_requested",
                             approval=(interrupts[0] if interrupts else {}),
                         )
                         acc.feed(approval_ev)
-                        await persist(None)
-                        turn_id = conv.last_response_id
+                        turn_id = thread_id
+                        await persist(None, turn_id=turn_id)
+                        if thread_id and thread_id != conv.last_response_id:
+                            # First-turn park: this is the only place the
+                            # agent's freshly-minted thread id is ever
+                            # learned on the HTTP transport, so persist it
+                            # now — otherwise the resume route (and any
+                            # later checkpoint probe) has nothing to key on.
+                            await rt.panel_store.update_conversation(
+                                conv_id, last_response_id=thread_id
+                            )
                         await rt.panel_store.set_active_turn(conv_id, turn_id)
                         frame = browser_frame(approval_ev)
                         frame["turn_id"] = turn_id

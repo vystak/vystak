@@ -111,7 +111,11 @@ class PanelNatsClient:
         subject — the bridge rejects this unless the turn is currently
         parked (JSON-RPC error -32602 "turn is not parked"), which surfaces
         here as a `RuntimeError` carrying the bridge's message so the
-        approval route can turn it into a 409."""
+        approval route can turn it into a 409. A broker-level timeout is a
+        distinct failure — the turn's resolution state is unknown, not
+        "already resolved" — so it's re-raised as `TimeoutError` (mirroring
+        `turn_status`) rather than folded into the same `RuntimeError`; the
+        approval route maps it to a 503, leaving the turn parked for retry."""
         nc = await self._transport.nats_connection()
         subject = self._transport.resolve_address(agent_name)
         payload = json.dumps(
@@ -122,7 +126,13 @@ class PanelNatsClient:
                 "params": {"turn_id": turn_id, "resume": resume},
             }
         ).encode()
-        reply = await nc.request(subject, payload, timeout=self._status_timeout)
+        try:
+            reply = await nc.request(subject, payload, timeout=self._status_timeout)
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"NATS request to {subject} (responses/resumeDetached) "
+                f"timed out after {self._status_timeout}s"
+            ) from e
         body = json.loads(reply.data)
         if body.get("error"):
             raise RuntimeError(body["error"].get("message", "resume failed"))

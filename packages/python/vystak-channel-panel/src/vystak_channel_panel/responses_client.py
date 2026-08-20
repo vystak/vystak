@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Literal
 
 import httpx
@@ -71,7 +71,16 @@ class ResponsesClient:
         previous_response_id: str | None,
         user_id: str | None = None,
         project_id: str | None = None,
+        on_response_id: Callable[[str], None] | None = None,
     ) -> AsyncIterator[PanelStreamEvent]:
+        """*on_response_id*, if given, is called with the id off the raw
+        `response.created` event as soon as it's seen on the wire — before
+        translation, so it costs `translate_responses_event` nothing (that
+        event type still translates to `None`, same as always). Lets a
+        caller learn the agent's freshly-minted thread id on a
+        conversation's very first turn, when there is no
+        `previous_response_id`/`last_response_id` yet to key a later
+        checkpoint probe on (see routes_messages.py's `_detect_park`)."""
         body = {
             "model": "",
             "input": text,
@@ -81,7 +90,10 @@ class ResponsesClient:
             "user_id": user_id,
             "project_id": project_id,
         }
-        async for ev in self._stream_sse(f"{base_url.rstrip('/')}/v1/responses", body):
+        async for ev in self._stream_sse(
+            f"{base_url.rstrip('/')}/v1/responses", body,
+            on_response_id=on_response_id,
+        ):
             yield ev
 
     async def resume_stream(
@@ -114,7 +126,13 @@ class ResponsesClient:
             if owns_client:
                 await client.aclose()
 
-    async def _stream_sse(self, url: str, body: dict) -> AsyncIterator[PanelStreamEvent]:
+    async def _stream_sse(
+        self,
+        url: str,
+        body: dict,
+        *,
+        on_response_id: Callable[[str], None] | None = None,
+    ) -> AsyncIterator[PanelStreamEvent]:
         """Shared SSE-consumption loop for `stream_message` and
         `resume_stream`: POST *body* to *url*, translate each Responses-API
         event into a `PanelStreamEvent`. Kept as one helper so the two paths
@@ -150,6 +168,13 @@ class ResponsesClient:
                             data = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
+                        if (
+                            on_response_id is not None
+                            and data.get("type") == "response.created"
+                        ):
+                            rid = (data.get("response") or {}).get("id")
+                            if rid:
+                                on_response_id(rid)
                         ev = translate_responses_event(data, pending_calls)
                         if ev is not None:
                             yield ev
