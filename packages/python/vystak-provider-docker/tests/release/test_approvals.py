@@ -27,16 +27,27 @@ container's env too (an agent that only gets the key sends it to
 `api.anthropic.com` and 401s against a MiniMax key).
 
 Why the park assertion is strict (parked *before* any side-effect log line
-exists), not just "eventually parked": the deployed agent image installs
-`vystak` from PyPI (see repo CLAUDE.md, "Agent images install vystak from
-PyPI"), which predates the `needs_approval` field — `pydantic`'s
-`extra="ignore"` means the installed `vystak.schema.Skill` silently drops
-it. `approvals.py`'s `load_approval_map` falls back to the bundled
-`agent.json` (written by the CLI's own, newer `vystak`, at `vystak init`
-time) for exactly this reason. If that fallback were broken, the gate
-would silently vanish and `restart_service` would just run — this cell
-lives specifically to catch that regression live, not just in a unit test
-against the current-checkout `vystak`.
+exists), not just "eventually parked": this cell caught a real regression
+live during Task 13 development that a looser "eventually parked" check
+would have missed entirely -- see
+`vystak-template-langchain-python/_vystak/runtime/approvals.py`'s
+`_dispatch_name` docstring for the bug (gated `tools/*.py` functions,
+loaded as bare callables with no `.name`, never matched the approval map,
+so the gate silently no-opped and `restart_service` ran unparked). Fixed
+in the same commit that added this file. NOTE, corrected from an earlier
+draft of this docstring: the installed PyPI `vystak` in the deployed image
+(0.2.0 as of this writing) already carries the `needs_approval` field, so
+`load_approval_map`'s typed path resolves it directly -- the raw-
+`agent.json` fallback this cell was originally thought to be exercising
+is NOT what caught the regression above; the gate never even reached
+`load_approval_map`'s output before failing to wrap the tool. The
+fallback still exists for whenever the installed `vystak` genuinely
+predates the field, but this cell verified empirically that it isn't
+currently in play. Verified the assertion actually discriminates: reverted
+`_dispatch_name` locally, reinstalled the CLI's bundled template snapshot,
+and confirmed `test_live_approval_approve_runs_gated_tool_once` fails
+(never parks, 90s timeout) against the broken build before restoring the
+fix.
 """
 
 from __future__ import annotations
@@ -362,8 +373,9 @@ def test_live_approval_approve_runs_gated_tool_once(
     Strict ordering: the turn must reach `parked` in the journal, and the
     persisted conversation must carry the `approval-requested` part,
     BEFORE any line lands in the side-effect log -- proof the gate ran
-    before the tool, not after (see module docstring for why this
-    specifically live-verifies the raw-`agent.json` fallback). After
+    before the tool, not after (see module docstring: this exact assertion
+    caught a real "gate never fires" regression during development, and
+    was verified to fail correctly against the broken build). After
     approving: exactly one side-effect line, `active_turn_id` clears, the
     journal reaches `done`, and a final assistant row exists.
     """
