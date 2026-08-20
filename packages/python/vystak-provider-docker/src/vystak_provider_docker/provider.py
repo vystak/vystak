@@ -126,26 +126,37 @@ SECRETS_PATH = Path(".vystak") / "secrets.json"
 # app (DockerChannelNode's `container_port`, always 8080 today — see
 # ChatChannelRuntime._start_delivery_receiver / PanelChannelRuntime's
 # override of the same hook) rather than the default `ChannelRuntime`
-# sidecar receiver on `delivery_port` (default 9999; used by Slack,
-# Discord, and any future channel that doesn't override the hook). The
-# heartbeat scheduler's `channel_addresses` must route to whichever port
-# a given channel type actually listens on for delivery.
+# sidecar receiver on `delivery_port` (config-overridable, default 9999;
+# used by Slack, Discord, and any future channel that doesn't override
+# the hook). The heartbeat scheduler's `channel_addresses` must route to
+# whichever port a given channel actually listens on for delivery.
 _CHANNEL_MAIN_APP_DELIVERY_PORT = 8080
 _DEFAULT_CHANNEL_DELIVERY_PORT = 9999
 _CHANNELS_DELIVERING_ON_MAIN_APP = (ChannelType.CHAT, ChannelType.PANEL)
 
 
-def _heartbeat_delivery_port(channel_type: ChannelType) -> int:
+def _heartbeat_delivery_port(channel: Channel) -> int:
     """Delivery port for a channel's `vystak-channel-<name>` container.
 
     Must match the port the channel's runtime actually binds `/deliver`
     to (see `_CHANNELS_DELIVERING_ON_MAIN_APP`'s docstring) — not the
     provider's own default sidecar-receiver assumption, which only holds
     for channels that never override `_start_delivery_receiver`.
+
+    Chat and Panel hardcode port 8080 regardless of `channel.config` —
+    their plugins (`ChatChannelPlugin.build_bundle`,
+    `PanelChannelPlugin.build_bundle`) always emit `"port": 8080` in the
+    bundled config, and their runtimes never read `delivery_port` at all
+    (they mount `/deliver` on the main app instead of the base class's
+    sidecar). Every other channel type uses the base `ChannelRuntime`'s
+    unmodified sidecar receiver, which binds
+    `int(self.config.get("delivery_port", 9999))` — so the *user's*
+    `channel.config.delivery_port` (if declared) must be honored here too,
+    not just the 9999 default.
     """
-    if channel_type in _CHANNELS_DELIVERING_ON_MAIN_APP:
+    if channel.type in _CHANNELS_DELIVERING_ON_MAIN_APP:
         return _CHANNEL_MAIN_APP_DELIVERY_PORT
-    return _DEFAULT_CHANNEL_DELIVERY_PORT
+    return int(channel.config.get("delivery_port", _DEFAULT_CHANNEL_DELIVERY_PORT))
 
 
 class DockerProvider(PlatformProvider):
@@ -1324,7 +1335,7 @@ class DockerProvider(PlatformProvider):
             },
             channel_addresses={
                 c.canonical_name: (
-                    f"http://vystak-channel-{c.name}:{_heartbeat_delivery_port(c.type)}"
+                    f"http://vystak-channel-{c.name}:{_heartbeat_delivery_port(c)}"
                 )
                 for c in channels
             },
