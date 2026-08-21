@@ -61,6 +61,8 @@ export function panelStreamToUIChunks(
           arguments?: string;
           output?: string;
           is_error?: boolean;
+          input?: unknown;
+          turn_id?: string;
         };
         try {
           payload = JSON.parse(line.slice(6));
@@ -131,6 +133,33 @@ export function panelStreamToUIChunks(
               dynamic: true,
             });
           }
+        } else if (payload.type === 'approval') {
+          // A parked HITL tool call: no tool_result will follow until the
+          // user decides. Render it exactly like an in-flight tool_call
+          // (input-available, no output yet) plus a non-transient marker
+          // carrying the turn_id — chat.tsx uses the marker to find the
+          // pending call's toolCallId/turnId pair and render Approve/Deny
+          // controls on it.
+          closeTextIfOpen();
+          const toolCallId = outgoingToolCallId(payload.tool_call_id ?? '');
+          const toolName = payload.tool_name ?? '';
+          controller.enqueue({
+            type: 'tool-input-start',
+            toolCallId,
+            toolName,
+            dynamic: true,
+          });
+          controller.enqueue({
+            type: 'tool-input-available',
+            toolCallId,
+            toolName,
+            input: payload.input ?? {},
+            dynamic: true,
+          });
+          controller.enqueue({
+            type: 'data-approval',
+            data: { toolCallId, turnId: payload.turn_id ?? '' },
+          });
         } else if (payload.type === 'reset') {
           // A resumed turn rewinds and re-emits its retained prefix from
           // scratch. The AI SDK's UIMessageChunk protocol has no chunk that

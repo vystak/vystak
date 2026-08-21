@@ -22,7 +22,8 @@ class FakeResponsesClient:
         self.capture = capture if capture is not None else {}
 
     async def stream_message(
-        self, base_url, text, *, previous_response_id, user_id=None, project_id=None
+        self, base_url, text, *, previous_response_id, user_id=None,
+        project_id=None, on_response_id=None,
     ):
         self.capture.update(
             base_url=base_url, text=text,
@@ -40,7 +41,8 @@ class FakeResponsesClientRaisesMidStream:
         self.capture = capture if capture is not None else {}
 
     async def stream_message(
-        self, base_url, text, *, previous_response_id, user_id=None, project_id=None
+        self, base_url, text, *, previous_response_id, user_id=None,
+        project_id=None, on_response_id=None,
     ):
         self.capture.update(
             base_url=base_url, text=text,

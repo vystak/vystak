@@ -174,7 +174,7 @@ def test_app_checkpoint_route_returns_null_for_unseen_thread():
     with TestClient(app) as client:
         r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "never-seen"})
     assert r.status_code == 200
-    assert r.json() == {"checkpoint_id": None, "interrupted": False}
+    assert r.json() == {"checkpoint_id": None, "interrupted": False, "interrupts": []}
 
 
 def test_app_checkpoint_route_reflects_a_stored_checkpoint():
@@ -193,7 +193,7 @@ def test_app_checkpoint_route_reflects_a_stored_checkpoint():
         )
         r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "resp_ck_1"})
     assert r.status_code == 200
-    assert r.json() == {"checkpoint_id": "ck-9", "interrupted": False}
+    assert r.json() == {"checkpoint_id": "ck-9", "interrupted": False, "interrupts": []}
 
 
 def test_app_checkpoint_route_reports_interrupted_when_graph_is_parked():
@@ -206,7 +206,7 @@ def test_app_checkpoint_route_reports_interrupted_when_graph_is_parked():
         )
         r = client.get("/v1/_vystak/checkpoint", params={"thread_id": "resp_ck_2"})
     assert r.status_code == 200
-    assert r.json() == {"checkpoint_id": None, "interrupted": True}
+    assert r.json() == {"checkpoint_id": None, "interrupted": True, "interrupts": []}
 
 
 def test_app_builds_with_sqlite_sessions_config():

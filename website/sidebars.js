@@ -26,6 +26,7 @@ const sidebars = {
         'concepts/compaction',
         'concepts/schedules',
         'concepts/durable-execution',
+        'concepts/approvals',
         'concepts/channels',
       ],
     },

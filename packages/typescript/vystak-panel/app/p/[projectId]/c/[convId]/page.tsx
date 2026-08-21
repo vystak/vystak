@@ -57,6 +57,7 @@ export default async function ConversationPage({
         conversationId={convId}
         initialMessages={initialMessages}
         agentName={conversation.agent_name}
+        activeTurnId={conversation.active_turn_id}
       />
     </div>
   );

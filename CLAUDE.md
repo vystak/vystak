@@ -75,10 +75,11 @@ the full deploy → verify → destroy lifecycle. The canonical reference is
 `test_plan.md` (repo root): **stack × secrets × channel × transport**, cells
 D1–D8 (Docker) and A1–A8 (Azure), plus extra lifecycle cells beyond the grid:
 
-- Docker (`vystak-provider-docker/tests/release/`, 19 files): `test_D1..D8_*`,
+- Docker (`vystak-provider-docker/tests/release/`, 20 files): `test_D1..D8_*`,
   `test_heartbeat_v2.py`, `test_template_smoke.py`, `test_skills_folder.py`,
   `test_live_chat.py`, `test_schedules.py`, `test_panel_nats_resume.py`,
-  `test_workspace_tools_v11.py`, `test_durable_turns.py`, and three Postgres variants
+  `test_workspace_tools_v11.py`, `test_durable_turns.py`, `test_approvals.py`,
+  and three Postgres variants
   (`test_sessions_postgres.py`, `test_memory_postgres.py`,
   `test_sessions_and_memory_postgres.py`).
 - Azure (`vystak-provider-azure/tests/release/`, 8 files): `test_A1..A8_*`.
@@ -92,7 +93,7 @@ Markers (all gated — default `pytest` excludes them; registered in root `pypro
 | `release_smoke_azure` | Azure smoke. | `AZURE_SUBSCRIPTION_ID` + `az login` |
 | `release_slack` | Slack-channel cells. | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` |
 | `release_discord` | Discord-channel cells. | `DISCORD_BOT_TOKEN` |
-| `release_live_chat` | Real LLM round-trip (single cell). | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
+| `release_live_chat` | Real LLM round-trips: chat round-trip (`test_live_chat.py`), durable restart-resume (`test_durable_turns.py`), tool-approval approve + deny (`test_approvals.py`) — 4 tests across 3 files. | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
 
 Common invocations:
 
@@ -270,7 +271,7 @@ Loading paths:
 
 ## Examples
 
-`examples/` (38 dirs) maps onto the feature axes: `docker-*` / `azure-*`
+`examples/` (39 dirs) maps onto the feature axes: `docker-*` / `azure-*`
 (provider), `*-vault` (secrets), `*-workspace-*` (workspace compute),
 `heartbeat-*` / `docker-schedules` (scheduled tasks — see `docs/schedules.md`),
 `*-multi-chat*` / `*multi-agent*` (multi-agent, incl.
@@ -278,8 +279,9 @@ Loading paths:
 `docker-skills` / `docker-skills-slack` (folder skills), `mcp-files`,
 `memory-agent`, `sessions-postgres` / `docker-compaction` (sessions),
 `docker-panel` (control panel), `docker-panel-durable` (durable/checkpointed
-execution — see `docs/durable-execution.md`). When modifying core behavior,
-update or run the matching example to verify end-to-end.
+execution — see `docs/durable-execution.md`), `docker-approvals`
+(human-in-the-loop tool approvals — see `docs/approvals.md`). When modifying
+core behavior, update or run the matching example to verify end-to-end.
 
 **When implementing a specific feature, create (or update) an agents
 configuration under `examples/` that simulates real usage of that feature** —

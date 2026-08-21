@@ -99,8 +99,10 @@ def bridge_factory(monkeypatch):
         resume_checkpoint_id=None,
         checkpoint_interrupted: bool = False,
         checkpoint_raises: bool = False,
+        checkpoint_state: dict[str, Any] | None = None,
         healthz_failures: int = 0,
         sse_done: bool = True,
+        resume_status: int = 200,
     ):
         events = sse_events or []
         lines = [f"data: {json.dumps(e)}\n\n" for e in events]
@@ -129,6 +131,8 @@ def bridge_factory(monkeypatch):
             if request.url.path == "/v1/_vystak/checkpoint":
                 if checkpoint_raises:
                     raise httpx.ConnectError("simulated: agent unreachable", request=request)
+                if checkpoint_state is not None:
+                    return httpx.Response(200, json=checkpoint_state)
                 return httpx.Response(
                     200,
                     json={
@@ -136,6 +140,8 @@ def bridge_factory(monkeypatch):
                         "interrupted": checkpoint_interrupted,
                     },
                 )
+            if request.url.path == "/v1/_vystak/resume" and resume_status != 200:
+                return httpx.Response(resume_status)
             return httpx.Response(
                 200, content=sse_bytes, headers={"content-type": "text/event-stream"}
             )

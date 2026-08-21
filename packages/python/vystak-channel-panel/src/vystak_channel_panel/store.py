@@ -723,6 +723,70 @@ class SqlitePanelStore:
             row = await cur.fetchone()
         return self._message_from_row(row) if row else None
 
+    async def get_messages_by_turn_id(
+        self, conversation_id: str, turn_id: str
+    ) -> list[PanelMessage]:
+        """All assistant rows persisted for *turn_id*, oldest first.
+
+        Normally there's exactly one (the NATS persister upserts a single
+        row in place). But the HTTP resume path's `_run_resume_http`
+        inserts a NEW row via `add_message` on a chained park (a resumed
+        run that parks AGAIN on a second gated tool) rather than updating
+        the first park's row — both rows keep the same `turn_id`. A
+        `LIMIT 1` lookup (`get_message_by_turn_id`) can silently pick the
+        wrong one when resolving a pending approval part; callers that
+        need to find/flip a pending part for a turn should use this and
+        act on every match instead."""
+        async with self.db.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND turn_id = ? "
+            "AND role = 'assistant' ORDER BY created_at",
+            (conversation_id, turn_id),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [self._message_from_row(r) for r in rows]
+
+    async def update_message(
+        self,
+        message_id: str,
+        *,
+        content: str,
+        parts: list[dict] | None,
+        response_id: str | None = None,
+    ) -> None:
+        """Overwrite one message's `content`/`parts`/`response_id` in
+        place. Used by `turn_worker.run_turn_persister` to upsert the
+        SAME row (found via `get_message_by_turn_id`) as a turn progresses
+        from parked (a pending `approval-requested` part) through to its
+        final resumed content, instead of leaving a stale pending row
+        behind and inserting a second, untagged one -- see that module's
+        docstring for why a single upserted row is the design here rather
+        than the two-row pattern the HTTP transport path uses."""
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE messages SET content = ?, parts = ?, response_id = ? WHERE id = ?",
+                (
+                    content,
+                    json.dumps(parts) if parts is not None else None,
+                    response_id,
+                    message_id,
+                ),
+            )
+
+    async def update_message_parts(
+        self, message_id: str, parts: list[dict] | None
+    ) -> None:
+        """Overwrite one message's `parts` in place — `content` is untouched.
+
+        Used to flip a parked message's persisted `approval-requested` part
+        to a resolved state once its resume completes (a reload otherwise
+        shows an approve/reject control for a decision that's already been
+        made, which would 422 if clicked)."""
+        async with self._write() as db:
+            await db.execute(
+                "UPDATE messages SET parts = ? WHERE id = ?",
+                (json.dumps(parts) if parts is not None else None, message_id),
+            )
+
     @staticmethod
     def _message_from_row(row) -> PanelMessage:
         d = dict(row)

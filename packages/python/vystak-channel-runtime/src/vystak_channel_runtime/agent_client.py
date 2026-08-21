@@ -43,6 +43,10 @@ class AgentClient(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> AsyncIterator[AgentChunk]: ...
 
+    async def resume_turn(
+        self, thread_id: str, resume: dict[str, Any], agent_url: str | None = None
+    ) -> AgentReply: ...
+
 
 class A2AAgentClient:
     """A2A JSON-RPC client. Default for `agent_protocol in {a2a-turn, a2a-stream}`."""
@@ -52,10 +56,22 @@ class A2AAgentClient:
         timeout_s: float = 30.0,
         max_retries: int = 3,
         base_backoff: float = 0.5,
+        resume_timeout_s: float = 300.0,
     ) -> None:
         self._timeout = timeout_s
         self._max_retries = max_retries
         self._base_backoff = base_backoff
+        # A gated tool can run real work before the graph parks again, so
+        # the resume endpoint's read bound is generous (mirrors the
+        # nats_bridge's `_resume_and_collect_text` ~300s timeout) —
+        # unrelated to `_timeout`, which governs the short send_turn calls.
+        self._resume_timeout = resume_timeout_s
+        # thread_id -> agent HTTP root (no trailing /a2a), learned from the
+        # most recent send_turn/stream_turn call for that thread. resume_turn
+        # has no agent_url parameter (Task 11 contract — the Slack runtime
+        # only carries thread_id + tool through the Block Kit button value),
+        # so it looks the base URL up here rather than being told it again.
+        self._known_bases: dict[str, str] = {}
 
     async def send_turn(
         self,
@@ -69,6 +85,8 @@ class A2AAgentClient:
         # be the bare HTTP root (older shape) — append only when needed.
         stripped = agent_url.rstrip("/")
         url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
+        root = stripped.removesuffix("/a2a")
+        self._known_bases[thread_id] = root
         request_id = str(uuid.uuid4())
         # A2A v0.3 message/send shape (the SDK's v0.3 compat layer accepts
         # this on /a2a). `kind: "message"` and `messageId` are required by
@@ -98,7 +116,18 @@ class A2AAgentClient:
                 try:
                     resp = await client.post(url, json=body, timeout=self._timeout)
                     if resp.status_code == 200:
-                        return self._reply_from_jsonrpc(resp.json())
+                        reply = self._reply_from_jsonrpc(resp.json())
+                        # The `approval_pending` marker's thread_id is the
+                        # LangGraph checkpoint key (executor.py uses
+                        # `context.task_id`, NOT the `contextId` the channel
+                        # sent as *thread_id* above) — that's the key
+                        # resume_turn is later called with, so alias it to
+                        # the same base URL here or resume_turn can never
+                        # find it.
+                        pa_tid = (reply.pending_approval or {}).get("thread_id")
+                        if pa_tid:
+                            self._known_bases[pa_tid] = root
+                        return reply
                     if 500 <= resp.status_code < 600 and attempt < self._max_retries:
                         await asyncio.sleep(self._base_backoff * (2 ** (attempt - 1)))
                         continue
@@ -124,6 +153,8 @@ class A2AAgentClient:
         # be the bare HTTP root (older shape) — append only when needed.
         stripped = agent_url.rstrip("/")
         url = stripped if stripped.endswith("/a2a") else stripped + "/a2a"
+        root = stripped.removesuffix("/a2a")
+        self._known_bases[thread_id] = root
         request_id = str(uuid.uuid4())
         params: dict[str, Any] = {
             "message": {
@@ -172,6 +203,16 @@ class A2AAgentClient:
                                     line.removeprefix("data:").strip()
                                 )
                                 if chunk is not None:
+                                    if chunk.type == "approval_pending":
+                                        # Same aliasing send_turn does: the
+                                        # marker's thread_id (executor.py's
+                                        # task_id) differs from the contextId
+                                        # this call sent as *thread_id*, and
+                                        # resume_turn is later called with
+                                        # the marker's id.
+                                        pa_tid = (chunk.data or {}).get("thread_id")
+                                        if pa_tid:
+                                            self._known_bases[pa_tid] = root
                                     yield chunk
                         except (httpx.ConnectError, httpx.ReadTimeout) as exc:
                             raise AgentCallError(
@@ -188,6 +229,112 @@ class A2AAgentClient:
                         f"agent {agent_url} stream failed: {exc}"
                     ) from exc
             raise AgentCallError(f"agent {agent_url} stream exhausted retries")
+
+    async def resume_turn(
+        self, thread_id: str, resume: dict[str, Any], agent_url: str | None = None
+    ) -> AgentReply:
+        """POST `{base}/v1/_vystak/resume` and collect the resumed run's text.
+
+        Deviation from the original brief (`-> str`): to support chaining —
+        a resumed run can park AGAIN on a second gated tool — this returns
+        an `AgentReply` with `pending_approval` set instead of a bare
+        string, so a caller (the Slack runtime) can uniformly branch on
+        `reply.pending_approval` after both `send_turn`/`call_agent` and
+        `resume_turn` without a second return shape.
+
+        Mirrors `vystak_channel_panel.routes_approvals._run_resume_http`
+        and the nats_bridge's `_handle_resume_thread`: when the SSE ends
+        with a terminal `response.completed`/`response.failed`/`[DONE]`-only
+        event, the turn is done. When it ends with none of those, a GET
+        to `/v1/_vystak/checkpoint` disambiguates a genuine truncation from
+        a second park.
+
+        `agent_url`, if given, both overrides and refreshes the cached base
+        URL for *thread_id* — the `_known_bases` cache is process-local, so
+        after a channel restart it's empty even though the agent-side park
+        is durable. Callers that persisted the agent route alongside the
+        button (the Slack runtime folds it into the button `value`) pass it
+        back here rather than relying on the cache alone.
+        """
+        if agent_url:
+            base_url = agent_url.rstrip("/").removesuffix("/a2a")
+            self._known_bases[thread_id] = base_url
+        else:
+            base_url = self._known_bases.get(thread_id)
+        if base_url is None:
+            raise RuntimeError(
+                f"resume_turn: no known base URL for thread {thread_id} "
+                "(send_turn/stream_turn must be called for this thread first, "
+                "or pass agent_url explicitly)"
+            )
+        chunks: list[str] = []
+        saw_terminal = False
+        async with httpx.AsyncClient() as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{base_url}/v1/_vystak/resume",
+                    json={"thread_id": thread_id, "resume": resume},
+                    timeout=self._resume_timeout,
+                ) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError(
+                            f"resume {thread_id} returned {resp.status_code}"
+                        )
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            saw_terminal = True
+                            break
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        ev_type = event.get("type")
+                        if ev_type == "response.output_text.delta":
+                            chunks.append(event.get("delta", ""))
+                        elif ev_type in ("response.completed", "response.failed"):
+                            saw_terminal = True
+            except httpx.HTTPError as exc:
+                # Broader than send_turn/stream_turn's ConnectError/ReadTimeout
+                # pair on purpose (Important-3 fix-round): resume_turn has no
+                # retry loop, so any transport failure here — including
+                # RemoteProtocolError, PoolTimeout, etc — must still surface
+                # as a RuntimeError the Slack handler's `except Exception`
+                # can turn into an ephemeral message, never an unhandled
+                # crash that leaves the approval button dead with no
+                # feedback.
+                raise RuntimeError(f"resume {thread_id} failed: {exc}") from exc
+
+            text = "".join(chunks)
+            if saw_terminal:
+                return AgentReply(text=text, finish_reason="completed")
+
+            # Stream ended without a terminal event — disambiguate a
+            # genuine truncation from a second park via checkpoint state.
+            try:
+                cp_resp = await client.get(
+                    f"{base_url}/v1/_vystak/checkpoint",
+                    params={"thread_id": thread_id},
+                    timeout=self._resume_timeout,
+                )
+                cp_resp.raise_for_status()
+                checkpoint = cp_resp.json()
+            except Exception:  # noqa: BLE001 — best-effort probe
+                checkpoint = None
+
+        if checkpoint and checkpoint.get("interrupted") and checkpoint.get("interrupts"):
+            return AgentReply(
+                text=text,
+                finish_reason="approval_pending",
+                pending_approval={
+                    "payload": checkpoint["interrupts"][0],
+                    "thread_id": thread_id,
+                },
+            )
+        raise RuntimeError(f"resume {thread_id} failed: stream ended without a terminal event")
 
     @staticmethod
     def _reply_from_jsonrpc(payload: dict[str, Any]) -> AgentReply:
@@ -211,10 +358,32 @@ class A2AAgentClient:
         parts = status_msg.get("parts") or []
         if parts:
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            state_value = status.get("state")
+
+            # A LangGraphExecutor interrupt (human-in-the-loop tool approval)
+            # ends the task in input-required state with a single text part
+            # carrying a JSON marker instead of the normal reply text. Detect
+            # it before falling through to the plain-text AgentReply below.
+            if state_value in ("input-required", "input_required") and text:
+                try:
+                    marker = json.loads(text)
+                except (ValueError, TypeError):
+                    marker = None
+                if isinstance(marker, dict) and marker.get("kind") == "approval_pending":
+                    return AgentReply(
+                        text="",
+                        finish_reason="approval_pending",
+                        pending_approval={
+                            "payload": marker.get("payload"),
+                            "thread_id": marker.get("thread_id"),
+                        },
+                        raw=payload,
+                    )
+
             return AgentReply(
                 text=text,
                 tool_calls=result.get("tool_calls", []),
-                finish_reason=status.get("state") or result.get("finish_reason"),
+                finish_reason=state_value or result.get("finish_reason"),
                 raw=payload,
             )
 
@@ -314,6 +483,31 @@ class A2AAgentClient:
                     raw=payload,
                 )
 
+            # HITL tool-approval park (see executor.py's interrupt() handling
+            # for message/stream): a TASK_STATE_INPUT_REQUIRED status update
+            # whose message text is the `{"kind": "approval_pending", ...}`
+            # marker JSON — same marker `_reply_from_jsonrpc` detects on the
+            # non-streaming path. Must be surfaced as a typed chunk, never as
+            # plain status text (the raw marker JSON must never reach a
+            # channel as reply text).
+            if state in ("input-required", "input_required") and text:
+                try:
+                    marker = json.loads(text)
+                except (ValueError, TypeError):
+                    marker = None
+                if isinstance(marker, dict) and marker.get("kind") == "approval_pending":
+                    return AgentChunk(
+                        type="approval_pending",
+                        delta="",
+                        data={
+                            "payload": marker.get("payload"),
+                            "thread_id": marker.get("thread_id"),
+                        },
+                        finish_reason="approval_pending",
+                        final=True,
+                        raw=payload,
+                    )
+
             is_final = bool(result.get("final")) or state == "completed"
             return AgentChunk(
                 type="final" if is_final else "status",
@@ -343,13 +537,24 @@ class NatsAgentClient:
         self,
         nats_url: str,
         timeout_s: float = 60.0,
+        resume_timeout_s: float = 300.0,
     ) -> None:
         self._nats_url = nats_url
         self._timeout = timeout_s
+        # responses/resumeThread can run real gated-tool work inside the RPC
+        # before the graph parks/completes again — the bridge's own read
+        # bound is ~300s, so the request timeout here must match rather
+        # than reuse the short `_timeout` used for message/send.
+        self._resume_timeout = resume_timeout_s
         # Lazy-initialised on first call. Re-used across requests so we
         # don't pay reconnect cost per turn.
         self._nc: Any = None
         self._connect_lock: asyncio.Lock | None = None
+        # thread_id -> NATS subject, learned from the most recent send_turn
+        # call for that thread. resume_turn has no agent_url parameter (see
+        # A2AAgentClient.resume_turn docstring for the same contract), so
+        # it looks the subject up here.
+        self._known_subjects: dict[str, str] = {}
 
     async def _connect(self) -> Any:
         """Return a connected NATS client, creating one on first use."""
@@ -388,6 +593,7 @@ class NatsAgentClient:
         bridge can extract it and continue the trace under one root.
         """
         subject = agent_url
+        self._known_subjects[thread_id] = subject
         request_id = str(uuid.uuid4())
         # Build message metadata with traceparent injected on top of any
         # caller-supplied metadata. The bridge on the receiver side
@@ -466,7 +672,15 @@ class NatsAgentClient:
             raise AgentCallError(
                 f"nats reply from {subject} not valid JSON: {exc}",
             ) from exc
-        return A2AAgentClient._reply_from_jsonrpc(data)
+        result = A2AAgentClient._reply_from_jsonrpc(data)
+        # See A2AAgentClient.send_turn's matching comment: the
+        # approval_pending marker's thread_id is the agent's LangGraph
+        # checkpoint key, not the contextId this call sent — alias it to
+        # the same subject so resume_turn can find it.
+        pa_tid = (result.pending_approval or {}).get("thread_id")
+        if pa_tid:
+            self._known_subjects[pa_tid] = subject
+        return result
 
     async def stream_turn(
         self,
@@ -490,10 +704,94 @@ class NatsAgentClient:
             history=history,
             metadata=metadata,
         )
+        if reply.pending_approval:
+            # HITL tool-approval park: send_turn already produced a typed
+            # AgentReply.pending_approval (and already aliased the marker's
+            # thread_id to this subject) -- carry it through as a typed
+            # chunk rather than a "final" chunk whose delta would otherwise
+            # be empty and silently drop the marker (Task 11 streaming fix).
+            yield AgentChunk(
+                type="approval_pending",
+                delta="",
+                data=reply.pending_approval,
+                finish_reason="approval_pending",
+                final=True,
+                raw=reply.raw,
+            )
+            return
         yield AgentChunk(
             type="final",
             delta=reply.text,
             finish_reason=reply.finish_reason or "completed",
             final=True,
             raw=reply.raw,
+        )
+
+    async def resume_turn(
+        self, thread_id: str, resume: dict[str, Any], agent_url: str | None = None
+    ) -> AgentReply:
+        """Send `responses/resumeThread {thread_id, resume}` and map the
+        bridge's reply — `{"text": str, "pending_approval": null | {...}}`
+        (see `nats_bridge._handle_resume_thread`) — onto an `AgentReply`.
+
+        Deviation from the original brief (`-> str`): same rationale as
+        `A2AAgentClient.resume_turn` — chaining requires surfacing a
+        possible re-park uniformly. `-32000` from the bridge (a genuine
+        failure, including "stream ended without a terminal event" that
+        checkpoint state couldn't explain) raises `RuntimeError`, mirroring
+        the brief's pseudocode exactly (not `AgentCallError` — the Slack
+        action handler's "already resolved" branch is keyed on
+        `RuntimeError`).
+
+        `agent_url` here is the NATS subject hint (same parameter name as
+        `A2AAgentClient.resume_turn` for a uniform `AgentClient` protocol) —
+        overrides and refreshes `_known_subjects[thread_id]`, which is
+        process-local and empty after a channel restart even though the
+        agent-side park is durable.
+        """
+        if agent_url:
+            subject = agent_url
+            self._known_subjects[thread_id] = subject
+        else:
+            subject = self._known_subjects.get(thread_id)
+        if subject is None:
+            raise RuntimeError(
+                f"resume_turn: no known subject for thread {thread_id} "
+                "(send_turn must be called for this thread first, or pass "
+                "agent_url explicitly)"
+            )
+        request_id = str(uuid.uuid4())
+        body = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "responses/resumeThread",
+            "params": {"thread_id": thread_id, "resume": resume},
+        }
+        try:
+            nc = await self._connect()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"nats connect to {self._nats_url} failed: {exc}") from exc
+
+        payload = json.dumps(body).encode()
+        try:
+            reply = await nc.request(subject, payload, timeout=self._resume_timeout)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"nats resume request to {subject} failed: {exc}") from exc
+
+        try:
+            data = json.loads(reply.data)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"nats resume reply from {subject} not valid JSON: {exc}",
+            ) from exc
+
+        if "error" in data:
+            raise RuntimeError(data["error"].get("message", "resume failed"))
+
+        result = data.get("result") or {}
+        pending_approval = result.get("pending_approval")
+        return AgentReply(
+            text=result.get("text", ""),
+            finish_reason="approval_pending" if pending_approval else "completed",
+            pending_approval=pending_approval,
         )

@@ -147,11 +147,10 @@ Two RPCs, both served by the bridge:
   rewind is published on this path — nothing was lost when the turn
   parked, so nothing needs to be discarded on the way back in.
 
-Nothing in this codebase calls `interrupt()` today; this mechanism exists
-as the seam a future human-in-the-loop approval step (e.g. "confirm before
-running this tool") would build on — pause the graph, surface the
-pending state to a human, resume with their answer via
-`resumeDetached`.
+This is the seam human-in-the-loop tool approvals build on: a skill tool
+named in `Skill.needs_approval` calls `interrupt()` before executing,
+pausing the graph for a human decision, resumed via `resumeDetached`. See
+[`docs/approvals.md`](approvals.md) for the full contract.
 
 ## The panel: idle no longer means "done"
 
@@ -194,6 +193,7 @@ duplicated step results.
 
 ## Related
 
+- [`docs/approvals.md`](approvals.md) — human-in-the-loop tool approvals, built on the park/resume mechanics described above.
 - [`examples/docker-panel-durable/`](../examples/docker-panel-durable/) — the restart walkthrough.
 - [`docs/schedules.md`](schedules.md) / [`docs/heartbeat.md`](heartbeat.md) — the other always-on background mechanisms in this stack, for comparison.
 - `packages/python/vystak-provider-docker/tests/release/test_durable_turns.py` — the release-tier tests (`release_integration` for a deterministic restart/re-drive cell, `release_live_chat` for a real-LLM round trip proving resume-not-rerun).

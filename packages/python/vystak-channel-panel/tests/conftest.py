@@ -62,7 +62,13 @@ def persister_harness():
     `nats_client.stream_turn_events` yields one configured batch of events
     then raises `TurnStreamIdle`; `nats_client.turn_status` returns (or
     raises) the configured status; `rt.monotonic()` is driven by an
-    injectable clock; `panel_store` records what got persisted/cleared."""
+    injectable clock; `panel_store` records what got persisted/cleared.
+
+    `turn_status` may be a single value/exception (returned/raised on every
+    call, the original behavior) or a list — each call consumes the next
+    entry, holding on the last one once exhausted — for scripting
+    interleavings like "confirmed parked, then a few unreachable polls, then
+    running again"."""
 
     class Harness:
         def __init__(self, *, event_batches, turn_status, clock=None):
@@ -71,6 +77,7 @@ def persister_harness():
             self.cleared_active_turn = False
             self._event_batches = event_batches
             self._turn_status = turn_status
+            self._status_calls = 0
             self._clock = list(clock) if clock is not None else None
             self._clock_calls = 0
 
@@ -101,9 +108,16 @@ def persister_harness():
                     raise TurnStreamIdle(subject)
 
                 async def turn_status(self_nc, agent_name, turn_id):
-                    if isinstance(harness._turn_status, BaseException):
-                        raise harness._turn_status
-                    return harness._turn_status
+                    ts = harness._turn_status
+                    if isinstance(ts, list):
+                        idx = min(harness._status_calls, len(ts) - 1)
+                        harness._status_calls += 1
+                        item = ts[idx]
+                    else:
+                        item = ts
+                    if isinstance(item, BaseException):
+                        raise item
+                    return item
 
             class FakePanelStore:
                 async def get_conversation(self_ps, conv_id):
@@ -191,3 +205,117 @@ def sse_proxy_harness():
         return Harness(events=events)
 
     return make
+
+
+@pytest.fixture
+async def panel_app_harness(tmp_path, monkeypatch):
+    """Builds a real panel FastAPI app (same `build_app` every route test
+    drives) plus a fake `nats_client` for the approval endpoint's NATS
+    branch. Unlike `api`/`panel_rt`, this is a factory — each call spins up
+    its own store/app/user so tests can pick `transport="nats"` and script
+    `resume_detached`'s outcome (`resume_error` -> RuntimeError) per call.
+
+    `h.create_conversation`/`h.set_active_turn` are thin async wrappers over
+    the same HTTP setup/store calls `_ready()` and `set_active_turn` do in
+    the sibling routes tests, just packaged so `test_approval_endpoint.py`
+    doesn't have to repeat them."""
+    from types import SimpleNamespace
+
+    from vystak_channel_panel.app import build_app
+    from vystak_channel_panel.runtime import PanelChannelRuntime
+    from vystak_channel_runtime.store import MemoryChannelStore
+
+    monkeypatch.setenv("PANEL_SERVICE_TOKEN", SERVICE_TOKEN)
+
+    routes = dict(ROUTES)
+    routes["durable-agent"] = {
+        "canonical": "durable-agent.agents.default",
+        "address": "http://vystak-durable-agent:8000/a2a",
+    }
+
+    class FakeResumeNatsClient:
+        """Mirrors PanelNatsClient.resume_detached's public surface without
+        touching JetStream."""
+
+        def __init__(
+            self, *, resume_error: str | None = None, resume_timeout: bool = False
+        ):
+            self.resume_calls: list[tuple[str, str, dict]] = []
+            self._resume_error = resume_error
+            self._resume_timeout = resume_timeout
+
+        async def resume_detached(self, agent_name: str, turn_id: str, resume: dict) -> None:
+            self.resume_calls.append((agent_name, turn_id, resume))
+            if self._resume_timeout:
+                raise TimeoutError("NATS request timed out")
+            if self._resume_error:
+                raise RuntimeError(self._resume_error)
+
+    class Harness:
+        def __init__(self, *, panel_store, rt, client, user_email: str):
+            self.panel_store = panel_store
+            self.rt = rt
+            self.client = client
+            self.user_email = user_email
+            self.auth_headers = {"X-Panel-User": user_email}
+            self.nats_client = rt.nats_client
+
+        async def create_conversation(self, *, agent: str) -> SimpleNamespace:
+            boot = await self.client.get("/api/bootstrap", headers=self.auth_headers)
+            pid = boot.json()["default_project_id"]
+            resp = await self.client.post(
+                f"/api/projects/{pid}/conversations",
+                json={"agent_name": agent},
+                headers=self.auth_headers,
+            )
+            return SimpleNamespace(**resp.json()["conversation"])
+
+        async def set_active_turn(self, conv_id: str, turn_id: str) -> None:
+            await self.panel_store.set_active_turn(conv_id, turn_id)
+
+        async def aclose(self) -> None:
+            await self.client.aclose()
+            await self.panel_store.close()
+
+    harnesses: list[Harness] = []
+
+    async def factory(
+        *,
+        transport: str = "nats",
+        resume_error: str | None = None,
+        resume_timeout: bool = False,
+    ) -> Harness:
+        panel_store = SqlitePanelStore(tmp_path / f"panel-{len(harnesses)}.db")
+        await panel_store.connect()
+        rt = PanelChannelRuntime(
+            config={"channel_type": "panel", "port": 8080},
+            routes=routes,
+            store=MemoryChannelStore(),
+            panel_store=panel_store,
+            responses_client=ResponsesClient(),
+        )
+        if transport == "nats":
+            rt.nats_client = FakeResumeNatsClient(
+                resume_error=resume_error, resume_timeout=resume_timeout
+            )
+        app = build_app(rt)
+        asgi_transport = httpx.ASGITransport(app=app)
+        client = httpx.AsyncClient(
+            transport=asgi_transport,
+            base_url="http://panel",
+            headers={"Authorization": f"Bearer {SERVICE_TOKEN}"},
+        )
+        user_email = "o@example.com"
+        await client.post(
+            "/api/setup",
+            json={"email": user_email, "name": "O", "image": ""},
+            headers={"X-Panel-User": user_email},
+        )
+        h = Harness(panel_store=panel_store, rt=rt, client=client, user_email=user_email)
+        harnesses.append(h)
+        return h
+
+    yield factory
+
+    for h in harnesses:
+        await h.aclose()

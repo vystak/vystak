@@ -24,6 +24,7 @@ class AgentReply(BaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     finish_reason: str | None = None
     raw: dict[str, Any] | None = None
+    pending_approval: dict[str, Any] | None = None
 
 
 class AgentChunk(BaseModel):
@@ -35,9 +36,16 @@ class AgentChunk(BaseModel):
       * "tool_result"— tool finished (tool_name + duration in data)
       * "status"     — interim status update (text in delta)
       * "final"      — turn finished (final=True)
+      * "approval_pending" — a LangGraph interrupt() parked the turn on a
+        gated tool (HITL approval). `data` carries the same shape as
+        `AgentReply.pending_approval`: `{"payload": {...}, "thread_id": ...}`.
+        Never carries the raw marker JSON in `delta` — callers must not
+        post `delta` as reply text for this chunk type.
     """
 
-    type: Literal["token", "tool_call", "tool_result", "status", "final"] = "token"
+    type: Literal[
+        "token", "tool_call", "tool_result", "status", "final", "approval_pending"
+    ] = "token"
     delta: str = ""
     tool_name: str | None = None
     data: dict[str, Any] | None = None

@@ -430,6 +430,46 @@ path complete):
 
 See [`docs/schedules.md`](docs/schedules.md) for the full field reference.
 
+**Durable/checkpointed execution** — orthogonal dimension, layered on
+`docker-panel-durable`'s shape (one agent + the `panel` channel over the
+NATS transport). Exercises the SQLite-by-default checkpointer + turn
+journal and the NATS bridge's crash re-drive
+(`vystak-provider-docker/tests/release/test_durable_turns.py`):
+
+- **Durable-restart**: `test_durable_turn_restart_resumes_without_concluding`
+  (`release_integration` + `docker`) — deterministic, sentinel credentials;
+  dispatches a turn, `docker restart`s the agent mid-flight, and asserts the
+  mechanical re-drive facts regardless of LLM behavior.
+- **Durable-live-resume**: `test_durable_turn_live_resume_not_rerun`
+  (`release_live_chat`) — real `ANTHROPIC_API_KEY`, restarts mid-tool-call,
+  proves resume-from-checkpoint (four completed steps, not five) rather than
+  a re-run.
+
+See [`docs/durable-execution.md`](docs/durable-execution.md) for the full
+mechanism and [`examples/docker-panel-durable/`](examples/docker-panel-durable/)
+for the manual walkthrough.
+
+**Human-in-the-loop tool approvals** — orthogonal dimension, layered on
+`examples/docker-approvals`'s shape (one agent with a
+`Skill.needs_approval`-gated tool, panel channel over NATS). Exercises the
+park/resume gate end-to-end
+(`vystak-provider-docker/tests/release/test_approvals.py`):
+
+- **Approval-approve**: `test_live_approval_approve_runs_gated_tool_once`
+  (`release_live_chat`) — real LLM, approve path; asserts exactly one
+  side-effect log line after resume.
+- **Approval-deny**: `test_live_approval_deny_skips_gated_tool`
+  (`release_live_chat`) — deny path; zero side-effect lines, turn still
+  concludes normally.
+- **Approval-slack-smoke**: `test_slack_approvals_deploy_smoke`
+  (`release_slack`) — deploy-only smoke with a Slack channel + the same
+  gated tool; the actual Block Kit click is a manual walkthrough (see
+  `examples/docker-approvals/README.md`).
+
+See [`docs/approvals.md`](docs/approvals.md) for the full contract,
+including the PyPI-schema fallback that's the only branch functioning in a
+real deployment today.
+
 **Canary — collision detection.** A regression-prevention micro-test you
 should run once on each stack: declare `subagents: [weather-agent]` AND
 drop a `tools/ask_weather_agent.py` next to `vystak.yaml`. Expect
@@ -518,17 +558,23 @@ provisioning waits). Docker-only smoke (D1–D4) is ~20 minutes.
 
 ## Automation hooks
 
-A future iteration should convert the smoke tier into `-m release_smoke`
-pytest markers that drive the above via real daemons. Structure per cell:
+The smoke tier (and the integration/live/Slack/Azure tiers) are automated as
+real pytest cells driving actual daemons — this plan is no longer a manual
+runbook. Markers are registered in root `pyproject.toml` and excluded from
+the default `pytest` run; see each provider's `tests/release/` directory:
 
-- `tests/release/test_cell_D1.py` — applies D1, runs assertions, destroys.
-- Fixtures handle `.env` setup, Azure resource group creation, Slack
-  workspace auth.
-- Skip markers auto-detect missing prereqs (no Azure login → skip Azure
-  cells).
+- `vystak-provider-docker/tests/release/test_D1_docker_default_chat_http.py`
+  (and `test_D2`.. `test_D8`) — applies each cell, runs assertions, destroys.
+  `vystak-provider-azure/tests/release/test_A1_*.py`.. `test_A8_*.py` mirror
+  this on Azure.
+- Shared fixtures (per-provider `conftest.py`) handle `.env`/project setup,
+  Vault/Postgres volume cleanup, and guaranteed `vystak destroy` teardown.
+- Skip markers auto-detect missing prereqs (no Docker daemon → skip Docker
+  cells; no `az login` → skip Azure cells; sentinel Slack/Discord/Anthropic
+  credentials → skip the corresponding gated cells).
 
-For now, this plan is a **manual runbook**. Record results per run in a
-dated markdown under `docs/test-plans/YYYY-MM-DD-results.md`.
+See the root `CLAUDE.md` "Release tests" section for the current invocation
+commands.
 
 ---
 
@@ -553,3 +599,11 @@ dated markdown under `docs/test-plans/YYYY-MM-DD-results.md`.
   exercising the `vystak-heartbeat` scheduler REST API end-to-end via
   `vystak-provider-docker/tests/release/test_schedules.py`.
   `release_integration` + `docker` markers; sentinel API keys suffice.
+- **2026-08-21** — Added the durable/checkpointed execution and
+  human-in-the-loop tool approvals orthogonal dimensions: two cells
+  (Durable-restart, Durable-live-resume) in
+  `test_durable_turns.py`, three cells (Approval-approve, Approval-deny,
+  Approval-slack-smoke) in `test_approvals.py`. `release_live_chat` now
+  spans three files / four cells total (plus `test_live_chat.py`'s
+  round-trip). See [`docs/durable-execution.md`](docs/durable-execution.md)
+  and [`docs/approvals.md`](docs/approvals.md).

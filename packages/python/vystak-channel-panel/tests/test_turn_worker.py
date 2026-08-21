@@ -254,6 +254,77 @@ async def test_persister_rescan_skips_duplicate_insert(panel_store, conversation
     assert conv.active_turn_id is None
 
 
+@pytest.mark.asyncio
+async def test_persister_persists_pending_approval_before_done(panel_store, conversation):
+    """Regression: a `vystak.approval.requested` event mid-stream must be
+    persisted immediately, tagged with `turn_id` and carrying the
+    `approval-requested` tool part -- not only once the turn eventually
+    reaches `done` (which, for a real HITL park, may be minutes away
+    behind a human decision, and previously never happened at all: this
+    event type fell through to the generic `acc.feed_seq` branch with no
+    persist call anywhere in this file). Caught live: a page reload during
+    a real park showed no pending-approval card despite the
+    docker-approvals README's explicit "survives closing the browser tab"
+    claim."""
+    await panel_store.set_active_turn(conversation.id, "t8")
+    rt = FakeRuntime(
+        panel_store,
+        FakeNatsClient(
+            [
+                PanelStreamEvent(
+                    type="approval_requested",
+                    approval={"tool": "restart_service", "args": {"name": "web"}},
+                ),
+            ],
+            idle=True,
+        ),
+    )
+    await run_turn_persister(rt, conversation.id, "t8", "subj")
+
+    msgs = await panel_store.list_messages(conversation.id)
+    assistant = [m for m in msgs if m.role == "assistant"]
+    assert len(assistant) == 1
+    assert assistant[0].turn_id == "t8"
+    parts = assistant[0].parts or []
+    approval_parts = [
+        p for p in parts
+        if p.get("type") == "tool" and p.get("state") == "approval-requested"
+    ]
+    assert len(approval_parts) == 1
+    assert approval_parts[0]["tool_name"] == "restart_service"
+
+
+@pytest.mark.asyncio
+async def test_persister_resolves_pending_approval_row_on_done(panel_store, conversation):
+    """After a park persists the pending row, the SAME row (not a second
+    one) is updated in place once the resumed run reaches `done` -- one
+    message per turn, matching the ordinary no-park case."""
+    await panel_store.set_active_turn(conversation.id, "t10")
+    rt = FakeRuntime(
+        panel_store,
+        FakeNatsClient(
+            [
+                PanelStreamEvent(
+                    type="approval_requested",
+                    approval={"tool": "restart_service", "args": {"name": "web"}},
+                ),
+                PanelStreamEvent(type="token", text="done restarting"),
+                PanelStreamEvent(type="done", response_id="resp_10"),
+            ]
+        ),
+    )
+    await run_turn_persister(rt, conversation.id, "t10", "subj")
+
+    assistant = [
+        m for m in await panel_store.list_messages(conversation.id) if m.role == "assistant"
+    ]
+    assert len(assistant) == 1
+    assert assistant[0].content == "done restarting"
+    assert assistant[0].response_id == "resp_10"
+    conv = await panel_store.get_conversation(conversation.id)
+    assert conv.active_turn_id is None
+
+
 def test_turn_subject_for():
     from vystak_channel_panel.nats_client import PanelNatsClient
 

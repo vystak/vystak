@@ -244,6 +244,43 @@ async def test_subagent_tool_returns_message_event_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_subagent_tool_maps_approval_pending_marker_to_friendly_text(monkeypatch):
+    """A gated peer ends its task `input-required` with a single text part
+    carrying the raw `{"kind": "approval_pending", ...}` marker JSON (see
+    `a2a_native/executor.py`). Feeding that JSON straight to the calling
+    LLM as the sub-tool result is useless to it — the orchestrator must
+    see a friendly, actionable sentence instead."""
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"card_url": "http://w:8000/.well-known/agent.json"}}),
+    )
+    marker = json.dumps({
+        "kind": "approval_pending",
+        "payload": {"kind": "tool_approval", "tool": "restart_service",
+                    "args": {"name": "web"}, "skill": "ops"},
+        "thread_id": "t-1",
+    })
+    fake_client = FakeClient([
+        _make_status_update_event(marker, state=TaskState.TASK_STATE_INPUT_REQUIRED),
+    ])
+
+    async def fake_create_client(*, agent, relative_card_path=None, **kw):  # noqa: ANN001
+        return fake_client
+
+    monkeypatch.setattr(subagents, "create_client", fake_create_client)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "restart the web service"})
+
+    assert out == (
+        "The sub-agent is waiting for human approval of tool "
+        "'restart_service' and cannot proceed. A human must approve it "
+        "in the panel or Slack."
+    )
+
+
+@pytest.mark.asyncio
 async def test_subagent_tool_swallows_client_errors(monkeypatch):
     monkeypatch.setenv(
         "VYSTAK_ROUTES_JSON",
@@ -377,6 +414,44 @@ async def test_nats_subagent_tool_publishes_message_send_envelope(monkeypatch):
     assert msg["parts"][0]["text"] == "weather in tokyo?"
     # Connection was closed after the call.
     assert fake.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_nats_subagent_tool_maps_approval_pending_marker_to_friendly_text(monkeypatch):
+    monkeypatch.setenv("VYSTAK_TRANSPORT_TYPE", "nats")
+    monkeypatch.setenv("VYSTAK_NATS_URL", "nats://broker:4222")
+    monkeypatch.setenv(
+        "VYSTAK_ROUTES_JSON",
+        json.dumps({"weather": {"address": "vystak.default.agents.weather.tasks"}}),
+    )
+    marker = json.dumps({
+        "kind": "approval_pending",
+        "payload": {"kind": "tool_approval", "tool": "deploy_service",
+                    "args": {"name": "web"}, "skill": "ops"},
+        "thread_id": "t-1",
+    })
+    fake = _FakeNatsClient()
+    fake.reply_bytes = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "x",
+        "result": {
+            "status": {
+                "state": "input-required",
+                "message": {"parts": [{"text": marker}]},
+            },
+        },
+    }).encode()
+    _patch_nats(monkeypatch, fake)
+
+    agent = SimpleNamespace(subagents=["weather"])
+    tools = build_subagent_tools(agent)
+    out = await tools[0].ainvoke({"query": "deploy the web service"})
+
+    assert out == (
+        "The sub-agent is waiting for human approval of tool "
+        "'deploy_service' and cannot proceed. A human must approve it "
+        "in the panel or Slack."
+    )
 
 
 @pytest.mark.asyncio

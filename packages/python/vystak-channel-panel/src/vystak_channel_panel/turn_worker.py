@@ -16,8 +16,9 @@ logger = logging.getLogger("vystak.channel.panel.turns")
 # routinely exceeds the JetStream idle window. On TurnStreamIdle the
 # persister asks the agent for the turn's actual status via
 # `responses/turnStatus` and only concludes once that status (or the overall
-# deadline) says the turn is really over.
-WAITING_STATUSES = {"running", "parked"}
+# deadline) says the turn is really over. "running" keeps waiting; "parked"
+# is handled explicitly above (it excludes time from the deadline); anything
+# else is treated as terminal.
 DEFAULT_TURN_DEADLINE_S = 900.0
 
 
@@ -38,6 +39,13 @@ async def run_turn_persister(
             # hiccup) still reaches the `finally` below and pops turn_tasks,
             # same as every other failure path in this function.
             started = rt.monotonic()
+            # Time spent with the turn parked (awaiting a human approval
+            # decision) doesn't count against the deadline — a park can
+            # legitimately outlast the 900s idle budget. `parked_since` marks
+            # the start of the current parked span (None while not parked);
+            # `parked_total` accumulates completed spans.
+            parked_since: float | None = None
+            parked_total = 0.0
             conv = await rt.panel_store.get_conversation(conv_id)
             route = rt.routes.get(conv.agent_name, {}) if conv is not None else {}
             agent_name = route.get("canonical", conv.agent_name if conv is not None else "")
@@ -47,6 +55,39 @@ async def run_turn_persister(
                     "lookups will fail closed until the deadline",
                     conv.agent_name if conv is not None else "?", conv_id, turn_id,
                 )
+
+            async def _upsert_turn_message(*, response_id: str | None = None) -> None:
+                """Insert-or-update the ONE persisted row for `turn_id`.
+
+                First call (a park) inserts it, tagged with `turn_id`, so
+                `get_message_by_turn_id` -- and a page reload -- see the
+                pending `approval-requested` part while the turn is parked
+                (the durability the docker-approvals README promises: "it
+                survives closing the browser tab", which requires this row
+                to actually exist, not just live in an in-memory
+                accumulator that dies with the request). A resumed run's
+                later `tool_call`/`tool_result` for the same tool name
+                supersedes the stale `approval-requested` part in-place
+                (`TurnAccumulator.feed`'s existing logic), so upserting the
+                SAME row through to the final `done` naturally converges on
+                the right final content -- deliberately not the two-row
+                (tagged park row + untagged final row) shape the HTTP
+                transport path uses, since that shape's `existing is None`
+                idempotency check would silently skip persisting the final
+                content once a park row already exists for this turn_id.
+                """
+                existing = await rt.panel_store.get_message_by_turn_id(conv_id, turn_id)
+                if existing is None:
+                    await rt.panel_store.add_message(
+                        conv_id, "assistant", acc.content,
+                        response_id=response_id, parts=acc.parts(), turn_id=turn_id,
+                    )
+                else:
+                    await rt.panel_store.update_message(
+                        existing.id, content=acc.content, parts=acc.parts(),
+                        response_id=response_id,
+                    )
+
             while True:
                 # Re-attach replays the JetStream subject from seq 0, so the
                 # accumulator must be rebuilt for each attach or already-fed
@@ -64,24 +105,53 @@ async def run_turn_persister(
                             acc.rewind(ev.to_seq)
                             continue
                         acc.feed_seq(seq, ev)
+                        if ev.type == "approval_requested":
+                            # Persist the park immediately -- don't wait for
+                            # `done`, which may be minutes/hours away behind
+                            # a human decision.
+                            await _upsert_turn_message()
                     else:
                         continue
                     break
                 except TurnStreamIdle:
-                    if rt.monotonic() - started >= deadline_s:
-                        logger.warning(
-                            "turn deadline conv=%s turn=%s", conv_id, turn_id
-                        )
-                        errored = True
-                        break
+                    now = rt.monotonic()
                     try:
                         status = await rt.nats_client.turn_status(agent_name, turn_id)
                     except Exception:  # noqa: BLE001 — unreachable agent means keep waiting
                         logger.info(
                             "turnStatus unreachable conv=%s turn=%s", conv_id, turn_id
                         )
+                        # If a park was already confirmed by a prior
+                        # successful poll, "park indefinitely" governs: leave
+                        # the open span alone (don't close it, don't count it)
+                        # and only bound the PRE-park active time — an
+                        # unconfirmed park doesn't get this benefit, since we
+                        # have no confirmation the agent is actually parked
+                        # rather than just unreachable.
+                        open_span = (now - parked_since) if parked_since is not None else 0.0
+                        active = (now - started) - parked_total - open_span
+                        if active >= deadline_s:
+                            logger.warning(
+                                "turn deadline conv=%s turn=%s", conv_id, turn_id
+                            )
+                            errored = True
+                            break
                         continue
-                    if status in WAITING_STATUSES:
+                    if status == "parked":
+                        if parked_since is None:
+                            parked_since = now
+                        continue
+                    if parked_since is not None:
+                        parked_total += now - parked_since
+                        parked_since = None
+                    active = (now - started) - parked_total
+                    if active >= deadline_s:
+                        logger.warning(
+                            "turn deadline conv=%s turn=%s", conv_id, turn_id
+                        )
+                        errored = True
+                        break
+                    if status == "running":
                         continue
                     logger.warning(
                         "turn idle timeout conv=%s turn=%s status=%s",
@@ -99,25 +169,17 @@ async def run_turn_persister(
             infra_failure = True
         try:
             if not infra_failure:
-                # Idempotent w.r.t. a crash between add_message and
-                # clear_active_turn on a previous attempt: the startup rescan
-                # (_resume_active_turns) replays this turn from JetStream seq
-                # 0, and without this check would insert a second assistant
-                # row. If one is already there, only the second half
-                # (update_conversation/clear_active_turn) still needs to run.
-                existing = await rt.panel_store.get_message_by_turn_id(conv_id, turn_id)
-                if existing is None and (not errored or acc.has_output):
+                # `_upsert_turn_message` is idempotent w.r.t. a crash
+                # between the write and `clear_active_turn` on a previous
+                # attempt (the startup rescan replays this turn from
+                # JetStream seq 0) AND w.r.t. a park having already
+                # inserted this turn's row earlier in THIS run -- both
+                # collapse to the same "update the existing row" branch.
+                if not errored or acc.has_output:
                     # Same rules as the HTTP path: a clean done always
                     # persists (even empty); an errored turn persists only
                     # what the user already saw.
-                    await rt.panel_store.add_message(
-                        conv_id,
-                        "assistant",
-                        acc.content,
-                        response_id=response_id,
-                        parts=acc.parts(),
-                        turn_id=turn_id,
-                    )
+                    await _upsert_turn_message(response_id=response_id)
                 if response_id:
                     await rt.panel_store.update_conversation(
                         conv_id, last_response_id=response_id

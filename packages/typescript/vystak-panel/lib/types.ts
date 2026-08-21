@@ -26,6 +26,11 @@ export interface Conversation {
   last_response_id: string | null;
   created_at: string;
   updated_at: string;
+  // Set while a turn is parked awaiting a HITL tool-approval decision (or,
+  // more generally, in flight); null otherwise. Used as the turn_id source
+  // for the approval POST on the persisted-history path, where no live
+  // 'data-approval' stream marker exists to carry it.
+  active_turn_id: string | null;
 }
 
 // Persisted message parts (see vystak_channel_panel.routes_messages.gen):
@@ -54,6 +59,10 @@ export interface ToolMessagePart {
   input: string;
   output: string;
   is_error: boolean;
+  // Absent on a normal completed tool part. 'approval-requested' marks a
+  // parked HITL tool call awaiting a decision; 'resolved' marks one whose
+  // decision has been made (see mapPersistedParts in messageParts.ts).
+  state?: string;
 }
 
 export type MessagePart = TextMessagePart | ToolMessagePart;

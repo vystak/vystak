@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -11,6 +12,7 @@ from slack_bolt.async_app import AsyncApp
 from vystak.schema.common import ChannelType
 from vystak_channel_runtime.runtime import ChannelRuntime
 from vystak_channel_runtime.types import (
+    AgentCallError,
     AgentReply,
     InboundEvent,
     Message,
@@ -91,6 +93,16 @@ class SlackChannelRuntime(ChannelRuntime):
                 await self.handle_event(
                     {"type": "app_mention", "event": event, "say": say}
                 )
+
+        @self._app.action("vystak_approve")
+        async def _approve(ack, body, client):  # noqa: ARG001
+            await ack()
+            await self._handle_approval_action(body, client, approved=True)
+
+        @self._app.action("vystak_deny")
+        async def _deny(ack, body, client):  # noqa: ARG001
+            await ack()
+            await self._handle_approval_action(body, client, approved=False)
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
         await self._start_delivery_receiver()
@@ -312,6 +324,10 @@ class SlackChannelRuntime(ChannelRuntime):
         if channel_id and thread_ts:
             await self._set_assistant_status(channel_id, thread_ts, "")
 
+        if reply.pending_approval:
+            await self._post_approval_request(event, route, reply.pending_approval)
+            return
+
         say = event.metadata.get("say")
         if say is None:
             logger.warning("no `say` callable in event metadata; cannot post reply")
@@ -321,6 +337,179 @@ class SlackChannelRuntime(ChannelRuntime):
         if post_thread_ts:
             kwargs["thread_ts"] = post_thread_ts
         await say(**kwargs)
+
+    # --- HITL tool approvals (Task 11) --------------------------------------
+
+    @staticmethod
+    def _approval_blocks(
+        pending: dict[str, Any], agent: str | None
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Build the Block Kit message (text + blocks) for a pending
+        approval. Shared between the initial post (`_post_approval_request`,
+        driven by an `InboundEvent`'s `say`) and a chained re-park posted
+        from `_handle_approval_action` (driven by the Slack Web API client
+        directly — no `InboundEvent` exists at that point).
+
+        The button `value` json-decodes to `{"thread_id", "tool", "agent"}`.
+        `agent` (the routes.json key) is folded in — not derivable from the
+        action `body` alone — so a resume after a channel restart (an empty
+        `_known_bases`/`_known_subjects` cache) can still resolve the
+        agent's URL/subject via `_resolve_agent_url` instead of failing.
+        Channel/message context (`channel.id`, `message.ts`/`thread_ts`) is
+        NOT folded in here because the action `body` slack-bolt hands back
+        already carries it (see `_handle_approval_action`).
+        """
+        payload = pending.get("payload") or {}
+        tool = payload.get("tool", "?")
+        args = payload.get("args", {})
+        value = json.dumps({
+            "thread_id": pending.get("thread_id"),
+            "tool": payload.get("tool", ""),
+            "agent": agent,
+        })
+        text = (
+            f":lock: *Approval required* — `{tool}`\n"
+            f"```{json.dumps(args, indent=2)}```"
+        )
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text},
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "vystak_approve",
+                        "text": {"type": "plain_text", "text": "Approve"},
+                        "style": "primary",
+                        "value": value,
+                    },
+                    {
+                        "type": "button",
+                        "action_id": "vystak_deny",
+                        "text": {"type": "plain_text", "text": "Deny"},
+                        "style": "danger",
+                        "value": value,
+                    },
+                ],
+            },
+        ]
+        return text, blocks
+
+    async def _post_approval_request(
+        self, event: InboundEvent, route: str, pending: dict[str, Any]
+    ) -> None:
+        text, blocks = self._approval_blocks(pending, route)
+        say = event.metadata.get("say")
+        if say is None:
+            logger.warning(
+                "no `say` callable in event metadata; cannot post approval request"
+            )
+            return
+        post_thread_ts = event.metadata.get("thread_ts") or event.metadata.get("ts")
+        kwargs: dict[str, Any] = {"text": text, "blocks": blocks}
+        if post_thread_ts:
+            kwargs["thread_ts"] = post_thread_ts
+        await say(**kwargs)
+
+    async def _handle_approval_action(
+        self, body: dict[str, Any], client: Any, *, approved: bool
+    ) -> None:
+        """`@app.action("vystak_approve"/"vystak_deny")` handler body.
+
+        `body` is slack-bolt's block-actions payload: `body["actions"][0]`
+        is the clicked button (its `value` carries `{"thread_id", "tool",
+        "agent"}` json), `body["user"]` carries `username`/`id`,
+        `body["channel"]` carries the posting channel, and `body["message"]`
+        is the button message itself — `message["thread_ts"]` is set when
+        that message was posted into a thread (Slack stamps it on any
+        message posted with a `thread_ts` kwarg), falling back to
+        `message["ts"]` for a top-level (non-threaded) approval message.
+
+        Never lets an exception escape: a dead button with no feedback is
+        worse than a slightly-generic ephemeral message.
+        """
+        action = (body.get("actions") or [{}])[0]
+        try:
+            value = json.loads(action.get("value") or "{}")
+        except json.JSONDecodeError:
+            value = {}
+        thread_id = value.get("thread_id")
+        agent = value.get("agent")
+
+        user = body.get("user") or {}
+        decided_by = "@" + (user.get("username") or user.get("id") or "")
+        decision = {"approved": approved, "decided_by": decided_by, "note": None}
+
+        channel_id = (body.get("channel") or {}).get("id")
+        message = body.get("message") or {}
+        message_ts = message.get("ts")
+        conversation_thread_ts = message.get("thread_ts") or message_ts
+
+        # The button carries the agent route, so a resume still works after
+        # a channel restart wiped the client's process-local base-URL/
+        # subject cache. `_resolve_agent_url` raises AgentCallError for an
+        # unknown/unrouted agent name -- fall back to the (possibly empty)
+        # cache in that case rather than failing the whole action outright.
+        agent_url: str | None = None
+        if agent:
+            try:
+                agent_url = self._resolve_agent_url(agent)
+            except AgentCallError:
+                agent_url = None
+
+        try:
+            result = await self._agent_client.resume_turn(thread_id, decision, agent_url)
+        except RuntimeError as exc:
+            if channel_id and user.get("id"):
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user["id"],
+                    text=f"Could not apply decision (already resolved or unavailable): {exc}",
+                )
+            return
+        except Exception as exc:  # noqa: BLE001 — never leave the button dead
+            logger.exception("approval action failed thread_id=%s agent=%s", thread_id, agent)
+            if channel_id and user.get("id"):
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user["id"],
+                    text=f"Approval could not be delivered: {exc}",
+                )
+            return
+
+        label = "Approved" if approved else "Denied"
+        if channel_id and message_ts:
+            await client.chat_update(
+                channel=channel_id,
+                ts=message_ts,
+                text=f"{label} by {decided_by}",
+                blocks=[],
+            )
+
+        if channel_id is None:
+            return
+
+        pending_approval = getattr(result, "pending_approval", None)
+        if pending_approval:
+            # Chaining contract: the resumed run parked AGAIN on another
+            # gated tool -- post a NEW approval message (same agent route)
+            # rather than the final text.
+            text, blocks = self._approval_blocks(pending_approval, agent)
+            kwargs: dict[str, Any] = {"channel": channel_id, "text": text, "blocks": blocks}
+            if conversation_thread_ts:
+                kwargs["thread_ts"] = conversation_thread_ts
+            await client.chat_postMessage(**kwargs)
+            return
+
+        final_text = getattr(result, "text", "") or ""
+        if final_text:
+            kwargs = {"channel": channel_id, "text": final_text}
+            if conversation_thread_ts:
+                kwargs["thread_ts"] = conversation_thread_ts
+            await client.chat_postMessage(**kwargs)
 
     async def deliver_message(self, thread_id: str, text: str, metadata: dict) -> None:
         if self._app is None:

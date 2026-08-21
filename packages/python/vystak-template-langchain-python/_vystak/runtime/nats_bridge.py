@@ -251,6 +251,9 @@ class NatsHttpBridge:
             if method == "responses/resumeDetached":
                 await self._handle_resume_detached(envelope, reply_subject)
                 return
+            if method == "responses/resumeThread":
+                await self._handle_resume_thread(envelope, reply_subject)
+                return
 
             # Extract the upstream W3C traceparent (if any) so the local
             # /a2a call continues the same trace. The publisher
@@ -469,14 +472,24 @@ class NatsHttpBridge:
         task.add_done_callback(self._inflight.discard)
 
     async def _handle_turn_status(self, envelope: dict[str, Any], reply_subject: str) -> None:
-        """`responses/turnStatus {turn_id}` — a pure journal lookup, no HTTP
-        hop. `unknown` covers both a never-seen turn_id and a journal-less
-        bridge (HTTP transport doesn't build one)."""
+        """`responses/turnStatus {turn_id}` — a journal lookup; `unknown`
+        covers both a never-seen turn_id and a journal-less bridge (HTTP
+        transport doesn't build one). When the row is `parked`, also makes
+        one HTTP hop to `GET /v1/_vystak/checkpoint` (via
+        `_agent_checkpoint_state`) to surface the first pending interrupt
+        payload — `self._http` is always set by this point (assigned in
+        `start()` before the NATS subscription that can deliver this
+        envelope)."""
         params = envelope.get("params") or {}
         rec = await self._journal.get(params.get("turn_id", "")) if self._journal else None
+        interrupt_payload = None
+        if rec is not None and rec.status == "parked":
+            state = await self._agent_checkpoint_state(rec.thread_id)
+            if state and state.get("interrupts"):
+                interrupt_payload = state["interrupts"][0]
         await self._publish_result(
             reply_subject, envelope.get("id"),
-            {"status": rec.status if rec else "unknown"},
+            {"status": rec.status if rec else "unknown", "interrupt": interrupt_payload},
         )
 
     async def _handle_resume_detached(
@@ -496,6 +509,14 @@ class NatsHttpBridge:
                 reply_subject,
                 code=-32602,
                 message=f"unknown turn_id: {turn_id}",
+                request_id=envelope.get("id"),
+            )
+            return
+        if rec.status != "parked":
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message="turn is not parked",
                 request_id=envelope.get("id"),
             )
             return
@@ -522,6 +543,130 @@ class NatsHttpBridge:
         )
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+
+    async def _handle_resume_thread(self, envelope: dict, reply_subject: str) -> None:
+        """`responses/resumeThread {thread_id, resume}` — resume a parked
+        A2A-originated thread and reply with the final assistant text.
+
+        A2A turns have no detached-journal row (no `turn_id`, no
+        `stream_subject`), so this is keyed by `thread_id` alone. The
+        caller (a channel runtime, e.g. Slack) blocks on the JSON-RPC
+        reply the same way it blocks on `message/send` — no ack/park
+        split, no JetStream publish, just POST-and-collect. Because a
+        gated tool can run real work before the graph parks again, this
+        RPC can take as long as the resume endpoint's read bound (see
+        `_resume_and_collect_text`'s ~300s timeout) — NATS callers must
+        set a request timeout comparable to that, not the short timeout
+        used for `message/send`.
+
+        Task-11 chaining contract: the reply always carries
+        `pending_approval`, `null` on normal completion. When the resumed
+        run parks AGAIN on a second gated tool, the SSE ends with no
+        terminal event (`response.completed`/`response.failed`) — that by
+        itself is indistinguishable from a genuine failure, so this
+        consults `_agent_checkpoint_state(thread_id)` (the same tri-state
+        helper `_consume_response_stream` uses for the detached path) to
+        tell the two apart:
+          - stream ended with a terminal event: normal completion,
+            `pending_approval: null`.
+          - stream ended without one, and the checkpoint state says the
+            graph is durably parked with a pending interrupt: reply
+            success with the partial text collected so far and
+            `pending_approval: {"payload": <interrupt value>, "thread_id":
+            ...}` — the Slack handler (Task 11) posts a NEW approval
+            message for this rather than treating it as done.
+          - stream ended without one, and the checkpoint state says
+            otherwise (not interrupted, or couldn't be consulted): a
+            genuine failure — reply `-32000`, never fake a success with a
+            silently-dropped partial message.
+        """
+        params = envelope.get("params") or {}
+        thread_id = params.get("thread_id")
+        if not thread_id:
+            await self._publish_error_async(
+                reply_subject,
+                code=-32602,
+                message="thread_id required",
+                request_id=envelope.get("id"),
+            )
+            return
+        try:
+            text, saw_terminal = await self._resume_and_collect_text(
+                thread_id, params.get("resume")
+            )
+        except Exception as e:  # noqa: BLE001 — surface as JSON-RPC error, never raise
+            await self._publish_error_async(
+                reply_subject,
+                code=-32000,
+                message=f"resume failed: {e}",
+                request_id=envelope.get("id"),
+            )
+            return
+        if saw_terminal:
+            await self._publish_result(
+                reply_subject, envelope.get("id"), {"text": text, "pending_approval": None}
+            )
+            return
+        state = await self._agent_checkpoint_state(thread_id)
+        if state is not None and state.get("interrupted") and state.get("interrupts"):
+            await self._publish_result(
+                reply_subject,
+                envelope.get("id"),
+                {
+                    "text": text,
+                    "pending_approval": {
+                        "payload": state["interrupts"][0],
+                        "thread_id": thread_id,
+                    },
+                },
+            )
+            return
+        await self._publish_error_async(
+            reply_subject,
+            code=-32000,
+            message="resume failed: stream ended without a terminal event",
+            request_id=envelope.get("id"),
+        )
+
+    async def _resume_and_collect_text(self, thread_id: str, resume: Any) -> tuple[str, bool]:
+        """POST `/v1/_vystak/resume` and concatenate every
+        `response.output_text.delta` into the final assistant text.
+
+        Reuses the bridge's shared `self._http` client and `self._local_base`
+        URL derivation (same as `_stream_from_resume_endpoint`) rather than
+        constructing a new client. The read timeout is the same generous
+        bound the detached resume path uses — real tool work can run during
+        the parked step before it completes.
+
+        Returns `(text, saw_terminal)` — `saw_terminal` is `True` only if a
+        `response.completed`/`response.failed` event or `[DONE]` was
+        observed; the caller (`_handle_resume_thread`) uses `False` as the
+        signal to go consult checkpoint state, mirroring how
+        `_consume_response_stream` disambiguates a park from a truncation."""
+        assert self._http is not None
+        chunks: list[str] = []
+        saw_terminal = False
+        async with self._http.stream(
+            "POST",
+            f"{self._local_base}/v1/_vystak/resume",
+            json={"thread_id": thread_id, "resume": resume},
+            timeout=httpx.Timeout(None, connect=10.0, read=300.0),
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                if data == "[DONE]":
+                    saw_terminal = True
+                    break
+                event = json.loads(data)
+                event_type = event.get("type")
+                if event_type == "response.output_text.delta":
+                    chunks.append(event.get("delta", ""))
+                elif event_type in ("response.completed", "response.failed"):
+                    saw_terminal = True
+        return "".join(chunks), saw_terminal
 
     async def _publish_result(
         self, reply_subject: str, request_id: Any, result: Any
@@ -666,6 +811,18 @@ class NatsHttpBridge:
                 return
             if state.get("interrupted"):
                 await self._journal.set_status(turn_id, "parked")
+                interrupts = state.get("interrupts") or []
+                if interrupts:
+                    # Non-terminal seq'd event so a polling/subscribed
+                    # consumer learns a tool call is awaiting approval.
+                    # Mirrors the truncated-tail publish below: publish via
+                    # the same seq-counter closure, then advance the
+                    # journal's last_seq so a later resume continues after
+                    # this event.
+                    seq = await publish(
+                        {"type": "vystak.approval.requested", "payload": interrupts[0]}
+                    )
+                    await self._journal.set_last_seq(turn_id, seq)
                 return  # graph is durably parked; no terminal event to publish
             await self._journal.set_status(turn_id, "failed")
 
