@@ -23,7 +23,7 @@ routing to it:
 agents:
   - name: ops-bot
     framework: langchain-python
-    model: claude
+    default_model: claude
     platform: local
     heartbeat:
       schedule: "*/30 9-18 * * 1-5"     # every 30m, 9-18, Mon-Fri

@@ -93,7 +93,7 @@ Markers (all gated — default `pytest` excludes them; registered in root `pypro
 | `release_smoke_azure` | Azure smoke. | `AZURE_SUBSCRIPTION_ID` + `az login` |
 | `release_slack` | Slack-channel cells. | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` |
 | `release_discord` | Discord-channel cells. | `DISCORD_BOT_TOKEN` |
-| `release_live_chat` | Real LLM round-trip (single cell). | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
+| `release_live_chat` | Real LLM round-trips: chat round-trip (`test_live_chat.py`), durable restart-resume (`test_durable_turns.py`), tool-approval approve + deny (`test_approvals.py`) — 4 tests across 3 files. | Real `ANTHROPIC_API_KEY` + `ANTHROPIC_API_URL` in shell env (sentinel values auto-skip) |
 
 Common invocations:
 
